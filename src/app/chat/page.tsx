@@ -1,0 +1,51 @@
+"use client";
+
+import { Paper, Title, Alert, Group, ActionIcon, Tooltip } from "@mantine/core";
+import { IconAlertCircle, IconTrash } from "@tabler/icons-react";
+import ChatWindow from "@/components/Chat/ChatWindow";
+import ChatInput from "@/components/Chat/ChatInput";
+import { useAppSelector, useAppDispatch } from "@/store/hooks";
+import { resetChat } from "@/store/chatSlice";
+
+export default function ChatPage() {
+  const error = useAppSelector((s) => s.chat.error);
+  const messagesCount = useAppSelector((s) => s.chat.messages.length);
+  const dispatch = useAppDispatch();
+
+  return (
+    <>
+      <Group justify="space-between" mb="md">
+        <Title order={2}>Чат с документами</Title>
+        {messagesCount > 0 && (
+          <Tooltip label="Новый чат">
+            <ActionIcon
+              variant="light"
+              color="red"
+              size="lg"
+              onClick={() => dispatch(resetChat())}
+            >
+              <IconTrash size={18} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </Group>
+
+      {error && (
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          title="Ошибка"
+          color="red"
+          mb="md"
+          withCloseButton
+        >
+          {error}
+        </Alert>
+      )}
+
+      <Paper shadow="sm" radius="md" withBorder style={{ overflow: "hidden" }}>
+        <ChatWindow />
+        <ChatInput />
+      </Paper>
+    </>
+  );
+}

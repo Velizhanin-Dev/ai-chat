@@ -32,7 +32,7 @@ RAG-система (Retrieval-Augmented Generation) на основе Next.js 14
 ### Предварительные требования
 - Node.js 20+
 - PostgreSQL 16 (или Docker)
-- Аккаунт Pinecone с созданным индексом (dimension: 1536, metric: cosine)
+- Аккаунт Pinecone с созданным индексом (dimension: 1024, metric: cosine)
 - API-ключ OpenAI
 
 ### Установка
