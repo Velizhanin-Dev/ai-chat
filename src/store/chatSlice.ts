@@ -7,12 +7,15 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export type ChatModel = "fast" | "smart";
+
 interface ChatState {
   messages: ChatMessage[];
   sessionId: string;
   isLoading: boolean;
   streamingContent: string;
   error: string | null;
+  model: ChatModel;
 }
 
 function generateSessionId(): string {
@@ -25,6 +28,7 @@ const initialState: ChatState = {
   isLoading: false,
   streamingContent: "",
   error: null,
+  model: "fast",
 };
 
 const chatSlice = createSlice({
@@ -59,6 +63,24 @@ const chatSlice = createSlice({
     setMessages(state, action: PayloadAction<ChatMessage[]>) {
       state.messages = action.payload;
     },
+    setSessionId(state, action: PayloadAction<string>) {
+      state.sessionId = action.payload;
+    },
+    setModel(state, action: PayloadAction<ChatModel>) {
+      state.model = action.payload;
+    },
+    hydrate(
+      state,
+      action: PayloadAction<{
+        messages: ChatMessage[];
+        sessionId: string;
+        model?: ChatModel;
+      }>
+    ) {
+      state.messages = action.payload.messages;
+      state.sessionId = action.payload.sessionId;
+      if (action.payload.model) state.model = action.payload.model;
+    },
   },
 });
 
@@ -71,6 +93,9 @@ export const {
   setError,
   resetChat,
   setMessages,
+  setSessionId,
+  setModel,
+  hydrate,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

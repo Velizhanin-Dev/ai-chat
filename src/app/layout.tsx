@@ -8,8 +8,8 @@ import StoreProvider from "@/store/StoreProvider";
 import AppShellLayout from "@/components/Shell/AppShell";
 
 export const metadata: Metadata = {
-  title: "Creative Chat RAG",
-  description: "RAG-система с чатом на основе ваших документов",
+  title: "VELIZHANIN AI",
+  description: "AI-ассистент по методике YouTube-контента Николая Велижанина",
 };
 
 export default function RootLayout({

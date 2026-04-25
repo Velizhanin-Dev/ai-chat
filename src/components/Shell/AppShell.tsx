@@ -23,29 +23,17 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import {
   IconMessageCircle,
-  IconFileUpload,
   IconBrain,
   IconSun,
   IconMoon,
   IconSettings,
-  IconScript,
 } from "@tabler/icons-react";
 
 const navItems = [
   {
-    href: "/generate",
-    label: "Генерация сценария",
-    icon: <IconScript size={18} />,
-  },
-  {
     href: "/chat",
     label: "Чат",
     icon: <IconMessageCircle size={18} />,
-  },
-  {
-    href: "/ingest",
-    label: "Загрузка документов",
-    icon: <IconFileUpload size={18} />,
   },
 ];
 
@@ -82,7 +70,7 @@ export default function AppShellLayout({
               <ThemeIcon size="lg" radius="md" variant="gradient" gradient={{ from: "blue", to: "teal" }}>
                 <IconBrain size={22} />
               </ThemeIcon>
-              <Title order={3}>Creative Chat RAG</Title>
+              <Title order={3}>VELIZHANIN AI</Title>
             </Group>
           </Group>
         </Group>

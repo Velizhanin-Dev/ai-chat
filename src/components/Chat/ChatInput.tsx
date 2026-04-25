@@ -18,7 +18,8 @@ export default function ChatInput() {
   const [input, setInput] = useState("");
   const dispatch = useAppDispatch();
   const isLoading = useAppSelector((s) => s.chat.isLoading);
-  const sessionId = useAppSelector((s) => s.chat.sessionId);
+  const messages = useAppSelector((s) => s.chat.messages);
+  const model = useAppSelector((s) => s.chat.model);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
@@ -26,22 +27,26 @@ export default function ChatInput() {
 
     setInput("");
     dispatch(setError(null));
-    dispatch(
-      addMessage({
-        id: uuidv4(),
-        role: "user",
-        content: question,
-        createdAt: new Date().toISOString(),
-      })
-    );
+    const userMessage = {
+      id: uuidv4(),
+      role: "user" as const,
+      content: question,
+      createdAt: new Date().toISOString(),
+    };
+    dispatch(addMessage(userMessage));
     dispatch(setLoading(true));
     dispatch(setStreamingContent(""));
+
+    const history = [...messages, userMessage].map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, sessionId }),
+        body: JSON.stringify({ messages: history, model }),
       });
 
       if (!response.ok) {
@@ -99,7 +104,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, sessionId, dispatch]);
+  }, [input, isLoading, messages, model, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

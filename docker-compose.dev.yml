@@ -16,35 +16,17 @@ services:
       timeout: 5s
       retries: 5
 
-  migrate:
-    image: node:20-alpine
-    working_dir: /app
-    command: sh -c "npm install && npx prisma migrate deploy"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/creative_chat
-
   app:
     image: node:20-alpine
     working_dir: /app
-    command: sh -c "npm install && npx prisma generate && npm run dev"
+    command: sh -c "npm install && npx prisma generate && npx prisma migrate deploy && npm run dev"
     volumes:
       - .:/app
-      - /app/node_modules
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     env_file:
       - .env
     environment:
