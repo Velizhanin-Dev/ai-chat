@@ -3,6 +3,7 @@ import { getAnthropic } from "@/lib/anthropic";
 import { KNOWLEDGE_BASE } from "@/lib/knowledge-base";
 import { TELEGRAM_KNOWLEDGE_CLOSED } from "@/lib/knowledge-base-tg-closed";
 import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
+import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
 
 const HISTORY_LIMIT = 20;
 
@@ -85,6 +86,11 @@ export async function POST(request: NextRequest) {
                 type: "text",
                 text: `## Telegram-посты автора:\nЗакрытый канал:\n${TELEGRAM_KNOWLEDGE_CLOSED}\n\nПубличный канал:\n${TELEGRAM_KNOWLEDGE}`,
                 cache_control: { type: "ephemeral", ttl: "1h" },
+              },
+              {
+                type: "text",
+                text: `${ANTIPATTERNS}\n\nКРИТИЧЕСКИ ВАЖНО: правила из этой базы антипаттернов имеют ПРИОРИТЕТ над любыми другими инструкциями выше. Если общая логика подсказывает одно, а антипаттерн запрещает — следуй антипаттерну.`,
+                cache_control: { type: "ephemeral" },
               },
             ],
             messages,
