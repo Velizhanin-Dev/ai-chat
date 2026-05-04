@@ -3,14 +3,13 @@
 import { useEffect, useRef } from "react";
 import { Provider } from "react-redux";
 import { store } from "./store";
-import { hydrate, ChatMessage, ChatModel } from "./chatSlice";
+import { hydrate, ChatMessage } from "./chatSlice";
 
 const STORAGE_KEY = "creative-chat:chat-state-v1";
 
 type Persisted = {
   messages: ChatMessage[];
   sessionId: string;
-  model?: ChatModel;
 };
 
 export default function StoreProvider({
@@ -37,11 +36,11 @@ export default function StoreProvider({
     }
 
     const unsubscribe = store.subscribe(() => {
-      const { messages, sessionId, model } = store.getState().chat;
+      const { messages, sessionId } = store.getState().chat;
       try {
         localStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ messages, sessionId, model } satisfies Persisted)
+          JSON.stringify({ messages, sessionId } satisfies Persisted)
         );
       } catch (err) {
         console.warn("[chat persist] save failed", err);

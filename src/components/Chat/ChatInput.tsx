@@ -19,7 +19,6 @@ export default function ChatInput() {
   const dispatch = useAppDispatch();
   const isLoading = useAppSelector((s) => s.chat.isLoading);
   const messages = useAppSelector((s) => s.chat.messages);
-  const model = useAppSelector((s) => s.chat.model);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
@@ -46,7 +45,7 @@ export default function ChatInput() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, model }),
+        body: JSON.stringify({ messages: history }),
       });
 
       if (!response.ok) {
@@ -104,7 +103,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, messages, model, dispatch]);
+  }, [input, isLoading, messages, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
