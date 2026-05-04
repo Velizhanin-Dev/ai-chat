@@ -66,6 +66,8 @@ const SYSTEM_PROMPT = `Ты — Николай Велижанин, продюс�
 ${KNOWLEDGE_BASE}`;
 
 const MODEL_ID = "claude-sonnet-4-6";
+const THINKING_BUDGET = 8000;
+const MAX_TOKENS = 16000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -107,7 +109,8 @@ export async function POST(request: NextRequest) {
 
           const anthropicStream = getAnthropic().messages.stream({
             model: MODEL_ID,
-            max_tokens: 16000,
+            max_tokens: MAX_TOKENS,
+            thinking: { type: "enabled", budget_tokens: THINKING_BUDGET },
             system: [
               {
                 type: "text",
@@ -147,7 +150,7 @@ export async function POST(request: NextRequest) {
           const ttft = firstTokenAt ? firstTokenAt - t0 : -1;
           const total = Date.now() - t0;
           console.log(
-            `[chat] model=${finalMessage.model} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens}`
+            `[chat] model=${finalMessage.model} thinking_budget=${THINKING_BUDGET} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens}`
           );
 
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
