@@ -71,7 +71,7 @@ export default function ChatWindow() {
               size="lg"
               radius="xl"
               variant="light"
-              color={msg.role === "user" ? "blue" : "teal"}
+              color={msg.role === "user" ? "gray" : "brand"}
               mt={4}
             >
               {msg.role === "user" ? (
@@ -85,7 +85,7 @@ export default function ChatWindow() {
               p="sm"
               radius="md"
               maw="75%"
-              bg={msg.role === "user" ? "blue.0" : "gray.0"}
+              bg={msg.role === "user" ? "brand.0" : "gray.0"}
             >
               <Text
                 size="sm"
@@ -109,7 +109,7 @@ export default function ChatWindow() {
               size="lg"
               radius="xl"
               variant="light"
-              color="teal"
+              color="brand"
               mt={4}
             >
               <IconRobot size={18} />

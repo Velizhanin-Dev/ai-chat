@@ -1,5 +1,81 @@
+:root {
+  /* Бренд-токены. Источник: docs/design-system.md (лендинг velizhanin.com). */
+  --color-accent: #ec582e;
+  --color-accent-red: #ef281a;
+  --color-accent-coral: #ef714d;
+  --color-accent-hover: #d9431c;
+
+  --color-text: #212121;
+  --color-text-muted: #8a8a8a;
+
+  --color-bg: #ffffff;
+  --color-bg-alt: #f4f4f4;
+  --color-border: #ebebeb;
+
+  --radius-sm: 10px;
+  --radius-md: 15px;
+  --radius-lg: 20px;
+  --radius-xl: 30px;
+  --radius-pill: 40px;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Гасим случайный горизонтальный скролл (напр. от отрицательных margin у Mantine Grid).
+   clip (а не hidden) не создаёт скролл-контейнер и не ломает position: sticky. */
+body {
+  overflow-x: clip;
+}
+
+/* Якорные секции не должны прятаться под фиксированной шапкой при переходе */
+section[id] {
+  scroll-margin-top: 84px;
+}
+
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* Фирменный «тесный» вид крупных заголовков:
+   плотный интерлиньяж + отрицательный трекинг (см. design-system.md §2). */
+.lp-display {
+  line-height: 0.92;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+
+.lp-h2 {
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+/* Плавное появление блоков при скролле.
+   data-visible выставляет компонент <Reveal/> через IntersectionObserver. */
+.lp-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+  will-change: opacity, transform;
+}
+
+.lp-reveal[data-visible="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Уважаем системную настройку «меньше движения» (UX: motion sensitivity). */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .lp-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
   }
 }

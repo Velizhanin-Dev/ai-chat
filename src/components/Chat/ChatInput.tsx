@@ -129,7 +129,7 @@ export default function ChatInput() {
         <ActionIcon
           size="xl"
           variant="filled"
-          color="blue"
+          color="brand"
           onClick={handleSend}
           disabled={!input.trim() || isLoading}
           loading={isLoading}
