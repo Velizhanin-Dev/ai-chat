@@ -51,6 +51,12 @@ export default function AppShellLayout({
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
   };
 
+  // Лендинг (/) — это маркетинговая страница со своей навигацией и футером.
+  // Рендерим её без сайдбара/шапки приложения.
+  if (pathname === "/") {
+    return <>{children}</>;
+  }
+
   return (
     <AppShell
       header={{ height: 60 }}
@@ -67,7 +73,7 @@ export default function AppShellLayout({
               size="sm"
             />
             <Group gap="xs">
-              <ThemeIcon size="lg" radius="md" variant="gradient" gradient={{ from: "blue", to: "teal" }}>
+              <ThemeIcon size="lg" radius="md" variant="gradient" gradient={{ from: "brand.5", to: "brand.7", deg: 135 }}>
                 <IconBrain size={22} />
               </ThemeIcon>
               <Title order={3}>VELIZHANIN AI</Title>
@@ -123,7 +129,7 @@ export default function AppShellLayout({
                 <Avatar
                   radius="xl"
                   size="md"
-                  color="blue"
+                  color="brand"
                   variant="filled"
                 >
                   U
