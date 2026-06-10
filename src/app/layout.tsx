@@ -28,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ru" className={brandFont.variable}>
+    <html lang="ru" className={brandFont.variable} suppressHydrationWarning>
       <head>
         <ColorSchemeScript defaultColorScheme="auto" />
       </head>

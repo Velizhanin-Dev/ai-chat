@@ -9,10 +9,9 @@ import {
   Button,
   Text,
   Title,
-  Badge,
   SimpleGrid,
 } from "@mantine/core";
-import { IconArrowRight, IconSparkles } from "@tabler/icons-react";
+import { IconArrowRight } from "@tabler/icons-react";
 import ChatMockup from "./ChatMockup";
 
 /*
@@ -30,27 +29,16 @@ const STATS: { value: string; label: string; real?: boolean }[] = [
 export default function Hero() {
   return (
     <Box
+      className="lp-hero-bg"
       style={{
         paddingTop: "clamp(48px, 8vw, 96px)",
         paddingBottom: "clamp(48px, 7vw, 88px)",
-        background:
-          "radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--color-accent) 12%, var(--mantine-color-body)) 0%, var(--mantine-color-body) 60%)",
       }}
     >
       <Container size="lg" px="md">
         {/* Контент первого экрана рендерим сразу, без scroll-reveal,
             чтобы он был виден мгновенно и без JS. */}
         <Stack align="center" gap="lg" ta="center">
-            <Badge
-              size="lg"
-              radius="xl"
-              variant="light"
-              color="brand"
-              leftSection={<IconSparkles size={14} />}
-            >
-              AI на методике студии «content-могущество»
-            </Badge>
-
             <Title
               order={1}
               className="lp-display"
@@ -59,10 +47,9 @@ export default function Hero() {
               Сценарии, которые удерживают до конца
             </Title>
 
-            <Text size="xl" c="dimmed" maw={640} style={{ lineHeight: 1.5 }}>
-              AI-сценарист, который думает и говорит как Николай Велижанин —
-              продюсер студии «content-могущество». Не фантазирует, а собирает
-              сценарий из методики, книги и 12 проверенных форматов.
+            <Text size="xl" c="dimmed" maw={560} style={{ lineHeight: 1.5 }}>
+              Хуки и сценарии голосом Николая Велижанина. Продюсерская методика —
+              прямо в чате.
             </Text>
 
             <Group justify="center" gap="sm" mt="xs">

@@ -54,6 +54,34 @@ section[id] {
   font-weight: 600;
 }
 
+/* Геро: тёплый ambient сверху по центру, гаснущий в чистый фон.
+   На тёмной теме акцент слабее — иначе низ геро резко контрастит со
+   следующей секцией. */
+.lp-hero-bg {
+  background: radial-gradient(
+    120% 80% at 50% -10%,
+    color-mix(in srgb, var(--color-accent) 12%, var(--mantine-color-body)) 0%,
+    var(--mantine-color-body) 60%
+  );
+}
+[data-mantine-color-scheme="dark"] .lp-hero-bg {
+  background: radial-gradient(
+    120% 80% at 50% -10%,
+    color-mix(in srgb, var(--color-accent) 6%, var(--mantine-color-body)) 0%,
+    var(--mantine-color-body) 55%
+  );
+}
+
+/* Чередующаяся секция: СПЛОШНАЯ заливка тем же оранжевым тинтом, что и
+   стартовый цвет градиента в Hero (.lp-hero-bg) — секция «рифмуется» с верхом
+   лендинга. Значения совпадают с Hero: светлая 12%, тёмная 6% акцента над фоном. */
+.lp-section-alt {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--mantine-color-body));
+}
+[data-mantine-color-scheme="dark"] .lp-section-alt {
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--mantine-color-body));
+}
+
 /* Плавное появление блоков при скролле.
    data-visible выставляет компонент <Reveal/> через IntersectionObserver. */
 .lp-reveal {

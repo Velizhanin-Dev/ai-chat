@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 type SectionProps = {
   id?: string;
-  /** Лёгкий тёплый фон для чередования секций (работает и в тёмной теме). */
+  /** Тёплый направленный фон (слева направо) для чередования секций. */
   alt?: boolean;
   children: ReactNode;
 };
@@ -16,11 +16,10 @@ export default function Section({ id, alt, children }: SectionProps) {
     <Box
       component="section"
       id={id}
+      className={alt ? "lp-section-alt" : undefined}
       style={{
         paddingBlock: "clamp(64px, 9vw, 112px)",
-        background: alt
-          ? "color-mix(in srgb, var(--color-accent) 4%, var(--mantine-color-body))"
-          : "var(--mantine-color-body)",
+        background: alt ? undefined : "var(--mantine-color-body)",
       }}
     >
       <Container size="lg" px="md">

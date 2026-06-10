@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   AppShell,
@@ -17,6 +17,8 @@ import {
   Text,
   ActionIcon,
   Tooltip,
+  Button,
+  Menu,
   useMantineColorScheme,
   useComputedColorScheme,
 } from "@mantine/core";
@@ -26,8 +28,11 @@ import {
   IconBrain,
   IconSun,
   IconMoon,
-  IconSettings,
+  IconChevronRight,
+  IconLogout,
 } from "@tabler/icons-react";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { loggedOut, PLAN_LABEL } from "@/store/authSlice";
 
 const navItems = [
   {
@@ -37,6 +42,26 @@ const navItems = [
   },
 ];
 
+// Полноэкранные роуты без сайдбара/шапки приложения (как лендинг).
+const BARE_ROUTES = [
+  "/",
+  "/login",
+  "/register",
+  "/forgot-password",
+  "/reset-password",
+  "/verify-email",
+];
+
+function initials(name: string) {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 export default function AppShellLayout({
   children,
 }: {
@@ -44,16 +69,27 @@ export default function AppShellLayout({
 }) {
   const [opened, { toggle, close }] = useDisclosure();
   const pathname = usePathname();
+  const router = useRouter();
   const { setColorScheme } = useMantineColorScheme();
-  const computedColorScheme = useComputedColorScheme("light");
+  // getInitialValueInEffect: см. LandingNav — гасит hydration mismatch на иконке
+  // переключателя темы (первый клиентский рендер совпадает с серверным "light").
+  const computedColorScheme = useComputedColorScheme("light", {
+    getInitialValueInEffect: true,
+  });
+  const user = useAppSelector((s) => s.auth.user);
+  const dispatch = useAppDispatch();
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
   };
 
-  // Лендинг (/) — это маркетинговая страница со своей навигацией и футером.
-  // Рендерим её без сайдбара/шапки приложения.
-  if (pathname === "/") {
+  const handleLogout = () => {
+    dispatch(loggedOut());
+    router.push("/");
+  };
+
+  // Лендинг и auth-страницы рендерим без сайдбара/шапки приложения.
+  if (BARE_ROUTES.includes(pathname)) {
     return <>{children}</>;
   }
 
@@ -119,28 +155,52 @@ export default function AppShellLayout({
               </Tooltip>
             </Group>
 
-            <UnstyledButton
-              w="100%"
-              p="xs"
-              style={{ borderRadius: 8 }}
-              onClick={() => {}}
-            >
-              <Group>
-                <Avatar
-                  radius="xl"
-                  size="md"
-                  color="brand"
-                  variant="filled"
-                >
-                  U
-                </Avatar>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Text size="sm" fw={500} truncate>Пользователь</Text>
-                  <Text size="xs" c="dimmed" truncate>user@example.com</Text>
-                </div>
-                <IconSettings size={16} style={{ color: "var(--mantine-color-dimmed)" }} />
-              </Group>
-            </UnstyledButton>
+            {user ? (
+              <Menu position="right-end" withArrow shadow="md" width={220}>
+                <Menu.Target>
+                  <UnstyledButton w="100%" p="xs" style={{ borderRadius: 8 }}>
+                    <Group wrap="nowrap">
+                      <Avatar radius="xl" size="md" color="brand" variant="filled">
+                        {initials(user.name)}
+                      </Avatar>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text size="sm" fw={500} truncate>
+                          {user.name}
+                        </Text>
+                        <Text size="xs" c="dimmed" truncate>
+                          {user.email}
+                        </Text>
+                      </div>
+                      <IconChevronRight
+                        size={16}
+                        style={{ color: "var(--mantine-color-dimmed)" }}
+                      />
+                    </Group>
+                  </UnstyledButton>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Label>Тариф: {PLAN_LABEL[user.plan]}</Menu.Label>
+                  <Menu.Divider />
+                  <Menu.Item
+                    color="red"
+                    leftSection={<IconLogout size={16} />}
+                    onClick={handleLogout}
+                  >
+                    Выйти
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            ) : (
+              <Button
+                component={Link}
+                href="/login"
+                color="brand"
+                radius="xl"
+                fullWidth
+              >
+                Войти
+              </Button>
+            )}
           </div>
         </Stack>
       </AppShell.Navbar>

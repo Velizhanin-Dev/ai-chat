@@ -51,7 +51,10 @@ export default function LandingNav() {
   const [opened, { toggle, close }] = useDisclosure(false);
   const [scrolled, setScrolled] = useState(false);
   const { setColorScheme } = useMantineColorScheme();
-  const computed = useComputedColorScheme("light");
+  // getInitialValueInEffect: первый клиентский рендер = "light" (как на сервере),
+  // реальная тема подхватывается уже в эффекте — иначе hydration mismatch на
+  // иконке переключателя (солнце/луна).
+  const computed = useComputedColorScheme("light", { getInitialValueInEffect: true });
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -120,12 +123,23 @@ export default function LandingNav() {
 
           <Button
             component={Link}
-            href="/chat"
+            href="/login"
+            radius="xl"
+            color="brand"
+            variant="subtle"
+            visibleFrom="sm"
+          >
+            Войти
+          </Button>
+
+          <Button
+            component={Link}
+            href="/register"
             radius="xl"
             color="brand"
             visibleFrom="sm"
           >
-            Попробовать
+            Начать
           </Button>
 
           <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Меню" />
@@ -156,8 +170,25 @@ export default function LandingNav() {
               {l.label}
             </Text>
           ))}
-          <Button component={Link} href="/chat" radius="xl" size="md" mt="sm" onClick={close}>
-            Попробовать бесплатно
+          <Button
+            component={Link}
+            href="/register"
+            radius="xl"
+            size="md"
+            mt="sm"
+            onClick={close}
+          >
+            Начать
+          </Button>
+          <Button
+            component={Link}
+            href="/login"
+            radius="xl"
+            size="md"
+            variant="default"
+            onClick={close}
+          >
+            Войти
           </Button>
         </Stack>
       </Drawer>

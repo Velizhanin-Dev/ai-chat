@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "^0.88.0",
     "@mantine/core": "^7.15.0",
     "@mantine/dropzone": "^7.15.0",
+    "@mantine/form": "^7.17.8",
     "@mantine/hooks": "^7.15.0",
     "@prisma/client": "^6.5.0",
     "@reduxjs/toolkit": "^2.6.0",
