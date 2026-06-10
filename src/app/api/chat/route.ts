@@ -92,6 +92,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const rawMessages: unknown = body?.messages;
+    const aboutYou =
+      typeof body?.aboutYou === "string" ? body.aboutYou.trim().slice(0, 2000) : "";
 
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       return new Response(
@@ -158,6 +160,18 @@ export async function POST(request: NextRequest) {
                 text: `${ANTIPATTERNS}\n\nКРИТИЧЕСКИ ВАЖНО: правила из этой базы антипаттернов имеют ПРИОРИТЕТ над любыми другими инструкциями выше. Если общая логика подсказывает одно, а антипаттерн запрещает — следуй антипаттерну.`,
                 cache_control: { type: "ephemeral" },
               },
+              // Контекст о пользователе («о себе» из настроек). Идёт ПОСЛЕ
+              // антипаттернов (после последнего брейкпоинта кэша) — меняется на
+              // юзера и не должен инвалидировать кэш ядра. Это инфо о собеседнике,
+              // не правило — поэтому не перебивает приоритет антипаттернов.
+              ...(aboutYou
+                ? [
+                    {
+                      type: "text" as const,
+                      text: `# С КЕМ ТЫ СЕЙЧАС ГОВОРИШЬ\n\nПользователь рассказал о себе и своём проекте:\n«${aboutYou}»\n\nУчитывай это в ответах: подстраивай примеры, нишу и формат под него. Не пересказывай ему этот текст и не упоминай, что у тебя есть «карточка пользователя» — просто говори по делу с учётом контекста.`,
+                    },
+                  ]
+                : []),
             ],
             messages,
           });

@@ -40,6 +40,66 @@ section[id] {
   }
 }
 
+/* Чат-бабблы — токен-ориентированная тема (ui-ux-pro-max: token-driven theming,
+   контраст текста ≥4.5:1 и видимые бордеры в ОБЕИХ темах; не белый фон в тёмной).
+   Свои — оранжевый тинт бренда (Mantine сам подбирает контрастный текст под тему);
+   ответы — нейтральная поверхность с видимым бордером. */
+.bubble-user {
+  background: var(--mantine-color-brand-light);
+  /* Текст — обычный (тёмный в свете / светлый в тёмной), чтобы контраст был
+     высоким в ОБЕИХ темах. Оранжевый акцент несёт только фон-тинт. */
+  color: var(--mantine-color-text);
+}
+.bubble-assistant {
+  background: var(--mantine-color-gray-1);
+  color: var(--mantine-color-text);
+  border: 1px solid var(--mantine-color-gray-3);
+}
+[data-mantine-color-scheme="dark"] .bubble-assistant {
+  background: var(--mantine-color-dark-6);
+  border-color: var(--mantine-color-dark-4);
+}
+
+/* Markdown-ответы нейронки в чате (см. components/Chat/Markdown.tsx).
+   Поджимаем внешние отступы, чтобы текст плотно сидел в баббле, и держим
+   компактный кегль уровня "size sm". */
+.md-body {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body p {
+  margin: 0 0 0.5em;
+}
+.md-body ul,
+.md-body ol {
+  margin: 0.25em 0 0.5em;
+  padding-left: 1.25em;
+}
+.md-body li {
+  margin: 0.15em 0;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 0.6em 0 0.3em;
+  line-height: 1.2;
+}
+.md-body pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.md-body table {
+  font-size: 0.85em;
+}
+
 /* Фирменный «тесный» вид крупных заголовков:
    плотный интерлиньяж + отрицательный трекинг (см. design-system.md §2). */
 .lp-display {

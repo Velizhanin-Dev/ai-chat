@@ -10,14 +10,14 @@ import {
   Stack,
   Button,
   Text,
-  ThemeIcon,
   ActionIcon,
   Tooltip,
   useMantineColorScheme,
   useComputedColorScheme,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconBrain, IconSun, IconMoon } from "@tabler/icons-react";
+import { IconSun, IconMoon } from "@tabler/icons-react";
+import Logo from "@/components/Brand/Logo";
 
 const LINKS = [
   { href: "#features", label: "Возможности" },
@@ -26,26 +26,6 @@ const LINKS = [
   { href: "#pricing", label: "Тарифы" },
   { href: "#faq", label: "Вопросы" },
 ];
-
-function Logo() {
-  return (
-    <Link href="/" style={{ textDecoration: "none", color: "inherit" }}>
-      <Group gap="xs">
-        <ThemeIcon
-          size="lg"
-          radius="md"
-          variant="gradient"
-          gradient={{ from: "brand.5", to: "brand.7", deg: 135 }}
-        >
-          <IconBrain size={22} />
-        </ThemeIcon>
-        <Text fw={600} fz="lg" style={{ letterSpacing: "-0.02em" }}>
-          VELIZHANIN&nbsp;AI
-        </Text>
-      </Group>
-    </Link>
-  );
-}
 
 export default function LandingNav() {
   const [opened, { toggle, close }] = useDisclosure(false);

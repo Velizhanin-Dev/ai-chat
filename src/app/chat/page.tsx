@@ -5,24 +5,36 @@ import { IconAlertCircle, IconTrash } from "@tabler/icons-react";
 import ChatWindow from "@/components/Chat/ChatWindow";
 import ChatInput from "@/components/Chat/ChatInput";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
-import { resetChat } from "@/store/chatSlice";
+import { deleteConversation } from "@/store/chatSlice";
 
 export default function ChatPage() {
   const error = useAppSelector((s) => s.chat.error);
-  const messagesCount = useAppSelector((s) => s.chat.messages.length);
+  const activeId = useAppSelector((s) => s.chat.activeId);
+  const title = useAppSelector(
+    (s) =>
+      s.chat.conversations.find((c) => c.id === s.chat.activeId)?.title ?? "Новый чат"
+  );
   const dispatch = useAppDispatch();
+
+  const handleDelete = () => {
+    if (!activeId) return;
+    dispatch(deleteConversation(activeId));
+  };
 
   return (
     <>
-      <Group justify="space-between" mb="md">
-        <Title order={2}>Чат</Title>
-        {messagesCount > 0 && (
-          <Tooltip label="Новый чат">
+      <Group justify="space-between" mb="md" wrap="nowrap">
+        <Title order={2} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {title}
+        </Title>
+        {activeId && (
+          <Tooltip label="Удалить чат">
             <ActionIcon
               variant="light"
               color="red"
               size="lg"
-              onClick={() => dispatch(resetChat())}
+              onClick={handleDelete}
+              style={{ flexShrink: 0 }}
             >
               <IconTrash size={18} />
             </ActionIcon>
