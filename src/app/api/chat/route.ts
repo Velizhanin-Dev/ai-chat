@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { getAnthropic } from "@/lib/anthropic";
-import { KNOWLEDGE_BASE } from "@/lib/knowledge-base";
+import type Anthropic from "@anthropic-ai/sdk";
+import { routeQuery, type RouteDecision } from "@/lib/router";
+import { buildBookContextBlock, selectFormatsBlock } from "@/lib/knowledge-retrieval";
 import { TELEGRAM_KNOWLEDGE_CLOSED } from "@/lib/knowledge-base-tg-closed";
 import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
-import { VIDEO_FORMATS } from "@/lib/knowledge-base-formats";
 import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
 
@@ -11,7 +12,7 @@ const HISTORY_LIMIT = 20;
 
 type ClientMessage = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_PROMPT = `Ты — Николай Велижанин, продюсер студии «content-могущество», автор методики КМК / системы кубиков. К тебе обращаются за помощью с YouTube-контентом, и ты помогаешь так, как помогаю я сам — своим голосом, из своего опыта, как в моих TG-каналах и книге.
+const SYSTEM_CORE = `Ты — Николай Велижанин, продюсер студии «content-могущество», автор методики КМК / системы кубиков. К тебе обращаются за помощью с YouTube-контентом, и ты помогаешь так, как помогаю я сам — своим голосом, из своего опыта, как в моих TG-каналах и книге.
 
 # ЖЕЛЕЗНОЕ ПРАВИЛО РОЛИ (важнее всего остального)
 
@@ -54,9 +55,9 @@ const SYSTEM_PROMPT = `Ты — Николай Велижанин, продюс�
 
 # Что ты знаешь и чего не знаешь
 
-- **Книга (ниже, в этом блоке)** — про длинные YouTube-видео (10+ мин): сценарий, удержание, превью, монтаж, призывы. В книге НЕТ слов «рилс», «шортс», «ВИСП».
-- **TG-каналы (блок с TG-постами)** — современный слой: ВИСП (Выгода / Интрига / Срочность / Причастность), Матрица Дайсона, рилсы / шортсы, тайм-актуальные тренды, кейсы из практики студии. Когда задача про шортс / рилс / ВИСП — опирайся СЮДА, не на книгу.
-- **Библиотека форматов (блок «Библиотека форматов»)** — 12 моих эталонных форматов коротких видео (оценка идей / реакция на новости / глупый вопрос / пересказ фильма / анекдот / история из детства / эксперимент / ебучий гений / "в России сейчас..." / худший совет / загадка / статичная табличка). Когда юзер просит сценарий или идею для рилса / шортса — определи формат по триггерным фразам и копируй output-структуру дословно.
+- **Книга (подгружается под запрос)** — про длинные YouTube-видео (10+ мин): сценарий, удержание, превью, монтаж, призывы. В книге НЕТ слов «рилс», «шортс», «ВИСП».
+- **TG-каналы (подгружаются под запрос)** — современный слой: ВИСП (Выгода / Интрига / Срочность / Причастность), Матрица Дайсона, рилсы / шортсы, тайм-актуальные тренды, кейсы из практики студии. Когда задача про шортс / рилс / ВИСП — опирайся СЮДА, не на книгу.
+- **Библиотека форматов (подгружается под запрос)** — 12 моих эталонных форматов коротких видео (оценка идей / реакция на новости / глупый вопрос / пересказ фильма / анекдот / история из детства / эксперимент / ебучий гений / "в России сейчас..." / худший совет / загадка / статичная табличка). Когда юзер просит сценарий или идею для рилса / шортса — определи формат по триггерным фразам и копируй output-структуру дословно.
 - **Антипаттерны (блок антипаттернов)** — конкретные ошибки твоей же генерации, которые я отметил на реальных ответах. Приоритетнее всего остального.
 
 Если знания нет ни в одном слое — скажи прямо «у меня в базе про это нет», и предложи разобрать тему через смежные правила, которые есть.
@@ -80,13 +81,93 @@ const SYSTEM_PROMPT = `Ты — Николай Велижанин, продюс�
 - Никаких упоминаний внутренних терминов проекта в ответе пользователю: «антипаттерны», «system prompt», «база знаний», «методика КМК» как ярлыка на себе. Говори «по моему опыту», «у нас в студии», «мы видим, что…», «работали с каналом Х».
 - На приветствия / «как дела» / «спасибо» / «понятно» — 1–2 короткие фразы, без перечисления возможностей.
 
-# База знаний (книга про длинные видео):
+# Релевантные знания подгружаются под запрос
 
-${KNOWLEDGE_BASE}`;
+Ниже по контексту тебе могут быть приложены: выдержки из моей книги (длинные видео), посты из моих TG-каналов (ВИСП, рилсы, шортсы, кейсы) и/или библиотека форматов коротких видео. Если какого-то слоя нет — значит, под этот запрос он не нужен; не выдумывай его содержимое. Если нужного нет нигде — скажи прямо «у меня в базе про это нет».`;
 
-const MODEL_ID = "claude-sonnet-4-6";
-const THINKING_BUDGET = 8000;
+const MODEL_ID = "claude-opus-4-8";
+// Opus 4.8 — единственная модель, что стабильно держит роль (Sonnet/Haiku сваливаются
+// в «гптшный» тон на длинной генерации). Поддерживает только adaptive thinking —
+// фиксированный budget_tokens возвращает 400. Глубину «размышлений» (и расход выходных
+// токенов) регулируем через effort. Пока high — качество, на котором тестировали роль;
+// после ввода роутинга (Фаза 1, см. docs/context-cost-plan.md) effort станет свой на
+// каждый тип запроса (off/low для болтовни, medium для генерации).
+const EFFORT: "low" | "medium" | "high" | "max" = "high";
 const MAX_TOKENS = 16000;
+
+// Короткая директива «дисциплины вывода» для генерации (не для болтовни): режет
+// воду в ответе — это и дешевле (выход на Opus самый дорогой), и ближе к рубленому
+// стилю Велижанина. См. docs/context-cost-plan.md (п.4).
+const OUTPUT_DISCIPLINE = `# Дисциплина вывода
+Выдавай сразу артефакт (сценарий / хук / идею / превью), без вводных преамбул и без лекционных итогов, резюме и «подытожим». Пиши плотно и по делу, в моём рубленом разговорном стиле — без воды и канцелярита. Лучше короче и острее.`;
+
+// Динамическая сборка system по решению роутера. Хребет (ядро + голос + антипаттерны)
+// — всегда, кэш 1ч. TG — целиком (статично, кэш). Форматы — 1–2 под запрос
+// (детерминировано, кэш). Книга — куски под запрос (без кэша). Директива вывода и
+// «о себе» — в самом конце. До 3 кэш-брейкпоинтов (лимит 4). docs/context-cost-plan.md.
+function buildSystem(
+  route: RouteDecision,
+  query: string,
+  aboutYou: string
+): Anthropic.TextBlockParam[] {
+  const blocks: Anthropic.TextBlockParam[] = [
+    { type: "text", text: SYSTEM_CORE },
+    { type: "text", text: VOICE_SAMPLES },
+    {
+      type: "text",
+      text: `${ANTIPATTERNS}\n\nКРИТИЧЕСКИ ВАЖНО: правила из этой базы антипаттернов имеют ПРИОРИТЕТ над любыми другими инструкциями выше. Если общая логика подсказывает одно, а антипаттерн запрещает — следуй антипаттерну.`,
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    },
+  ];
+
+  // TG целиком — статично; кэш-точка после TG (общая для всех short-запросов).
+  const tg: Anthropic.TextBlockParam[] = [];
+  if (route.tgClosed) {
+    tg.push({
+      type: "text",
+      text: `## Telegram-посты (закрытый канал):\n${TELEGRAM_KNOWLEDGE_CLOSED}`,
+    });
+  }
+  if (route.tgOpen) {
+    tg.push({
+      type: "text",
+      text: `## Telegram-посты (публичный канал):\n${TELEGRAM_KNOWLEDGE}`,
+    });
+  }
+  if (tg.length > 0) {
+    tg[tg.length - 1].cache_control = { type: "ephemeral", ttl: "1h" };
+    blocks.push(...tg);
+  }
+
+  // Форматы — 1–2 подходящих под запрос; детерминировано → своя кэш-точка.
+  if (route.formats) {
+    blocks.push({
+      type: "text",
+      text: selectFormatsBlock(query, 2),
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    });
+  }
+
+  // Книга — релевантные куски под запрос, без кэша (разные каждый раз).
+  if (route.book) {
+    const bookBlock = buildBookContextBlock(query, 10);
+    if (bookBlock) blocks.push({ type: "text", text: bookBlock });
+  }
+
+  // Дисциплина вывода — только для генерации, ближе к месту генерации.
+  if (route.category !== "chat") {
+    blocks.push({ type: "text", text: OUTPUT_DISCIPLINE });
+  }
+
+  if (aboutYou) {
+    blocks.push({
+      type: "text",
+      text: `# С КЕМ ТЫ СЕЙЧАС ГОВОРИШЬ\n\nПользователь рассказал о себе и своём проекте:\n«${aboutYou}»\n\nУчитывай это в ответах: подстраивай примеры, нишу и формат под него. Не пересказывай ему этот текст и не упоминай, что у тебя есть «карточка пользователя» — просто говори по делу с учётом контекста.`,
+    });
+  }
+
+  return blocks;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -120,6 +201,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Роутинг: какие слои знаний подгрузить под этот запрос (хребет — всегда).
+    const lastUser = messages[messages.length - 1].content;
+    const tRoute0 = Date.now();
+    const route = await routeQuery(messages);
+    const routeMs = Date.now() - tRoute0;
+    const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou);
+    // Болтовне глубокое мышление не нужно — отключаем (экономит выходные токены и
+    // латентность). Генерация (short/long/method) — adaptive thinking + effort.
+    const thinkCfg =
+      route.category === "chat"
+        ? { thinking: { type: "disabled" as const } }
+        : {
+            thinking: { type: "adaptive" as const },
+            output_config: { effort: EFFORT },
+          };
+
     const encoder = new TextEncoder();
     const t0 = Date.now();
 
@@ -131,48 +228,8 @@ export async function POST(request: NextRequest) {
           const anthropicStream = getAnthropic().messages.stream({
             model: MODEL_ID,
             max_tokens: MAX_TOKENS,
-            thinking: { type: "enabled", budget_tokens: THINKING_BUDGET },
-            // Anthropic разрешает максимум 4 блока с cache_control. Точка
-            // cache_control кэширует весь префикс до неё включительно, поэтому
-            // ставим всего 2 брейкпоинта: один в конце стабильного «ядра»
-            // (после VOICE_SAMPLES, ttl 1h) — он кэширует все блоки выше; и один
-            // после ANTIPATTERNS (волатильный слой, дефолтный ttl 5m).
-            system: [
-              {
-                type: "text",
-                text: SYSTEM_PROMPT,
-              },
-              {
-                type: "text",
-                text: `## Telegram-посты автора:\nЗакрытый канал:\n${TELEGRAM_KNOWLEDGE_CLOSED}\n\nПубличный канал:\n${TELEGRAM_KNOWLEDGE}`,
-              },
-              {
-                type: "text",
-                text: VIDEO_FORMATS,
-              },
-              {
-                type: "text",
-                text: VOICE_SAMPLES,
-                cache_control: { type: "ephemeral", ttl: "1h" },
-              },
-              {
-                type: "text",
-                text: `${ANTIPATTERNS}\n\nКРИТИЧЕСКИ ВАЖНО: правила из этой базы антипаттернов имеют ПРИОРИТЕТ над любыми другими инструкциями выше. Если общая логика подсказывает одно, а антипаттерн запрещает — следуй антипаттерну.`,
-                cache_control: { type: "ephemeral" },
-              },
-              // Контекст о пользователе («о себе» из настроек). Идёт ПОСЛЕ
-              // антипаттернов (после последнего брейкпоинта кэша) — меняется на
-              // юзера и не должен инвалидировать кэш ядра. Это инфо о собеседнике,
-              // не правило — поэтому не перебивает приоритет антипаттернов.
-              ...(aboutYou
-                ? [
-                    {
-                      type: "text" as const,
-                      text: `# С КЕМ ТЫ СЕЙЧАС ГОВОРИШЬ\n\nПользователь рассказал о себе и своём проекте:\n«${aboutYou}»\n\nУчитывай это в ответах: подстраивай примеры, нишу и формат под него. Не пересказывай ему этот текст и не упоминай, что у тебя есть «карточка пользователя» — просто говори по делу с учётом контекста.`,
-                    },
-                  ]
-                : []),
-            ],
+            ...thinkCfg,
+            system: systemBlocks,
             messages,
           });
 
@@ -195,7 +252,7 @@ export async function POST(request: NextRequest) {
           const ttft = firstTokenAt ? firstTokenAt - t0 : -1;
           const total = Date.now() - t0;
           console.log(
-            `[chat] model=${finalMessage.model} thinking_budget=${THINKING_BUDGET} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens}`
+            `[chat] model=${finalMessage.model} effort=${route.category === "chat" ? "off" : EFFORT} route=${route.category} routeMs=${routeMs} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens}`
           );
 
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
