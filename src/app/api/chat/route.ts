@@ -254,8 +254,22 @@ export async function POST(request: NextRequest) {
           const u = finalMessage.usage;
           const ttft = firstTokenAt ? firstTokenAt - t0 : -1;
           const total = Date.now() - t0;
+          // Оценка стоимости запроса (Opus 4.8, $/M токенов). Роутер на Haiku —
+          // отдельный мелкий вызов, в эту сумму не входит. cache_create считаем по
+          // TTL: 1ч = 2× ($10), 5м = 1.25× ($6.25); чтение из кэша = 0.1× ($0.5).
+          const cc1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+          const cc5m = u.cache_creation?.ephemeral_5m_input_tokens ?? 0;
+          const cc1hEff =
+            cc1h || Math.max(0, (u.cache_creation_input_tokens ?? 0) - cc5m);
+          const cost =
+            ((u.input_tokens ?? 0) * 5 +
+              (u.output_tokens ?? 0) * 25 +
+              (u.cache_read_input_tokens ?? 0) * 0.5 +
+              cc1hEff * 10 +
+              cc5m * 6.25) /
+            1_000_000;
           console.log(
-            `[chat] model=${finalMessage.model} effort=${route.category === "chat" ? "off" : EFFORT} route=${route.category} routeMs=${routeMs} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens}`
+            `[chat] model=${finalMessage.model} effort=${route.category === "chat" ? "off" : EFFORT} route=${route.category} routeMs=${routeMs} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens} cost=$${cost.toFixed(4)}`
           );
 
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
