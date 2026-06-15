@@ -96,6 +96,25 @@ function isObviousChat(text: string): boolean {
   return CHAT_RE.test(t);
 }
 
+const EDIT_RE =
+  /(переделай|перепиш|короче|длиннее|острее|жёстче|жестче|мягче|ещё вариант|еще вариант|другой вариант|по-другому|по другому|сократи|поправь|исправь)/;
+
+/**
+ * Короткая правка предыдущего результата («сделай короче», «острее», «другой
+ * вариант») — НЕ перезагружаем книгу/форматы: исходник уже в истории диалога,
+ * а она кэшируется. Дешевле и консистентнее (правим тот же текст). Только чистые
+ * трансформации; «добавь про X» сюда НЕ входит — там может понадобиться книга.
+ */
+function isEditFollowup(
+  text: string,
+  messages: { role: "user" | "assistant"; content: string }[]
+): boolean {
+  if (!messages.some((m) => m.role === "assistant")) return false;
+  const t = text.toLowerCase().trim();
+  if (t.length > 70) return false;
+  return EDIT_RE.test(t);
+}
+
 /**
  * Классифицировать запрос и вернуть, какие слои грузить. messages — последние
  * сообщения диалога (для контекста follow-up вроде «сделай короче»).
@@ -106,6 +125,14 @@ export async function routeQuery(
   const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
   // Очевидная болтовня — сразу chat, без вызова LLM-роутера.
   if (isObviousChat(lastUser)) return mapCategory("chat");
+  // Правка предыдущего результата — не перезагружаем слои (исходник в истории,
+  // она в кэше). category "long" → thinking остаётся включён, но book=false.
+  if (isEditFollowup(lastUser, messages)) {
+    const d = mapCategory("long");
+    d.book = false;
+    d.searchQuery = lastUser;
+    return d;
+  }
   // Контекст: последние до 4 реплик, чтобы понять follow-up.
   const ctx = messages.slice(-4);
   try {
