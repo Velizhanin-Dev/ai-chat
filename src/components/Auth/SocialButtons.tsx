@@ -1,19 +1,13 @@
 "use client";
 
 import { SimpleGrid, Button } from "@mantine/core";
-import {
-  IconBrandVk,
-  IconBrandYandex,
-  IconBrandGoogle,
-  IconBrandTelegram,
-} from "@tabler/icons-react";
+import { IconBrandVk, IconBrandYandex } from "@tabler/icons-react";
 
 // Соц-вход — визуально, на заглушке. Клик дёргает onProvider (мок-вход).
+// Оставлены только VK и Яндекс — единственные доп. способы входа.
 const PROVIDERS = [
   { id: "vk", label: "VK", Icon: IconBrandVk, color: "#0077FF" },
   { id: "yandex", label: "Яндекс", Icon: IconBrandYandex, color: "#FC3F1D" },
-  { id: "google", label: "Google", Icon: IconBrandGoogle, color: "#EA4335" },
-  { id: "telegram", label: "Telegram", Icon: IconBrandTelegram, color: "#26A5E4" },
 ] as const;
 
 export default function SocialButtons({

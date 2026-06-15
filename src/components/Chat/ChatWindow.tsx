@@ -72,7 +72,9 @@ export default function ChatWindow() {
               key={msg.id}
               style={{
                 display: "flex",
-                justifyContent: isUser ? "flex-end" : "flex-start",
+                // row-reverse инвертирует ось: чтобы прижать группу (баббл +
+                // аватар) к правому краю, нужен flex-start, а не flex-end.
+                justifyContent: "flex-start",
                 gap: 8,
                 flexDirection: isUser ? "row-reverse" : "row",
                 alignItems: "flex-start",
