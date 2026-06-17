@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
+import type { Brief } from "@/lib/brief";
 
 // ── Auth (реальный бэкенд) ────────────────────────────────────────────────
 // Источник правды — httpOnly-cookie с JWT на сервере (см. src/lib/auth.ts).
@@ -19,6 +20,10 @@ export interface AuthUser {
   email: string;
   plan: PlanId;
   emailVerified: boolean;
+  // Бриф клиента + тип харизмы (DISC). null = не проходил бриф.
+  brief: Brief | null;
+  // Прошёл ли обязательный бриф (серверный флаг). Гейт перед чатом смотрит сюда.
+  briefCompleted: boolean;
 }
 
 interface AuthState {

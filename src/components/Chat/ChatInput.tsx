@@ -46,6 +46,7 @@ export default function ChatInput() {
   );
   const messages = active?.messages ?? EMPTY;
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
+  const brief = useAppSelector((s) => s.auth.user?.brief ?? null);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
@@ -86,7 +87,7 @@ export default function ChatInput() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, aboutYou }),
+        body: JSON.stringify({ messages: history, aboutYou, brief }),
       });
 
       if (!response.ok) {
@@ -147,7 +148,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, messages, activeId, aboutYou, dispatch]);
+  }, [input, isLoading, messages, activeId, aboutYou, brief, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

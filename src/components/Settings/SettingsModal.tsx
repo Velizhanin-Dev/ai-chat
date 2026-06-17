@@ -28,11 +28,14 @@ import {
   IconCheck,
   IconMailCheck,
   IconMailExclamation,
+  IconClipboardText,
+  IconSparkles,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setPlan, setLanguage } from "@/store/settingsSlice";
 import { authenticated, PLAN_LABEL, type PlanId } from "@/store/authSlice";
 import { apiUpdateProfile, apiResendVerification } from "@/lib/auth-client";
+import { DISC_PROFILES } from "@/lib/brief";
 
 // Компактные тарифы для биллинга (мок). Срисованы с лендинга (Pricing.tsx),
 // но меньше и привязаны к PlanId — без бэкенда.
@@ -65,9 +68,11 @@ const PLANS: {
 export default function SettingsModal({
   opened,
   onClose,
+  onRetakeBrief,
 }: {
   opened: boolean;
   onClose: () => void;
+  onRetakeBrief: () => void;
 }) {
   const dispatch = useAppDispatch();
   const user = useAppSelector((s) => s.auth.user);
@@ -75,6 +80,8 @@ export default function SettingsModal({
   const language = useAppSelector((s) => s.settings.language);
   const currentPlan = useAppSelector((s) => s.settings.plan);
   const [paid, setPaid] = useState<PlanId | null>(null);
+  // Профиль типа харизмы по сохранённому брифу (если пройден).
+  const briefProfile = user?.brief?.disc ? DISC_PROFILES[user.brief.disc] : null;
 
   // ── Аккаунт: имя («как обращаться») и подтверждение почты ───────────────
   const [name, setName] = useState(user?.name ?? "");
@@ -238,6 +245,37 @@ export default function SettingsModal({
               Это описание автоматически подгружается в нейронку во всех чатах —
               ответы будут учитывать твою нишу и контекст. Сохраняется само.
             </Text>
+          </Stack>
+
+          <Divider my="md" />
+
+          {/* Бриф клиента + тип харизмы (DISC) */}
+          <Stack gap="xs">
+            <Group justify="space-between" wrap="nowrap">
+              <Text fw={500}>Бриф и тип харизмы</Text>
+              {briefProfile && (
+                <Badge color="brand" variant="light" radius="sm" leftSection={<IconSparkles size={11} />}>
+                  {briefProfile.nick}
+                </Badge>
+              )}
+            </Group>
+            <Text size="xs" c="dimmed">
+              {briefProfile
+                ? "По брифу и тесту DISC я подбираю форматы и подачу под тебя. Можно пройти заново — например, если сменилась ниша или проект."
+                : "Бриф ещё не пройден — пройди его, чтобы я понимал твой проект и тип харизмы."}
+            </Text>
+            <Group>
+              <Button
+                variant="light"
+                color="brand"
+                radius="md"
+                size="xs"
+                leftSection={<IconClipboardText size={14} />}
+                onClick={onRetakeBrief}
+              >
+                {briefProfile ? "Пройти бриф заново" : "Пройти бриф"}
+              </Button>
+            </Group>
           </Stack>
         </Tabs.Panel>
 

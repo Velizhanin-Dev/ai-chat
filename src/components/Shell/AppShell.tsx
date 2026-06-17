@@ -42,6 +42,7 @@ import {
 } from "@/store/chatSlice";
 import Logo from "@/components/Brand/Logo";
 import SettingsModal from "@/components/Settings/SettingsModal";
+import BriefModal from "@/components/Brief/BriefModal";
 
 // Полноэкранные роуты без сайдбара/шапки приложения (как лендинг).
 const BARE_ROUTES = [
@@ -71,6 +72,8 @@ export default function AppShellLayout({
   const [opened, { toggle, close }] = useDisclosure();
   const [settingsOpened, { open: openSettings, close: closeSettings }] =
     useDisclosure(false);
+  const [briefOpened, { open: openBrief, close: closeBrief }] =
+    useDisclosure(false);
   const pathname = usePathname();
   const router = useRouter();
   const { setColorScheme } = useMantineColorScheme();
@@ -83,10 +86,25 @@ export default function AppShellLayout({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const user = useAppSelector((s) => s.auth.user);
+  const authReady = useAppSelector((s) => s.auth.ready);
   const plan = useAppSelector((s) => s.settings.plan);
   const conversations = useAppSelector((s) => s.chat.conversations);
   const activeId = useAppSelector((s) => s.chat.activeId);
   const dispatch = useAppDispatch();
+
+  // Обязательный гейт: залогинен, но бриф не пройден → открываем модалку брифа
+  // принудительно (поверх чата, не закрыть, пока не заполнит). На лендинге/auth
+  // не трогаем. Закрываем при выходе из аккаунта. НЕ автозакрываем по факту
+  // прохождения — после теста показываем экран результата, его закрывает юзер.
+  const onBareRoute = BARE_ROUTES.includes(pathname);
+  useEffect(() => {
+    if (onBareRoute) return;
+    if (authReady && user && !user.briefCompleted) {
+      openBrief();
+    } else if (!user) {
+      closeBrief();
+    }
+  }, [authReady, user, onBareRoute, openBrief, closeBrief]);
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
@@ -121,7 +139,19 @@ export default function AppShellLayout({
 
   return (
     <>
-      <SettingsModal opened={settingsOpened} onClose={closeSettings} />
+      <SettingsModal
+        opened={settingsOpened}
+        onClose={closeSettings}
+        onRetakeBrief={() => {
+          closeSettings();
+          openBrief();
+        }}
+      />
+      <BriefModal
+        opened={briefOpened}
+        onClose={closeBrief}
+        mandatory={!user?.briefCompleted}
+      />
       <AppShell
         header={{ height: 60 }}
         navbar={{ width: 280, breakpoint: "sm", collapsed: { mobile: !opened } }}

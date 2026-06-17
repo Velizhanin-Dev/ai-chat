@@ -1,4 +1,5 @@
 import type { AuthUser } from "@/store/authSlice";
+import type { Brief } from "@/lib/brief";
 
 // ── Клиентская обёртка над /api/auth/* ────────────────────────────────────
 // Возвращаем дискриминируемый результат, чтобы страницы показывали ошибку
@@ -51,6 +52,11 @@ export function apiResendVerification() {
 
 export function apiUpdateProfile(input: { name: string }) {
   return post<{ user: AuthUser }>("/api/auth/me", input, "PATCH");
+}
+
+// Сохранение брифа клиента + результата DISC (онбординг / «пройти заново»).
+export function apiSaveBrief(brief: Brief) {
+  return post<{ user: AuthUser }>("/api/auth/brief", { brief }, "PATCH");
 }
 
 export function apiForgotPassword(email: string) {

@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "@prisma/client";
 import { prisma } from "./prisma";
+import { sanitizeBrief, isBriefComplete, type Brief } from "./brief";
 
 // ── Сессия ──────────────────────────────────────────────────────────────
 // Источник правды для входа — подписанный JWT в httpOnly-cookie. Сервер не
@@ -82,12 +83,17 @@ export async function getSessionUser(): Promise<User | null> {
 
 // Форма пользователя для клиента — без passwordHash и прочей внутрянки.
 export function publicUser(u: User) {
+  const brief: Brief | null = u.brief ? sanitizeBrief(u.brief) : null;
   return {
     id: u.id,
     name: u.name,
     email: u.email,
     plan: u.plan,
     emailVerified: Boolean(u.emailVerified),
+    brief,
+    // Источник правды «прошёл бриф» — серверный флаг briefCompletedAt; на всякий
+    // дублируем фактической полнотой брифа (вдруг флаг есть, а данные битые).
+    briefCompleted: Boolean(u.briefCompletedAt) && isBriefComplete(brief),
   };
 }
 

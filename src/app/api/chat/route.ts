@@ -7,6 +7,7 @@ import { TELEGRAM_KNOWLEDGE_CLOSED } from "@/lib/knowledge-base-tg-closed";
 import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
 import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
+import { sanitizeBrief, buildBriefBlock, isBriefComplete, type Brief } from "@/lib/brief";
 
 const HISTORY_LIMIT = 20;
 
@@ -97,7 +98,8 @@ const OUTPUT_DISCIPLINE = `# Дисциплина вывода
 function buildSystem(
   route: RouteDecision,
   query: string,
-  aboutYou: string
+  aboutYou: string,
+  brief: Brief | null
 ): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_CORE },
@@ -148,6 +150,13 @@ function buildSystem(
     blocks.push({ type: "text", text: OUTPUT_DISCIPLINE });
   }
 
+  // Бриф клиента + карта харизмы (DISC) — структурированный контекст о спикере,
+  // подгружается в самом конце, рядом с «о себе».
+  const briefBlock = buildBriefBlock(brief);
+  if (briefBlock) {
+    blocks.push({ type: "text", text: briefBlock });
+  }
+
   if (aboutYou) {
     blocks.push({
       type: "text",
@@ -164,6 +173,9 @@ export async function POST(request: NextRequest) {
     const rawMessages: unknown = body?.messages;
     const aboutYou =
       typeof body?.aboutYou === "string" ? body.aboutYou.trim().slice(0, 2000) : "";
+    // Бриф приходит структурой; нормализуем и берём только если он осмысленно полон.
+    const briefRaw = body?.brief ? sanitizeBrief(body.brief) : null;
+    const brief: Brief | null = isBriefComplete(briefRaw) ? briefRaw : null;
 
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       return new Response(
@@ -195,7 +207,7 @@ export async function POST(request: NextRequest) {
     const tRoute0 = Date.now();
     const route = await routeQuery(messages);
     const routeMs = Date.now() - tRoute0;
-    const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou);
+    const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief);
     // Болтовне глубокое мышление не нужно — отключаем (экономит выходные токены и
     // латентность). Генерация (short/long/method) — adaptive thinking + effort.
     const thinkCfg =
