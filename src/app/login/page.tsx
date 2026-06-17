@@ -50,7 +50,12 @@ export default function LoginPage() {
       return;
     }
     dispatch(authenticated(res.data.user));
-    router.push(APP_HOME);
+    // Возврат на исходный роут, если пришли по редиректу из middleware
+    // (/login?next=/chat). Берём только безопасный внутренний путь.
+    const next = new URLSearchParams(window.location.search).get("next");
+    const dest =
+      next && next.startsWith("/") && !next.startsWith("//") ? next : APP_HOME;
+    router.push(dest);
   };
 
   return (

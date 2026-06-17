@@ -18,6 +18,7 @@ import {
   Menu,
   Badge,
   ScrollArea,
+  Skeleton,
   useMantineColorScheme,
   useComputedColorScheme,
 } from "@mantine/core";
@@ -90,6 +91,7 @@ export default function AppShellLayout({
   const plan = useAppSelector((s) => s.settings.plan);
   const conversations = useAppSelector((s) => s.chat.conversations);
   const activeId = useAppSelector((s) => s.chat.activeId);
+  const chatHydratedFlag = useAppSelector((s) => s.chat.hydrated);
   const dispatch = useAppDispatch();
 
   // Обязательный гейт: залогинен, но бриф не пройден → открываем модалку брифа
@@ -161,13 +163,15 @@ export default function AppShellLayout({
           <Group h="100%" px="md" justify="space-between">
             <Group gap="sm">
               <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
-              <Logo href="/chat" />
+              <Logo markHref="/" textHref="/chat" />
             </Group>
           </Group>
         </AppShell.Header>
 
         <AppShell.Navbar p="sm">
           <AppShell.Section>
+            {/* На десктопе «Новый чат» сверху; на мобиле его прячем и показываем
+                крупной CTA внизу дравера (см. нижнюю секцию). */}
             <Button
               fullWidth
               radius="md"
@@ -175,6 +179,7 @@ export default function AppShellLayout({
               leftSection={<IconPlus size={18} />}
               onClick={handleNewChat}
               mb="sm"
+              visibleFrom="sm"
             >
               Новый чат
             </Button>
@@ -185,12 +190,19 @@ export default function AppShellLayout({
 
           <AppShell.Section grow component={ScrollArea} type="hover">
             <Stack gap={2}>
-              {sorted.length === 0 && (
+              {/* До гидратации из localStorage показываем скелетоны, а не
+                  ложное «Пока нет диалогов». */}
+              {!chatHydratedFlag &&
+                Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} height={34} radius="sm" mb={2} />
+                ))}
+              {chatHydratedFlag && sorted.length === 0 && (
                 <Text size="xs" c="dimmed" ta="center" py="md">
                   Пока нет диалогов
                 </Text>
               )}
-              {sorted.map((conv) => {
+              {chatHydratedFlag &&
+                sorted.map((conv) => {
                 const active = conv.id === activeId;
                 return (
                   <UnstyledButton
@@ -247,6 +259,20 @@ export default function AppShellLayout({
           </AppShell.Section>
 
           <AppShell.Section>
+            {/* Мобильная CTA: крупная кнопка «Новый чат» внизу дравера. */}
+            <Button
+              fullWidth
+              size="lg"
+              radius="md"
+              color="brand"
+              leftSection={<IconPlus size={20} />}
+              onClick={handleNewChat}
+              mb="sm"
+              hiddenFrom="sm"
+            >
+              Новый чат
+            </Button>
+
             <Divider mb="sm" />
 
             <Group justify="space-between" px={4} mb="sm">
@@ -272,8 +298,11 @@ export default function AppShellLayout({
               </Tooltip>
             </Group>
 
+            {/* Меню профиля раскрывается ВВЕРХ (top-start) и шириной с триггер —
+                не уезжает за правый край узкого дравера на мобиле (right-end
+                вылезал за экран и дёргал страницу). */}
             {user ? (
-              <Menu position="right-end" withArrow shadow="md" width={220}>
+              <Menu position="top-start" withArrow shadow="md" width="target">
                 <Menu.Target>
                   <UnstyledButton w="100%" p="xs" style={{ borderRadius: 8 }}>
                     <Group wrap="nowrap">

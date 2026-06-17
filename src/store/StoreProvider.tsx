@@ -2,15 +2,15 @@
 
 import { useEffect, useRef } from "react";
 import { Provider } from "react-redux";
-import { store } from "./store";
+import { makeStore, type AppStore } from "./store";
 import {
   hydrate,
+  chatHydrated,
   type Conversation,
   type ChatMessage,
 } from "./chatSlice";
 import { hydrateSettings } from "./settingsSlice";
-import { authHydrated } from "./authSlice";
-import { fetchMe } from "@/lib/auth-client";
+import type { AuthUser } from "./authSlice";
 
 const CHAT_KEY = "creative-chat:conversations-v1";
 const SETTINGS_KEY = "creative-chat:settings-v1";
@@ -47,21 +47,34 @@ function loadLegacyChat(): PersistedChat | null {
 
 export default function StoreProvider({
   children,
+  initialUser,
 }: {
   children: React.ReactNode;
+  // Юзер из серверной cookie (SSR-засев). null = гость. Уже «ready», поэтому
+  // UI не моргает «гость → юзер» и не дожидается сети.
+  initialUser: AuthUser | null;
 }) {
+  // Стор на инстанс провайдера: на сервере — per-request (с засеянным auth),
+  // на клиенте — один на всё приложение.
+  const storeRef = useRef<AppStore | null>(null);
+  if (!storeRef.current) {
+    storeRef.current = makeStore({ auth: { user: initialUser, ready: true } });
+  }
+
   const hydratedRef = useRef(false);
 
   useEffect(() => {
-    // Гидратация — РОВНО один раз. Под React StrictMode (dev) эффект монтируется
-    // дважды; гард не даёт повторно загрузить стор. А вот подписку на сохранение
-    // вешаем ВНЕ гарда (ниже), иначе после StrictMode-cleanup она не
-    // переподпишется и в localStorage ничего не пишется.
+    const store = storeRef.current;
+    if (!store) return;
+
+    // Гидратация чата/настроек из localStorage — РОВНО один раз. Под React
+    // StrictMode (dev) эффект монтируется дважды; гард не даёт перезагрузить
+    // стор. Подписку на сохранение вешаем ВНЕ гарда, иначе после
+    // StrictMode-cleanup она не переподпишется. Auth НЕ трогаем — он засеян
+    // сервером и обновляется экшенами login/logout.
     if (!hydratedRef.current) {
       hydratedRef.current = true;
-      hydrateOnce();
-      // Auth живёт в httpOnly-cookie на сервере — тянем актуального юзера.
-      fetchMe().then((user) => store.dispatch(authHydrated(user)));
+      hydrateOnce(store);
     }
 
     const unsubscribe = store.subscribe(() => {
@@ -73,7 +86,7 @@ export default function StoreProvider({
           JSON.stringify({ conversations, activeId } satisfies PersistedChat)
         );
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
-        // auth НЕ персистим в localStorage — источник правды это серверная cookie.
+        // auth НЕ персистим в localStorage — источник правды серверная cookie.
       } catch (err) {
         console.warn("[persist] save failed", err);
       }
@@ -82,10 +95,10 @@ export default function StoreProvider({
     return unsubscribe;
   }, []);
 
-  return <Provider store={store}>{children}</Provider>;
+  return <Provider store={storeRef.current}>{children}</Provider>;
 }
 
-function hydrateOnce() {
+function hydrateOnce(store: AppStore) {
     // ── Чаты ────────────────────────────────────────────────────────────
     try {
       const raw = localStorage.getItem(CHAT_KEY);
@@ -106,6 +119,9 @@ function hydrateOnce() {
     } catch (err) {
       console.warn("[persist] chat hydrate failed", err);
     }
+    // Помечаем гидратацию завершённой в любом случае (даже если localStorage пуст
+    // или упал парсинг) — иначе сайдбар застрянет на скелетонах.
+    store.dispatch(chatHydrated());
     // Диалог НЕ создаём заранее: пустое «новое» состояние, диалог появится при
     // первом сообщении (см. ChatInput).
 

@@ -8,6 +8,7 @@ import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
 import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
 import { sanitizeBrief, buildBriefBlock, isBriefComplete, type Brief } from "@/lib/brief";
+import { getSessionUser } from "@/lib/auth";
 
 const HISTORY_LIMIT = 20;
 
@@ -99,7 +100,8 @@ function buildSystem(
   route: RouteDecision,
   query: string,
   aboutYou: string,
-  brief: Brief | null
+  brief: Brief | null,
+  userName: string
 ): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_CORE },
@@ -150,6 +152,15 @@ function buildSystem(
     blocks.push({ type: "text", text: OUTPUT_DISCIPLINE });
   }
 
+  // Имя пользователя (как обращаться) — короткий блок рядом с персональным
+  // контекстом. Берётся из сессии (User.name), источник правды — сервер.
+  if (userName) {
+    blocks.push({
+      type: "text",
+      text: `# КАК ОБРАЩАТЬСЯ К ПОЛЬЗОВАТЕЛЮ\n\nЧеловека, с которым ты сейчас говоришь, зовут ${userName}. Обращайся к нему по имени — естественно и к месту (не в каждой фразе, без перебора). Не коверкай имя. Если он попросит обращаться иначе — используй новое.`,
+    });
+  }
+
   // Бриф клиента + карта харизмы (DISC) — структурированный контекст о спикере,
   // подгружается в самом конце, рядом с «о себе».
   const briefBlock = buildBriefBlock(brief);
@@ -176,6 +187,10 @@ export async function POST(request: NextRequest) {
     // Бриф приходит структурой; нормализуем и берём только если он осмысленно полон.
     const briefRaw = body?.brief ? sanitizeBrief(body.brief) : null;
     const brief: Brief | null = isBriefComplete(briefRaw) ? briefRaw : null;
+
+    // Имя — из серверной сессии (источник правды), а не с клиента.
+    const sessionUser = await getSessionUser();
+    const userName = sessionUser?.name?.trim().slice(0, 100) ?? "";
 
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       return new Response(
@@ -207,7 +222,7 @@ export async function POST(request: NextRequest) {
     const tRoute0 = Date.now();
     const route = await routeQuery(messages);
     const routeMs = Date.now() - tRoute0;
-    const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief);
+    const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief, userName);
     // Болтовне глубокое мышление не нужно — отключаем (экономит выходные токены и
     // латентность). Генерация (short/long/method) — adaptive thinking + effort.
     const thinkCfg =
