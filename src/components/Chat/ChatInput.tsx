@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Textarea, ActionIcon, Group, Box } from "@mantine/core";
 import { IconSend } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -18,6 +18,41 @@ import type { ChatMessage } from "@/store/chatSlice";
 import { v4 as uuidv4 } from "uuid";
 
 const EMPTY: ChatMessage[] = [];
+
+// ── Черновик поля ввода в localStorage ──────────────────────────────────────
+// Текст, который пользователь печатает но ещё не отправил, переживает обновление
+// страницы. Пишем по debounce во время ввода, восстанавливаем при заходе на
+// /chat, удаляем при отправке. Один ключ на пользователя (валидируем userId,
+// как у черновика брифа) — на общем браузере чужой текст не подтянется.
+const CHAT_DRAFT_KEY = "creative-chat:chat-draft-v1";
+
+function loadChatDraft(userId: string): string | null {
+  try {
+    const raw = localStorage.getItem(CHAT_DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as { userId?: string; text?: string };
+    if (!d || d.userId !== userId || typeof d.text !== "string") return null;
+    return d.text.length ? d.text : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveChatDraft(userId: string, text: string) {
+  try {
+    localStorage.setItem(CHAT_DRAFT_KEY, JSON.stringify({ userId, text }));
+  } catch {
+    /* приватный режим / квота — не критично */
+  }
+}
+
+function clearChatDraft() {
+  try {
+    localStorage.removeItem(CHAT_DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 // Контекстный заголовок диалога от нейронки (как слева в ChatGPT/Claude).
 // Тихо: при ошибке оставляем заголовок из первого сообщения (фолбэк уже в addMessage).
@@ -47,12 +82,64 @@ export default function ChatInput() {
   const messages = active?.messages ?? EMPTY;
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const brief = useAppSelector((s) => s.auth.user?.brief ?? null);
+  const userId = useAppSelector((s) => s.auth.user?.id ?? null);
+  const inputFocusSignal = useAppSelector((s) => s.chat.inputFocusSignal);
+
+  // ── Черновик ввода: debounce-сохранение + восстановление ──────────────────
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearDraftTimer = () => {
+    if (draftTimer.current) {
+      clearTimeout(draftTimer.current);
+      draftTimer.current = null;
+    }
+  };
+  // Откладываем запись на 400 мс после последнего нажатия. Вызывается только из
+  // onChange (реальный ввод), поэтому программное восстановление не триггерит
+  // запись и не затирает черновик.
+  const scheduleDraftSave = (value: string) => {
+    clearDraftTimer();
+    if (!userId) return;
+    const uid = userId;
+    draftTimer.current = setTimeout(() => {
+      if (value.trim()) saveChatDraft(uid, value);
+      else clearChatDraft();
+    }, 400);
+  };
+
+  // Восстановление — один раз, как только известен userId. Не затираем уже
+  // начатый ввод (на случай, если юзер успел напечатать до гидратации).
+  const draftRestored = useRef(false);
+  useEffect(() => {
+    if (draftRestored.current || !userId) return;
+    draftRestored.current = true;
+    const draft = loadChatDraft(userId);
+    if (draft) setInput((prev) => (prev ? prev : draft));
+  }, [userId]);
+
+  // На размонтировании гасим отложенную запись (хвост ≤400 мс может потеряться —
+  // это нормально для debounce; основной кейс «остановился и обновил» покрыт).
+  useEffect(() => clearDraftTimer, []);
+
+  // Фокус в поле ввода по сигналу из стора («Новый чат»). Первый прогон на
+  // маунте пропускаем (prev === текущий), чтобы не перехватывать фокус при
+  // обычном заходе на /chat — только по явному действию.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const prevFocusSignal = useRef(inputFocusSignal);
+  useEffect(() => {
+    if (prevFocusSignal.current !== inputFocusSignal) {
+      prevFocusSignal.current = inputFocusSignal;
+      textareaRef.current?.focus();
+    }
+  }, [inputFocusSignal]);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
     if (!question || isLoading) return;
 
     setInput("");
+    // Черновик отправлен — гасим отложенную запись и чистим localStorage.
+    clearDraftTimer();
+    clearChatDraft();
     dispatch(setError(null));
 
     // Первое сообщение диалога? (нет активного ИЛИ активный пуст) — тогда после
@@ -91,8 +178,18 @@ export default function ChatInput() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Ошибка сервера");
+        // Тело ошибки может быть НЕ JSON: в dev при пересборке сервера приходит
+        // HTML-страница Next (отсюда «Unexpected token '<'»). Парсим безопасно.
+        let msg = `Ошибка сервера (${response.status})`;
+        try {
+          const err = await response.json();
+          if (err?.error) msg = err.error;
+        } catch {
+          if (response.status === 500 || response.status === 503) {
+            msg = "Сервер перезапускается, попробуй отправить ещё раз";
+          }
+        }
+        throw new Error(msg);
       }
 
       const reader = response.body?.getReader();
@@ -158,26 +255,45 @@ export default function ChatInput() {
   };
 
   return (
-    <Box p="md" style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}>
-      <Group align="flex-end" gap="sm">
+    // Композер — отдельный мягкий блок без обводки: скруглённая поверхность,
+    // которая чуть приподнята над фоном (тема-токен, корректно в обеих темах).
+    // Textarea — unstyled, сливается с поверхностью; фокус показываем кольцом
+    // на самой поверхности (:focus-within), чтобы не терять видимость фокуса.
+    <Box px="md" pb="md" pt="xs">
+      <Group
+        align="flex-end"
+        gap="xs"
+        wrap="nowrap"
+        className="chat-composer"
+      >
         <Textarea
+          ref={textareaRef}
+          variant="unstyled"
           placeholder="Введите вопрос..."
           value={input}
-          onChange={(e) => setInput(e.currentTarget.value)}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setInput(v);
+            scheduleDraftSave(v);
+          }}
           onKeyDown={handleKeyDown}
+          size="md"
           autosize
-          minRows={1}
-          maxRows={4}
+          minRows={2}
+          maxRows={6}
           disabled={isLoading}
           style={{ flex: 1 }}
+          styles={{ input: { paddingTop: 6, paddingBottom: 6, paddingLeft: 6 } }}
         />
         <ActionIcon
           size="xl"
+          radius="xl"
           variant="filled"
           color="brand"
           onClick={handleSend}
           disabled={!input.trim() || isLoading}
           loading={isLoading}
+          aria-label="Отправить"
         >
           <IconSend size={20} />
         </ActionIcon>

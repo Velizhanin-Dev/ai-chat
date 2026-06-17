@@ -22,6 +22,12 @@ interface ChatState {
   isLoading: boolean;
   streamingContent: string;
   error: string | null;
+  // Тик-сигнал «поставь фокус в поле ввода» (растёт при «Новый чат»). UI-only,
+  // не персистится — ChatInput фокусирует textarea при изменении значения.
+  inputFocusSignal: number;
+  // Завершена ли гидратация из localStorage. Пока false — сайдбар показывает
+  // скелетоны вместо «Пока нет диалогов» (иначе мелькает ложное «пусто»).
+  hydrated: boolean;
 }
 
 const DEFAULT_TITLE = "Новый чат";
@@ -54,6 +60,8 @@ const initialState: ChatState = {
   isLoading: false,
   streamingContent: "",
   error: null,
+  inputFocusSignal: 0,
+  hydrated: false,
 };
 
 const chatSlice = createSlice({
@@ -84,6 +92,7 @@ const chatSlice = createSlice({
       state.activeId = null;
       state.streamingContent = "";
       state.error = null;
+      state.inputFocusSignal += 1;
     },
     deleteConversation(state, action: PayloadAction<string>) {
       state.conversations = state.conversations.filter((c) => c.id !== action.payload);
@@ -139,6 +148,12 @@ const chatSlice = createSlice({
         action.payload.conversations.some((c) => c.id === action.payload.activeId)
           ? action.payload.activeId
           : action.payload.conversations[0]?.id ?? null;
+      state.hydrated = true;
+    },
+    // Помечаем гидратацию завершённой, даже если в localStorage пусто (hydrate
+    // тогда не вызывается). Вызывается из StoreProvider после загрузки.
+    chatHydrated(state) {
+      state.hydrated = true;
     },
   },
 });
@@ -156,6 +171,7 @@ export const {
   finalizeStreaming,
   setError,
   hydrate,
+  chatHydrated,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

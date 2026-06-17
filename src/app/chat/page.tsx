@@ -1,6 +1,6 @@
 "use client";
 
-import { Paper, Title, Alert, Group, ActionIcon, Tooltip } from "@mantine/core";
+import { Box, Title, Alert, Group, ActionIcon, Tooltip } from "@mantine/core";
 import { IconAlertCircle, IconTrash } from "@tabler/icons-react";
 import ChatWindow from "@/components/Chat/ChatWindow";
 import ChatInput from "@/components/Chat/ChatInput";
@@ -54,10 +54,13 @@ export default function ChatPage() {
         </Alert>
       )}
 
-      <Paper shadow="sm" radius="md" withBorder style={{ overflow: "hidden" }}>
+      {/* Без карточки-обводки: сообщения «текут» по фону страницы, композер —
+          отдельным мягким блоком снизу (см. ChatInput). На тёмной теме это
+          убирает резкие серые линии. */}
+      <Box>
         <ChatWindow />
         <ChatInput />
-      </Paper>
+      </Box>
     </>
   );
 }

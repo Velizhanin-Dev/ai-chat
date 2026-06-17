@@ -23,6 +23,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Выделение текста — фирменный оранжевый, приглушённый тинт. Фон
+   полупрозрачный, цвет текста не трогаем → читаемо в светлой и тёмной теме.
+   ::selection и ::-moz-selection — отдельными правилами (Firefox отбросит
+   правило целиком, если сгруппировать через запятую). */
+::selection {
+  background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+::-moz-selection {
+  background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
 /* Гасим случайный горизонтальный скролл (напр. от отрицательных margin у Mantine Grid).
    clip (а не hidden) не создаёт скролл-контейнер и не ломает position: sticky. */
 body {
@@ -58,6 +69,25 @@ section[id] {
 [data-mantine-color-scheme="dark"] .bubble-assistant {
   background: var(--mantine-color-dark-6);
   border-color: var(--mantine-color-dark-4);
+}
+
+/* Композер чата (поле ввода + «отправить») — отдельный блок без обводки.
+   Мягкая скруглённая поверхность, чуть приподнятая над фоном страницы; цвета —
+   тема-токены (в светлой gray-0, в тёмной dark-6), без резких серых линий.
+   Фокус показываем кольцом бренд-акцента на :focus-within (a11y: focus-states). */
+.chat-composer {
+  background: var(--mantine-color-gray-0);
+  border-radius: var(--mantine-radius-lg);
+  padding: 6px 8px;
+  box-shadow: var(--mantine-shadow-xs);
+  transition: box-shadow 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .chat-composer {
+  background: var(--mantine-color-dark-6);
+}
+.chat-composer:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  outline-offset: 1px;
 }
 
 /* Markdown-ответы нейронки в чате (см. components/Chat/Markdown.tsx).
