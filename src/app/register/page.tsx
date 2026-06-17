@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "@mantine/form";
@@ -12,12 +13,20 @@ import {
   Anchor,
   Divider,
   Text,
+  Alert,
 } from "@mantine/core";
+import { IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
 import SocialButtons from "@/components/Auth/SocialButtons";
+import { useAppDispatch } from "@/store/hooks";
+import { authenticated } from "@/store/authSlice";
+import { apiRegister } from "@/lib/auth-client";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const dispatch = useAppDispatch();
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -38,8 +47,24 @@ export default function RegisterPage() {
     },
   });
 
-  // Лёгкий мок: «регистрация» уводит на экран подтверждения почты.
-  const submit = () => router.push("/verify-email");
+  const submit = async (values: typeof form.values) => {
+    setError(null);
+    setLoading(true);
+    const res = await apiRegister({
+      name: values.name.trim(),
+      email: values.email,
+      password: values.password,
+    });
+    setLoading(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    // Регистрация сразу логинит (verify-gate off). Письмо подтверждения уже
+    // ушло — напомним об этом на /verify-email, но вход уже работает.
+    dispatch(authenticated(res.data.user));
+    router.push("/verify-email");
+  };
 
   return (
     <AuthLayout
@@ -54,12 +79,17 @@ export default function RegisterPage() {
         </Text>
       }
     >
-      <SocialButtons onProvider={submit} />
+      <SocialButtons />
 
       <Divider my="xs" label="или по email" labelPosition="center" />
 
       <form onSubmit={form.onSubmit(submit)}>
         <Stack gap="md">
+          {error && (
+            <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} p="xs">
+              {error}
+            </Alert>
+          )}
           <TextInput
             label="Имя"
             placeholder="Как к вам обращаться"
@@ -106,7 +136,7 @@ export default function RegisterPage() {
             }
           />
 
-          <Button type="submit" radius="xl" size="md" color="brand" fullWidth>
+          <Button type="submit" radius="xl" size="md" color="brand" fullWidth loading={loading}>
             Создать аккаунт
           </Button>
         </Stack>

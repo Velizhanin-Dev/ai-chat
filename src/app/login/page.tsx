@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "@mantine/form";
@@ -13,17 +14,22 @@ import {
   Anchor,
   Divider,
   Text,
+  Alert,
 } from "@mantine/core";
+import { IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
 import SocialButtons from "@/components/Auth/SocialButtons";
 import { useAppDispatch } from "@/store/hooks";
-import { authenticated, mockUserFromEmail } from "@/store/authSlice";
+import { authenticated } from "@/store/authSlice";
+import { apiLogin } from "@/lib/auth-client";
 
 const APP_HOME = "/chat";
 
 export default function LoginPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -34,9 +40,16 @@ export default function LoginPage() {
     },
   });
 
-  // Лёгкий мок: кладём фейкового юзера и уводим в приложение.
-  const enter = (email: string) => {
-    dispatch(authenticated(mockUserFromEmail(email || "user@example.com")));
+  const submit = async (values: { email: string; password: string }) => {
+    setError(null);
+    setLoading(true);
+    const res = await apiLogin({ email: values.email, password: values.password });
+    setLoading(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    dispatch(authenticated(res.data.user));
     router.push(APP_HOME);
   };
 
@@ -53,8 +66,13 @@ export default function LoginPage() {
         </Text>
       }
     >
-      <form onSubmit={form.onSubmit((v) => enter(v.email))}>
+      <form onSubmit={form.onSubmit(submit)}>
         <Stack gap="md">
+          {error && (
+            <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} p="xs">
+              {error}
+            </Alert>
+          )}
           <TextInput
             label="Email"
             placeholder="you@example.com"
@@ -81,7 +99,7 @@ export default function LoginPage() {
               Забыли пароль?
             </Anchor>
           </Group>
-          <Button type="submit" radius="xl" size="md" color="brand" fullWidth>
+          <Button type="submit" radius="xl" size="md" color="brand" fullWidth loading={loading}>
             Войти
           </Button>
         </Stack>
@@ -89,7 +107,7 @@ export default function LoginPage() {
 
       <Divider my="xs" label="или" labelPosition="center" />
 
-      <SocialButtons onProvider={() => enter("user@example.com")} />
+      <SocialButtons />
     </AuthLayout>
   );
 }

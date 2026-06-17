@@ -31,12 +31,16 @@ export default function LandingNav() {
   const [opened, { toggle, close }] = useDisclosure(false);
   const [scrolled, setScrolled] = useState(false);
   const { setColorScheme } = useMantineColorScheme();
-  // getInitialValueInEffect: первый клиентский рендер = "light" (как на сервере),
-  // реальная тема подхватывается уже в эффекте — иначе hydration mismatch на
-  // иконке переключателя (солнце/луна).
   const computed = useComputedColorScheme("light", { getInitialValueInEffect: true });
+  // Иконку темы рисуем только после маунта. getInitialValueInEffect гасит лишь
+  // ветку "auto" (медиазапрос ОС), но если юзер уже переключал тему вручную,
+  // схема лежит в localStorage и читается синхронно ("dark") — на сервере же
+  // всегда "light". Из-за этого path иконки (солнце/луна) расходился → hydration
+  // mismatch. До маунта показываем детерминированную луну (как на сервере).
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -97,7 +101,11 @@ export default function LandingNav() {
               onClick={toggleScheme}
               aria-label="Переключить тему"
             >
-              {computed === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}
+              {mounted && computed === "dark" ? (
+                <IconSun size={18} />
+              ) : (
+                <IconMoon size={18} />
+              )}
             </ActionIcon>
           </Tooltip>
 

@@ -14,9 +14,11 @@ import {
 } from "@mantine/core";
 import { IconMailCheck, IconArrowLeft } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
+import { apiForgotPassword } from "@/lib/auth-client";
 
 export default function ForgotPasswordPage() {
   const [sent, setSent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -25,6 +27,15 @@ export default function ForgotPasswordPage() {
       email: (v) => (/^\S+@\S+\.\S+$/.test(v) ? null : "Введите корректный email"),
     },
   });
+
+  const submit = async (values: { email: string }) => {
+    setLoading(true);
+    // Ответ сервера всегда ok (без энумерации) — просто показываем экран «письмо
+    // отправлено» вне зависимости от того, есть такой аккаунт или нет.
+    await apiForgotPassword(values.email);
+    setLoading(false);
+    setSent(values.email);
+  };
 
   if (sent) {
     return (
@@ -77,7 +88,7 @@ export default function ForgotPasswordPage() {
         </Group>
       }
     >
-      <form onSubmit={form.onSubmit((v) => setSent(v.email))}>
+      <form onSubmit={form.onSubmit(submit)}>
         <Stack gap="md">
           <TextInput
             label="Email"
@@ -87,7 +98,7 @@ export default function ForgotPasswordPage() {
             key={form.key("email")}
             {...form.getInputProps("email")}
           />
-          <Button type="submit" radius="xl" size="md" color="brand" fullWidth>
+          <Button type="submit" radius="xl" size="md" color="brand" fullWidth loading={loading}>
             Отправить ссылку
           </Button>
         </Stack>

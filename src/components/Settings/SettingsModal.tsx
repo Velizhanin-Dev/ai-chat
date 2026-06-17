@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Modal,
   Tabs,
   Textarea,
+  TextInput,
   Stack,
   Text,
   Group,
@@ -16,16 +17,22 @@ import {
   SimpleGrid,
   SegmentedControl,
   Box,
+  Divider,
+  Loader,
+  Tooltip,
 } from "@mantine/core";
 import {
   IconUser,
   IconCreditCard,
   IconLanguage,
   IconCheck,
+  IconMailCheck,
+  IconMailExclamation,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setPlan, setLanguage } from "@/store/settingsSlice";
-import { PLAN_LABEL, type PlanId } from "@/store/authSlice";
+import { authenticated, PLAN_LABEL, type PlanId } from "@/store/authSlice";
+import { apiUpdateProfile, apiResendVerification } from "@/lib/auth-client";
 
 // Компактные тарифы для биллинга (мок). Срисованы с лендинга (Pricing.tsx),
 // но меньше и привязаны к PlanId — без бэкенда.
@@ -63,10 +70,60 @@ export default function SettingsModal({
   onClose: () => void;
 }) {
   const dispatch = useAppDispatch();
+  const user = useAppSelector((s) => s.auth.user);
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const language = useAppSelector((s) => s.settings.language);
   const currentPlan = useAppSelector((s) => s.settings.plan);
   const [paid, setPaid] = useState<PlanId | null>(null);
+
+  // ── Аккаунт: имя («как обращаться») и подтверждение почты ───────────────
+  const [name, setName] = useState(user?.name ?? "");
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Подхватываем имя из стора (после гидратации /me или смены аккаунта).
+  useEffect(() => {
+    setName(user?.name ?? "");
+  }, [user?.name]);
+
+  // Чистим таймер дебаунса при размонтировании.
+  useEffect(() => () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+  }, []);
+
+  const saveName = async (value: string) => {
+    setNameError(null);
+    setSavingName(true);
+    const res = await apiUpdateProfile({ name: value });
+    setSavingName(false);
+    if (!res.ok) {
+      setNameError(res.error);
+      return;
+    }
+    dispatch(authenticated(res.data.user));
+    setNameSaved(true);
+  };
+
+  // Автосохранение имени с дебаунсом: ждём паузу в наборе и шлём PATCH сами.
+  const onNameChange = (value: string) => {
+    setName(value);
+    setNameSaved(false);
+    setNameError(null);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const trimmed = value.trim();
+    // Не сохраняем пустое/слишком короткое или без изменений.
+    if (trimmed.length < 2 || trimmed === (user?.name ?? "")) return;
+    saveTimer.current = setTimeout(() => saveName(trimmed), 700);
+  };
+
+  const resendVerification = async () => {
+    setResendState("sending");
+    await apiResendVerification();
+    setResendState("sent");
+  };
 
   const handleChoosePlan = (id: PlanId) => {
     // Мок-оплата: без бэкенда просто переключаем тариф.
@@ -98,6 +155,74 @@ export default function SettingsModal({
 
         {/* ── Основные ──────────────────────────────────────────────── */}
         <Tabs.Panel value="general">
+          {/* Аккаунт */}
+          <Stack gap="sm" mb="md">
+            <Text fw={500}>Аккаунт</Text>
+            {user ? (
+              <>
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                  <TextInput
+                    label="Как к вам обращаться"
+                    value={name}
+                    onChange={(e) => onNameChange(e.currentTarget.value)}
+                    error={nameError}
+                    maxLength={80}
+                    rightSection={
+                      savingName ? (
+                        <Loader size="xs" color="brand" />
+                      ) : nameSaved ? (
+                        <IconCheck size={16} color="var(--mantine-color-teal-6)" />
+                      ) : null
+                    }
+                  />
+                  <TextInput
+                    label="Почта"
+                    value={user.email}
+                    readOnly
+                    styles={{ input: { cursor: "default" } }}
+                    rightSection={
+                      <Tooltip
+                        label={user.emailVerified ? "Почта подтверждена" : "Почта не подтверждена"}
+                        withArrow
+                      >
+                        {user.emailVerified ? (
+                          <IconMailCheck size={16} color="var(--mantine-color-teal-6)" />
+                        ) : (
+                          <IconMailExclamation size={16} color="var(--mantine-color-orange-6)" />
+                        )}
+                      </Tooltip>
+                    }
+                  />
+                </SimpleGrid>
+
+                {!user.emailVerified && (
+                  <Group gap="sm" align="center">
+                    <Text size="xs" c="dimmed">
+                      Почта не подтверждена.
+                    </Text>
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="brand"
+                      radius="xl"
+                      onClick={resendVerification}
+                      loading={resendState === "sending"}
+                      disabled={resendState === "sent"}
+                    >
+                      {resendState === "sent" ? "Письмо отправлено" : "Отправить заново"}
+                    </Button>
+                  </Group>
+                )}
+              </>
+            ) : (
+              <Text size="sm" c="dimmed">
+                Войдите, чтобы управлять аккаунтом.
+              </Text>
+            )}
+          </Stack>
+
+          <Divider mb="md" />
+
           <Stack gap="xs">
             <Text fw={500}>О себе</Text>
             <Textarea

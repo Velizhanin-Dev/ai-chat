@@ -1,0 +1,135 @@
+import { cookies } from "next/headers";
+import { createHash, randomBytes } from "crypto";
+import bcrypt from "bcryptjs";
+import { SignJWT, jwtVerify } from "jose";
+import type { User } from "@prisma/client";
+import { prisma } from "./prisma";
+
+// ── Сессия ──────────────────────────────────────────────────────────────
+// Источник правды для входа — подписанный JWT в httpOnly-cookie. Сервер не
+// хранит сессии: токен самодостаточен (uid + срок). Logout = удалить cookie.
+
+const SESSION_COOKIE = "cc_session";
+const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 дней, в секундах
+
+function secret(): Uint8Array {
+  const s = process.env.JWT_SECRET;
+  if (!s || s.length < 16) {
+    throw new Error("JWT_SECRET не задан (нужна строка ≥16 символов)");
+  }
+  return new TextEncoder().encode(s);
+}
+
+// ── Пароли ──────────────────────────────────────────────────────────────
+
+export function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12);
+}
+
+export function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash);
+}
+
+// ── JWT ─────────────────────────────────────────────────────────────────
+
+export async function signSession(userId: string): Promise<string> {
+  return new SignJWT({ uid: userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(`${SESSION_MAX_AGE}s`)
+    .sign(secret());
+}
+
+async function verifySession(token: string): Promise<string | null> {
+  try {
+    const { payload } = await jwtVerify(token, secret());
+    return typeof payload.uid === "string" ? payload.uid : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Cookie ──────────────────────────────────────────────────────────────
+
+export function setSessionCookie(token: string): void {
+  cookies().set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+
+export function clearSessionCookie(): void {
+  cookies().set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+}
+
+// Текущий пользователь по cookie (или null). Бьёт в БД — вызывать на сервере.
+export async function getSessionUser(): Promise<User | null> {
+  const token = cookies().get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const uid = await verifySession(token);
+  if (!uid) return null;
+  return prisma.user.findUnique({ where: { id: uid } });
+}
+
+// Форма пользователя для клиента — без passwordHash и прочей внутрянки.
+export function publicUser(u: User) {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    plan: u.plan,
+    emailVerified: Boolean(u.emailVerified),
+  };
+}
+
+// ── Одноразовые токены (подтверждение почты / сброс пароля) ───────────────
+// В БД храним sha256(token), в письмо уходит сырой token. Так утечка дампа БД
+// не даёт рабочих ссылок.
+
+export type TokenType = "email_verify" | "password_reset";
+
+const TTL_MS: Record<TokenType, number> = {
+  email_verify: 1000 * 60 * 60 * 24, // 24 часа
+  password_reset: 1000 * 60 * 60, // 1 час
+};
+
+function sha256(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+// Создаёт токен данного типа, гася прежние того же типа у юзера. Возвращает
+// сырой токен для ссылки.
+export async function createToken(userId: string, type: TokenType): Promise<string> {
+  const raw = randomBytes(32).toString("hex");
+  await prisma.verificationToken.deleteMany({ where: { userId, type } });
+  await prisma.verificationToken.create({
+    data: {
+      tokenHash: sha256(raw),
+      type,
+      userId,
+      expiresAt: new Date(Date.now() + TTL_MS[type]),
+    },
+  });
+  return raw;
+}
+
+// Проверяет и ПОГАШАЕТ токен. Возвращает userId или null (нет/чужой тип/истёк).
+export async function consumeToken(raw: string, type: TokenType): Promise<string | null> {
+  if (!raw) return null;
+  const rec = await prisma.verificationToken.findUnique({
+    where: { tokenHash: sha256(raw) },
+  });
+  if (!rec || rec.type !== type) return null;
+  await prisma.verificationToken.delete({ where: { id: rec.id } });
+  if (rec.expiresAt < new Date()) return null;
+  return rec.userId;
+}

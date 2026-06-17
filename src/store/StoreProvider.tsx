@@ -9,11 +9,13 @@ import {
   type ChatMessage,
 } from "./chatSlice";
 import { hydrateSettings } from "./settingsSlice";
-import { authenticated, type AuthUser } from "./authSlice";
+import { authHydrated } from "./authSlice";
+import { fetchMe } from "@/lib/auth-client";
 
 const CHAT_KEY = "creative-chat:conversations-v1";
 const SETTINGS_KEY = "creative-chat:settings-v1";
-const AUTH_KEY = "creative-chat:auth-v1";
+// Старый ключ мок-авторизации — больше не пишем, но подчищаем при гидратации.
+const LEGACY_AUTH_KEY = "creative-chat:auth-v1";
 const LEGACY_CHAT_KEY = "creative-chat:chat-state-v1";
 
 type PersistedChat = {
@@ -58,6 +60,8 @@ export default function StoreProvider({
     if (!hydratedRef.current) {
       hydratedRef.current = true;
       hydrateOnce();
+      // Auth живёт в httpOnly-cookie на сервере — тянем актуального юзера.
+      fetchMe().then((user) => store.dispatch(authHydrated(user)));
     }
 
     const unsubscribe = store.subscribe(() => {
@@ -69,12 +73,7 @@ export default function StoreProvider({
           JSON.stringify({ conversations, activeId } satisfies PersistedChat)
         );
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
-        // auth — мок, но персистим, иначе вход «не прилипает» после перезагрузки.
-        if (state.auth.user) {
-          localStorage.setItem(AUTH_KEY, JSON.stringify(state.auth.user));
-        } else {
-          localStorage.removeItem(AUTH_KEY);
-        }
+        // auth НЕ персистим в localStorage — источник правды это серверная cookie.
       } catch (err) {
         console.warn("[persist] save failed", err);
       }
@@ -118,11 +117,11 @@ function hydrateOnce() {
       console.warn("[persist] settings hydrate failed", err);
     }
 
-    // ── Auth (мок) ──────────────────────────────────────────────────────
+    // ── Auth ────────────────────────────────────────────────────────────
+    // Чистим устаревший мок-ключ (вход теперь живёт в серверной cookie).
     try {
-      const raw = localStorage.getItem(AUTH_KEY);
-      if (raw) store.dispatch(authenticated(JSON.parse(raw) as AuthUser));
-    } catch (err) {
-      console.warn("[persist] auth hydrate failed", err);
+      localStorage.removeItem(LEGACY_AUTH_KEY);
+    } catch {
+      /* ignore */
     }
 }

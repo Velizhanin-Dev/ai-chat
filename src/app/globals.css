@@ -156,6 +156,21 @@ section[id] {
   transform: none;
 }
 
+/* Cookie-плашка: мягкий выезд снизу при появлении (ease-out на входе). */
+@keyframes cookie-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cookie-banner {
+  animation: cookie-slide-up 250ms ease-out;
+}
+
 /* Уважаем системную настройку «меньше движения» (UX: motion sensitivity). */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -165,5 +180,8 @@ section[id] {
     opacity: 1 !important;
     transform: none !important;
     transition: none !important;
+  }
+  .cookie-banner {
+    animation: none !important;
   }
 }

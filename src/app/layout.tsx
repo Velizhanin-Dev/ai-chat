@@ -7,6 +7,7 @@ import { Manrope } from "next/font/google";
 import { MantineProvider, ColorSchemeScript } from "@mantine/core";
 import StoreProvider from "@/store/StoreProvider";
 import AppShellLayout from "@/components/Shell/AppShell";
+import CookieBanner from "@/components/CookieBanner";
 import { theme } from "@/theme";
 
 // Рабочий фолбэк к фирменному RandomGrotesque: близкий по характеру grotesque
@@ -20,6 +21,13 @@ const brandFont = Manrope({
 export const metadata: Metadata = {
   title: "VELIZHANIN AI",
   description: "AI-ассистент по методике YouTube-контента Николая Велижанина",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/logo.png", type: "image/png" },
+    ],
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({
@@ -36,6 +44,7 @@ export default function RootLayout({
         <MantineProvider defaultColorScheme="auto" theme={theme}>
           <StoreProvider>
             <AppShellLayout>{children}</AppShellLayout>
+            <CookieBanner />
           </StoreProvider>
         </MantineProvider>
       </body>

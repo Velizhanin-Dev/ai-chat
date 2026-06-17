@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Group, Text, ThemeIcon } from "@mantine/core";
-import { IconBrain } from "@tabler/icons-react";
+import { Group, Text } from "@mantine/core";
+import LogoMark from "./LogoMark";
 
 // Единый логотип бренда для лендинга и шапки приложения.
 // Кликабельный (по умолчанию ведёт на /), типографика совпадает с лендингом:
@@ -22,14 +22,7 @@ export default function Logo({
       aria-label="VELIZHANIN AI — на главную"
     >
       <Group gap="xs" wrap="nowrap">
-        <ThemeIcon
-          size="lg"
-          radius="md"
-          variant="gradient"
-          gradient={{ from: "brand.5", to: "brand.7", deg: 135 }}
-        >
-          <IconBrain size={22} />
-        </ThemeIcon>
+        <LogoMark box="lg" glyph={22} />
         <Text fw={600} fz="lg" style={{ letterSpacing: "-0.02em" }}>
           VELIZHANIN&nbsp;AI
         </Text>

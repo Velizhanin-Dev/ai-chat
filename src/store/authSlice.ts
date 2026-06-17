@@ -1,9 +1,9 @@
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 
-// ── Лёгкий МОК авторизации ────────────────────────────────────────────────
-// Бэкенд на заглушках: «вход»/«регистрация» просто кладут фейкового юзера в
-// стейт. Без сервера, без токенов, без персиста (стейт живёт до перезагрузки
-// страницы). Цель — дать прокликать весь продукт, а не реальная auth-логика.
+// ── Auth (реальный бэкенд) ────────────────────────────────────────────────
+// Источник правды — httpOnly-cookie с JWT на сервере (см. src/lib/auth.ts).
+// В Redux держим только «снимок» пользователя для UI; он гидратируется через
+// GET /api/auth/me при загрузке приложения (см. StoreProvider).
 
 export type PlanId = "start" | "blogger" | "studio";
 
@@ -18,41 +18,40 @@ export interface AuthUser {
   name: string;
   email: string;
   plan: PlanId;
+  emailVerified: boolean;
 }
 
 interface AuthState {
   user: AuthUser | null;
+  // false до первого ответа /api/auth/me — чтобы UI не моргал «гость → юзер».
+  ready: boolean;
 }
 
-const initialState: AuthState = { user: null };
+const initialState: AuthState = { user: null, ready: false };
 
 const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
+    // Успешный вход/регистрация.
     authenticated(state, action: PayloadAction<AuthUser>) {
       state.user = action.payload;
+      state.ready = true;
+    },
+    // Результат гидратации с сервера (юзер или гость) — помечает ready.
+    authHydrated(state, action: PayloadAction<AuthUser | null>) {
+      state.user = action.payload;
+      state.ready = true;
     },
     setPlan(state, action: PayloadAction<PlanId>) {
       if (state.user) state.user.plan = action.payload;
     },
     loggedOut(state) {
       state.user = null;
+      state.ready = true;
     },
   },
 });
 
-export const { authenticated, setPlan, loggedOut } = authSlice.actions;
+export const { authenticated, authHydrated, setPlan, loggedOut } = authSlice.actions;
 export default authSlice.reducer;
-
-// Хелпер: собрать правдоподобное имя/юзера из email для мок-входа.
-export function mockUserFromEmail(email: string, plan: PlanId = "blogger"): AuthUser {
-  const raw = email.split("@")[0].replace(/[._-]+/g, " ").trim();
-  const name = raw
-    ? raw
-        .split(" ")
-        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-        .join(" ")
-    : "Пользователь";
-  return { id: "mock-user", name, email, plan };
-}

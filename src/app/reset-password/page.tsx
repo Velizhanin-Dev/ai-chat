@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "@mantine/form";
@@ -11,13 +11,22 @@ import {
   Anchor,
   Text,
   ThemeIcon,
+  Alert,
 } from "@mantine/core";
-import { IconCircleCheck } from "@tabler/icons-react";
+import { IconCircleCheck, IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
+import { apiResetPassword } from "@/lib/auth-client";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [done, setDone] = useState(false);
+  const [token, setToken] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setToken(new URLSearchParams(window.location.search).get("token"));
+  }, []);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -28,6 +37,22 @@ export default function ResetPasswordPage() {
         v === values.password ? null : "Пароли не совпадают",
     },
   });
+
+  const submit = async (values: { password: string }) => {
+    if (!token) {
+      setError("Ссылка недействительна или устарела");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    const res = await apiResetPassword(token, values.password);
+    setLoading(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setDone(true);
+  };
 
   if (done) {
     return (
@@ -65,8 +90,13 @@ export default function ResetPasswordPage() {
         </Text>
       }
     >
-      <form onSubmit={form.onSubmit(() => setDone(true))}>
+      <form onSubmit={form.onSubmit(submit)}>
         <Stack gap="md">
+          {error && (
+            <Alert color="red" variant="light" icon={<IconAlertCircle size={16} />} p="xs">
+              {error}
+            </Alert>
+          )}
           <PasswordInput
             label="Новый пароль"
             placeholder="Минимум 8 символов"
@@ -83,7 +113,7 @@ export default function ResetPasswordPage() {
             key={form.key("confirm")}
             {...form.getInputProps("confirm")}
           />
-          <Button type="submit" radius="xl" size="md" color="brand" fullWidth>
+          <Button type="submit" radius="xl" size="md" color="brand" fullWidth loading={loading}>
             Сохранить пароль
           </Button>
         </Stack>

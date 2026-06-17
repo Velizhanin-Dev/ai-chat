@@ -31,3 +31,36 @@ model ChatMessage {
   sessionId String
   createdAt DateTime @default(now())
 }
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+// Реальная регистрация/вход на бэкенде: пароль хранится хэшем (bcrypt),
+// сессия — подписанный JWT в httpOnly-cookie (см. src/lib/auth.ts).
+
+model User {
+  id            String              @id @default(cuid())
+  email         String              @unique
+  name          String
+  passwordHash  String
+  // План тарифа: "start" | "blogger" | "studio" (см. PlanId в authSlice).
+  plan          String              @default("start")
+  // Когда подтверждён email. null = не подтверждён (вход пока не блокируем).
+  emailVerified DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  tokens        VerificationToken[]
+}
+
+// Одноразовые токены: подтверждение почты и сброс пароля. В БД лежит ХЭШ
+// токена (sha256), в письмо уходит сырой токен. type: "email_verify" |
+// "password_reset".
+model VerificationToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  type      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId, type])
+}

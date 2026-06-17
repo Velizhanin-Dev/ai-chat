@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   AppShell,
@@ -33,6 +34,7 @@ import {
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { loggedOut, PLAN_LABEL } from "@/store/authSlice";
+import { apiLogout } from "@/lib/auth-client";
 import {
   startNewChat,
   setActiveConversation,
@@ -72,11 +74,14 @@ export default function AppShellLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { setColorScheme } = useMantineColorScheme();
-  // getInitialValueInEffect: см. LandingNav — гасит hydration mismatch на иконке
-  // переключателя темы (первый клиентский рендер совпадает с серверным "light").
   const computedColorScheme = useComputedColorScheme("light", {
     getInitialValueInEffect: true,
   });
+  // Иконку темы рисуем только после маунта — см. подробный комментарий в
+  // LandingNav. getInitialValueInEffect не покрывает случай явно сохранённой в
+  // localStorage темы (читается синхронно), поэтому добавляем mount-гейт.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const user = useAppSelector((s) => s.auth.user);
   const plan = useAppSelector((s) => s.settings.plan);
   const conversations = useAppSelector((s) => s.chat.conversations);
@@ -87,7 +92,8 @@ export default function AppShellLayout({
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await apiLogout(); // гасим серверную cookie
     dispatch(loggedOut());
     router.push("/");
   };
@@ -227,7 +233,7 @@ export default function AppShellLayout({
                   onClick={toggleColorScheme}
                   aria-label="Переключить тему"
                 >
-                  {computedColorScheme === "dark" ? (
+                  {mounted && computedColorScheme === "dark" ? (
                     <IconSun size={18} />
                   ) : (
                     <IconMoon size={18} />

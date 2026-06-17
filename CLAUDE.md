@@ -48,21 +48,48 @@ AI-ассистент Велижанина (методика КМК) в форм
 - 🟢 **Логотип** — единый кликабельный `components/Brand/Logo.tsx` (одна типографика
   на лендинге и в шапке приложения). В шапке ведёт на `/chat`.
 - 🟡 **Настройки (модалка)** — `components/Settings/SettingsModal.tsx`, открывается из
-  меню профиля **только для залогиненных** (кнопка скрыта для гостей). Вкладки: Основные
-  (поле «о себе» → `settings.aboutYou`, реально подгружается в нейронку: `ChatInput` шлёт
-  в `/api/chat`, `route.ts` вставляет отдельным system-блоком в конец), Биллинг (карточки
-  тарифов + мок-оплата, тариф в `settings.plan`), Язык (пока только русский). Слайс —
-  `store/settingsSlice.ts`.
-- 🟡 **Авторизация (мок)** — страницы `login`/`register`/`forgot-password`/`reset-password`/
-  `verify-email` + `store/authSlice.ts`. Логин кладёт фейкового юзера и **персистится**
-  (`…:auth-v1`), поэтому вход «прилипает» после перезагрузки. Реального бэкенда и модели
-  `User` в `schema.prisma` пока нет.
+  меню профиля **только для залогиненных** (кнопка скрыта для гостей). Вкладки: Основные,
+  Биллинг, Язык. Слайс — `store/settingsSlice.ts`.
+  - **Основные → Аккаунт:** имя и почта в один ряд (по `TextInput`). Имя «как обращаться» —
+    редактируемое, **автосейв с дебаунсом** (700 мс, без кнопки): `PATCH /api/auth/me`
+    обновляет `User.name` и диспатчит `authenticated` → шапка/сайдбар подхватывают новое имя;
+    в поле — лоадер при сохранении и галочка после. Почта — `readOnly`-инпут с иконкой
+    статуса подтверждения; если `emailVerified=false`, ниже кнопка «Отправить заново»
+    (`/api/auth/resend-verification`).
+  - **Основные → О себе:** `settings.aboutYou`, реально подгружается в нейронку (`ChatInput`
+    шлёт в `/api/chat`, `route.ts` вставляет отдельным system-блоком в конец).
+  - **Биллинг:** карточки тарифов + мок-оплата, тариф в `settings.plan` (без бэкенда).
+  - **Язык:** пока только русский.
+- 🟢 **Авторизация (реальный бэкенд)** — email+пароль на своём бэкенде, без OAuth
+  (VK/Яндекс пока недоступны — кнопки `SocialButtons` задизейблены «скоро»).
+  - **Сессия:** подписанный JWT (`jose`, HS256) в httpOnly-cookie `cc_session` (30 дней),
+    сервер сессии не хранит. Хелперы — `src/lib/auth.ts` (bcrypt-хэш пароля, sign/verify
+    JWT, set/clear cookie, `getSessionUser`, одноразовые токены). `JWT_SECRET` в env.
+  - **Модели БД** (`schema.prisma`): `User` (email, name, passwordHash, plan, emailVerified)
+    и `VerificationToken` (sha256-хэш токена, type `email_verify`|`password_reset`, TTL).
+    Миграция `add_user_auth`.
+  - **API** `src/app/api/auth/*`: `register`, `login`, `logout`, `me`, `verify-email`,
+    `resend-verification`, `forgot-password`, `reset-password`. Без энумерации почты
+    (логин и forgot отвечают одинаково независимо от наличия юзера).
+  - **Письма:** Unisender (метод `sendEmail`, `src/lib/mail.ts`) — подтверждение почты и
+    сброс пароля. Без `UNISENDER_API_KEY`/`UNISENDER_LIST_ID` письмо не уходит, ссылка
+    пишется в лог сервера (dev). `EMAIL_FROM` (sender_name + подтверждённый sender_email),
+    `UNISENDER_LIST_ID` (список для отписки) — в env.
+  - **Verify-gate выключен:** регистрация сразу логинит, письмо подтверждения уходит, но
+    вход не блокируется (`emailVerified` пишем для будущего гейта).
+  - **Клиент:** `store/authSlice.ts` (флаг `ready`, источник правды — серверная cookie,
+    в localStorage auth больше не персистим), `src/lib/auth-client.ts` (обёртка над API),
+    гидратация через `GET /api/auth/me` в `store/StoreProvider.tsx`. Auth-страницы дёргают
+    реальное API.
 
 ### 🔴 Критично (без этого продавать нельзя)
 
-1. **Реальная авторизация** — модель `User` + хэш пароля; сессии/JWT
-   (NextAuth/Auth.js или своё); рабочие роуты register/login/verify-email/reset-password;
-   провайдер транзакционных писем (Resend / SMTP / Unisender).
+1. 🟢 **Реальная авторизация** — сделано (см. «Уже есть» → «Авторизация (реальный
+   бэкенд)»): модель `User` + bcrypt-хэш; свой JWT в httpOnly-cookie; роуты
+   register/login/logout/me/verify-email/reset-password/forgot-password; письма через
+   Unisender. Осталось от владельца: завести `UNISENDER_API_KEY` + `UNISENDER_LIST_ID` +
+   подтверждённый sender_email (`EMAIL_FROM`) для боевой отправки писем; на проде задать
+   стойкий `JWT_SECRET`.
 2. **Платежи и подписки** — RU-эквайринг (ЮKassa / CloudPayments / Робокасса / Продамус);
    модели `Subscription` / `Payment` / `Plan`; тарифы (free/pro); вебхуки оплаты;
    продление/отмена. Онлайн-касса по 54-ФЗ (обычно даёт эквайер).
