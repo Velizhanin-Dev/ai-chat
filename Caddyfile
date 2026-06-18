@@ -1,0 +1,17 @@
+# {$DOMAIN} и {$ACME_EMAIL} подставляются из .env при старте контейнера.
+
+{
+	# почта для Let's Encrypt (уведомления об истечении). Необязательно, но желательно.
+	email {$ACME_EMAIL}
+}
+
+# основной домен -> приложение. Caddy сам выпишет и продлит HTTPS-сертификат.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:3000
+}
+
+# www -> канонический apex (301), чтобы не плодить дубли.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

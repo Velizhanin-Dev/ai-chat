@@ -6,8 +6,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: creative_chat
+    # слушаем только localhost: снаружи в БД не залезть, доступ — через SSH-туннель.
+    # app ходит в postgres по внутренней docker-сети (host "postgres"), порт ему не нужен.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -35,8 +37,9 @@ services:
       dockerfile: Dockerfile
       target: runner
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # наружу порт не публикуем — трафик идёт через Caddy по внутренней сети.
+    expose:
+      - "3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,3 +49,19 @@ services:
       - .env
     environment:
       POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/creative_chat
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    env_file:
+      - .env # отсюда берутся DOMAIN и ACME_EMAIL
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data # сюда Caddy кладёт выписанные сертификаты
+      - ./data/caddy/config:/config
