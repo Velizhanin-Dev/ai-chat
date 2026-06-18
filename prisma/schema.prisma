@@ -40,7 +40,8 @@ model User {
   id            String              @id @default(cuid())
   email         String              @unique
   name          String
-  passwordHash  String
+  // null у OAuth-юзеров (вход через VK/Яндекс, своего пароля нет).
+  passwordHash  String?
   // План тарифа: "start" | "blogger" | "studio" (см. PlanId в authSlice).
   plan          String              @default("start")
   // Когда подтверждён email. null = не подтверждён (вход пока не блокируем).
@@ -53,6 +54,22 @@ model User {
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   tokens        VerificationToken[]
+  oauthAccounts OAuthAccount[]
+}
+
+// Привязка соц-аккаунта (VK / Яндекс) к пользователю. Матчим вход по паре
+// (provider, providerAccountId) — устойчиво к смене email; email опционален
+// (VK может его не отдать). См. src/lib/oauth.ts.
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  provider          String   // "yandex" | "vk"
+  providerAccountId String   // id пользователя у провайдера
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 // Одноразовые токены: подтверждение почты и сброс пароля. В БД лежит ХЭШ

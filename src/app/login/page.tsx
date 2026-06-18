@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "@mantine/form";
@@ -25,11 +25,29 @@ import { apiLogin } from "@/lib/auth-client";
 
 const APP_HOME = "/chat";
 
+// Сообщения по кодам ошибок из OAuth-колбэка (?error=...).
+const OAUTH_ERRORS: Record<string, string> = {
+  oauth_unavailable: "Вход через эту соцсеть пока не подключён.",
+  oauth_unknown_provider: "Неизвестный способ входа.",
+  oauth_denied: "Вход через соцсеть отменён.",
+  oauth_failed: "Не удалось войти через соцсеть. Попробуйте ещё раз.",
+  oauth_state_missing: "Сессия входа истекла. Попробуйте ещё раз.",
+  oauth_state_bad: "Сессия входа повреждена. Попробуйте ещё раз.",
+  oauth_state_mismatch: "Сессия входа не совпала. Попробуйте ещё раз.",
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Ошибка после неудачного OAuth-редиректа (?error=...). Читаем на клиенте,
+  // чтобы не тащить useSearchParams (требует Suspense на странице).
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("error");
+    if (code && OAUTH_ERRORS[code]) setError(OAUTH_ERRORS[code]);
+  }, []);
 
   const form = useForm({
     mode: "uncontrolled",

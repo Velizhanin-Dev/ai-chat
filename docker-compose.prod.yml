@@ -1,0 +1,54 @@
+# Прод-стек: app + postgres + миграции. Запуск:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Отличия от dev docker-compose.yml:
+#  - app слушает ТОЛЬКО 127.0.0.1:3000 (наружу его публикует nginx-reverse-proxy
+#    на хосте, см. deploy/nginx/velizhanin.conf);
+#  - postgres НЕ публикуется наружу (только внутренняя docker-сеть);
+#  - пароль postgres и прочие секреты берутся из .env (не хардкод).
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан в .env}
+      POSTGRES_DB: ${POSTGRES_DB:-creative_chat}
+    # Порт наружу НЕ публикуем — БД доступна только сервисам в этой сети.
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    # Привязка к localhost: контейнер виден только nginx на этом же хосте.
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env

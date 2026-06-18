@@ -72,13 +72,35 @@ export function clearSessionCookie(): void {
   });
 }
 
+// Конфиг сессионной cookie для установки на конкретный Response (например,
+// NextResponse.redirect в OAuth-колбэке — там cookies() из next/headers на
+// объект редиректа не попадёт). Совместим с res.cookies.set(...).
+export function sessionCookie(token: string) {
+  return {
+    name: SESSION_COOKIE,
+    value: token,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  };
+}
+
 // Текущий пользователь по cookie (или null). Бьёт в БД — вызывать на сервере.
 export async function getSessionUser(): Promise<User | null> {
   const token = cookies().get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const uid = await verifySession(token);
   if (!uid) return null;
-  return prisma.user.findUnique({ where: { id: uid } });
+  // Сбой БД не должен ронять весь layout (он засевает юзера на КАЖДОЙ странице).
+  // При ошибке деградируем до гостя.
+  try {
+    return await prisma.user.findUnique({ where: { id: uid } });
+  } catch (err) {
+    console.error("[auth] getSessionUser db error:", err);
+    return null;
+  }
 }
 
 // Форма пользователя для клиента — без passwordHash и прочей внутрянки.

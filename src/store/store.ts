@@ -1,12 +1,10 @@
 import { combineReducers, configureStore } from "@reduxjs/toolkit";
 import chatReducer from "./chatSlice";
-import ingestReducer from "./ingestSlice";
 import authReducer from "./authSlice";
 import settingsReducer from "./settingsSlice";
 
 const rootReducer = combineReducers({
   chat: chatReducer,
-  ingest: ingestReducer,
   auth: authReducer,
   settings: settingsReducer,
 });

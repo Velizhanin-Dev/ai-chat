@@ -20,8 +20,9 @@ export async function POST(req: Request) {
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
-  // Один и тот же текст для «нет юзера» и «пароль не подошёл» — без энумерации.
-  if (!user || !(await verifyPassword(password, user.passwordHash))) {
+  // Один и тот же текст для «нет юзера» / «пароль не подошёл» / «вход только
+  // через соцсеть» (passwordHash=null у OAuth-юзеров) — без энумерации.
+  if (!user || !user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
     return apiError("Неверная почта или пароль", 401);
   }
 
