@@ -115,17 +115,30 @@ AI-ассистент Велижанина (методика КМК) в форм
     заново» → открывает `BriefModal` (см. отдельный пункт «Бриф клиента + карта харизмы»).
   - **Биллинг:** карточки тарифов + мок-оплата, тариф в `settings.plan` (без бэкенда).
   - **Язык:** пока только русский.
-- 🟢 **Авторизация (реальный бэкенд)** — email+пароль на своём бэкенде, без OAuth
-  (VK/Яндекс пока недоступны — кнопки `SocialButtons` задизейблены «скоро»).
+- 🟢 **Авторизация (реальный бэкенд)** — email+пароль и OAuth (VK ID / Яндекс) на
+  своём бэкенде.
   - **Сессия:** подписанный JWT (`jose`, HS256) в httpOnly-cookie `cc_session` (30 дней),
     сервер сессии не хранит. Хелперы — `src/lib/auth.ts` (bcrypt-хэш пароля, sign/verify
     JWT, set/clear cookie, `getSessionUser`, одноразовые токены). `JWT_SECRET` в env.
-  - **Модели БД** (`schema.prisma`): `User` (email, name, passwordHash, plan, emailVerified)
-    и `VerificationToken` (sha256-хэш токена, type `email_verify`|`password_reset`, TTL).
-    Миграция `add_user_auth`.
+  - **Модели БД** (`schema.prisma`): `User` (email, name, `passwordHash` — nullable,
+    у OAuth-юзеров null; plan, emailVerified), `VerificationToken` (sha256-хэш токена,
+    type `email_verify`|`password_reset`, TTL) и `OAuthAccount` (provider,
+    providerAccountId, userId; `@@unique([provider, providerAccountId])`). Миграции
+    `add_user_auth`, `add_oauth`.
   - **API** `src/app/api/auth/*`: `register`, `login`, `logout`, `me`, `verify-email`,
     `resend-verification`, `forgot-password`, `reset-password`. Без энумерации почты
-    (логин и forgot отвечают одинаково независимо от наличия юзера).
+    (логин и forgot отвечают одинаково независимо от наличия юзера). Логин не пускает
+    OAuth-юзеров (passwordHash=null) — тот же ответ «неверная почта/пароль».
+  - **OAuth (VK ID / Яндекс):** `src/lib/oauth.ts` (конфиги провайдеров, PKCE для VK,
+    обмен кода, профиль, `findOrCreateOAuthUser`). Старт — `GET /api/auth/oauth/[provider]`
+    (генерит state + PKCE-verifier, кладёт в httpOnly-cookie `oauth_state`, редиректит на
+    провайдера). Колбэк — `GET /api/auth/callback/[provider]` (сверяет state, меняет code
+    на профиль, находит/создаёт юзера по `(provider, providerAccountId)` → фолбэк email,
+    ставит сессию, редирект на `next`/`/chat`; ошибки → `/login?error=...`, маппинг в
+    `LoginPage`). Redirect URI: `{NEXT_PUBLIC_APP_URL}/api/auth/callback/{yandex|vk}`.
+    Ключи — `YANDEX_CLIENT_ID/SECRET`, `VK_CLIENT_ID` (+опц. `VK_CLIENT_SECRET`) в env;
+    нет ключей → кнопка ведёт на `?error=oauth_unavailable`. `SocialButtons` — обычные
+    ссылки на старт. **Не протестировано вживую** (нужны реальные ключи провайдеров).
   - **Письма:** Unisender (метод `sendEmail`, `src/lib/mail.ts`) — подтверждение почты и
     сброс пароля. Без `UNISENDER_API_KEY`/`UNISENDER_LIST_ID` письмо не уходит, ссылка
     пишется в лог сервера (dev). `EMAIL_FROM` (sender_name + подтверждённый sender_email),
