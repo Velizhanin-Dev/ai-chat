@@ -13,6 +13,8 @@
  */
 import { KNOWLEDGE_BASE } from "./knowledge-base";
 import { VIDEO_FORMATS } from "./knowledge-base-formats";
+import { TELEGRAM_KNOWLEDGE_CLOSED } from "./knowledge-base-tg-closed";
+import { TELEGRAM_KNOWLEDGE } from "./knowledge-base-tg-open";
 
 interface Chunk {
   chapter: string;
@@ -243,4 +245,108 @@ export function selectFormatsBlock(query: string, k = 2): string {
   if (scored.length === 0) return VIDEO_FORMATS;
   const body = scored.map((x) => x.e.text).join("\n\n---\n\n");
   return `${FORMATS.header}\n\n---\n\n${body}`;
+}
+
+// ── Telegram: ретрив релевантных секций вместо загрузки всего канала ─────────────
+//
+// Канал целиком ~37k токенов: на холодном входе Opus это ~$0.18 (без кэша) или
+// ~$0.37 (запись 1ч-кэша) — а при редком трафике кэш не успевает окупиться. Поэтому
+// под запрос достаём только релевантные секции (~10k токенов → ~$0.05), как у книги.
+// Тот же BM25, чанк = секция по «## заголовку» (крупные дробим как главы книги).
+
+interface TgChunk {
+  section: string;
+  text: string;
+  tf: Map<string, number>;
+  len: number;
+}
+
+/** Разбить канал на чанки: секции по «## заголовкам», крупные — дополнительно. */
+function chunkTg(raw: string): TgChunk[] {
+  const sections = raw.split(/\n(?=#{1,3}\s)/);
+  const chunks: TgChunk[] = [];
+  for (const sec of sections) {
+    const section = (sec.match(/^#{1,3}\s*(.+)/)?.[1] ?? "").trim();
+    for (const piece of chunkChapterBody(sec)) {
+      const terms = tokenize(piece);
+      if (terms.length === 0) continue;
+      chunks.push({ section, text: piece, tf: termFreq(terms), len: terms.length });
+    }
+  }
+  return chunks;
+}
+
+interface TgHit {
+  chunk: TgChunk;
+  score: number;
+}
+
+/** BM25-поиск поверх готового набора TG-чанков (свой индекс на канал). */
+function makeTgSearch(chunks: TgChunk[]): (q: string, k: number) => TgHit[] {
+  const n = chunks.length;
+  const avgdl = n ? chunks.reduce((a, c) => a + c.len, 0) / n : 0;
+  const df = new Map<string, number>();
+  for (const c of chunks) c.tf.forEach((_, t) => df.set(t, (df.get(t) ?? 0) + 1));
+  const tgIdf = (t: string) => {
+    const d = df.get(t) ?? 0;
+    return Math.log(1 + (n - d + 0.5) / (d + 0.5));
+  };
+  return (query, k) => {
+    const qTerms = Array.from(new Set(tokenize(query)));
+    if (qTerms.length === 0 || n === 0) return [];
+    const scored = chunks.map((c) => {
+      let score = 0;
+      for (const t of qTerms) {
+        const tf = c.tf.get(t);
+        if (!tf) continue;
+        const denom = tf + K1 * (1 - B + (B * c.len) / avgdl);
+        score += tgIdf(t) * ((tf * (K1 + 1)) / denom);
+      }
+      return { chunk: c, score };
+    });
+    return scored
+      .filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
+  };
+}
+
+// Индексы строятся один раз на инстанс.
+const TG_CLOSED_SEARCH = makeTgSearch(chunkTg(TELEGRAM_KNOWLEDGE_CLOSED));
+const TG_OPEN_SEARCH = makeTgSearch(chunkTg(TELEGRAM_KNOWLEDGE));
+
+// Бюджет выдачи: ~30k символов ≈ ~10k токенов → ~$0.05 холодного входа на Opus.
+const TG_BUDGET_CHARS = 30000;
+
+/**
+ * Собрать system-блок из релевантных секций канала под бюджет. Берём top-кандидатов
+ * по BM25 и набираем, пока не упрёмся в бюджет. Обрамление «копируй дословно» — как
+ * у книги (LLM лучше копирует примеры, чем выполняет правила). Пусто — если не нашли.
+ */
+export function buildTgContextBlock(
+  query: string,
+  channel: "closed" | "open",
+  budgetChars = TG_BUDGET_CHARS
+): string {
+  const search = channel === "closed" ? TG_CLOSED_SEARCH : TG_OPEN_SEARCH;
+  const hits = search(query, 60);
+  if (hits.length === 0) return "";
+  const picked: TgChunk[] = [];
+  let used = 0;
+  for (const h of hits) {
+    if (picked.length > 0 && used + h.chunk.text.length > budgetChars) break;
+    picked.push(h.chunk);
+    used += h.chunk.text.length;
+  }
+  const label = channel === "closed" ? "закрытого" : "публичного";
+  const body = picked
+    .map((c) => (c.section ? `[${c.section}]\n${c.text}` : c.text))
+    .join("\n\n— — —\n\n");
+  return (
+    `# Посты из моего ${label} Telegram-канала по теме запроса\n\n` +
+    `Это мои реальные формулировки, кейсы и приёмы. Бери из них обороты, структуру и ` +
+    `конкретику ДОСЛОВНО — копируй форму, не пересказывай. Чего тут нет — не выдумывай, ` +
+    `скажи прямо.\n\n` +
+    body
+  );
 }

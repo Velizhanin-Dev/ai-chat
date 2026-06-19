@@ -2,9 +2,11 @@ import { NextRequest } from "next/server";
 import { getAnthropic } from "@/lib/anthropic";
 import type Anthropic from "@anthropic-ai/sdk";
 import { routeQuery, type RouteDecision } from "@/lib/router";
-import { buildBookContextBlock, selectFormatsBlock } from "@/lib/knowledge-retrieval";
-import { TELEGRAM_KNOWLEDGE_CLOSED } from "@/lib/knowledge-base-tg-closed";
-import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
+import {
+  buildBookContextBlock,
+  selectFormatsBlock,
+  buildTgContextBlock,
+} from "@/lib/knowledge-retrieval";
 import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
 import { sanitizeBrief, buildBriefBlock, isBriefComplete, type Brief } from "@/lib/brief";
@@ -113,32 +115,26 @@ function buildSystem(
     },
   ];
 
-  // TG целиком — статично; кэш-точка после TG (общая для всех short-запросов).
-  const tg: Anthropic.TextBlockParam[] = [];
-  if (route.tgClosed) {
-    tg.push({
-      type: "text",
-      text: `## Telegram-посты (закрытый канал):\n${TELEGRAM_KNOWLEDGE_CLOSED}`,
-    });
-  }
-  if (route.tgOpen) {
-    tg.push({
-      type: "text",
-      text: `## Telegram-посты (публичный канал):\n${TELEGRAM_KNOWLEDGE}`,
-    });
-  }
-  if (tg.length > 0) {
-    tg[tg.length - 1].cache_control = { type: "ephemeral", ttl: "1h" };
-    blocks.push(...tg);
-  }
-
-  // Форматы — 1–2 подходящих под запрос; детерминировано → своя кэш-точка.
+  // Форматы — 1–2 подходящих под запрос; детерминировано → кэш-точка. Идёт ПЕРЕД
+  // переменным TG/книгой, чтобы статичный префикс (хребет + форматы) кэшировался:
+  // кэш бьётся по префиксу, поэтому всё переменное — только после кэш-блоков.
   if (route.formats) {
     blocks.push({
       type: "text",
       text: selectFormatsBlock(query, 2),
       cache_control: { type: "ephemeral", ttl: "1h" },
     });
+  }
+
+  // TG — релевантные секции канала под запрос (ретрив, ~10k вместо ~37k), без кэша
+  // (разные каждый раз). Грузим только нужный канал. См. docs/context-cost-plan.md.
+  if (route.tgClosed) {
+    const tgBlock = buildTgContextBlock(query, "closed");
+    if (tgBlock) blocks.push({ type: "text", text: tgBlock });
+  }
+  if (route.tgOpen) {
+    const tgBlock = buildTgContextBlock(query, "open");
+    if (tgBlock) blocks.push({ type: "text", text: tgBlock });
   }
 
   // Книга — релевантные куски под запрос, без кэша (разные каждый раз).
