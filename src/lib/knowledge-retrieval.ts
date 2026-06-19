@@ -42,13 +42,69 @@ const STOPWORDS = new Set(
   ).split(/\s+/)
 );
 
-/** Нормализация в термы: нижний регистр, ё→е, слова из букв длиной ≥3, без стоп-слов. */
+// ── Русский Porter/Snowball-стеммер ─────────────────────────────────────────────
+// Приводит словоформы к основе, чтобы BM25 ловил «удержание / удержания / удержанию»
+// как один терм (recall ретрива по книге, TG и форматам). Применяется и к индексу,
+// и к запросу через общий tokenize() → консистентность гарантирована. Латиница и
+// цифры (нет гласных кириллицы) проходят без изменений. Стандартный алгоритм Снежка.
+const STEM_RVRE = /^(.*?[аеиоуыэюя])(.*)$/;
+const STEM_PERFECTIVE_GERUND =
+  /([ая](?:в|вши|вшись)|ив|ивши|ившись|ыв|ывши|ывшись)$/;
+const STEM_ADJECTIVE =
+  /(ее|ие|ые|ое|ими|ыми|ей|ий|ый|ой|ем|им|ым|ом|его|ого|ему|ому|их|ых|ую|юю|ая|яя|ою|ею)$/;
+const STEM_PARTICIPLE = /([ая](?:ем|нн|вш|ющ|щ)|ивш|ывш|ующ)$/;
+const STEM_REFLEXIVE = /(с[яь])$/;
+const STEM_VERB =
+  /([ая](?:ла|на|ете|йте|ли|й|л|ем|н|ло|но|ет|ют|ны|ть|ешь|нно)|ила|ыла|ена|ейте|уйте|ите|или|ыли|ей|уй|ил|ыл|им|ым|ен|ило|ыло|ено|ят|ует|уют|ит|ыт|ены|ить|ыть|ишь|ую|ю)$/;
+const STEM_NOUN =
+  /(а|ев|ов|ие|ье|е|иями|ями|ами|еи|ии|и|ией|ей|ой|ий|й|иям|ям|ием|ем|ам|ом|о|у|ах|иях|ях|ы|ь|ию|ью|ю|ия|ья|я)$/;
+const STEM_DERIVATIONAL =
+  /[^аеиоуыэюя][аеиоуыэюя]+[^аеиоуыэюя]+[аеиоуыэюя].*?(?:ость?)$/;
+const STEM_DER = /ость?$/;
+const STEM_SUPERLATIVE = /ейше?$/;
+const STEM_I = /и$/;
+const STEM_SOFT = /ь$/;
+const STEM_NN = /нн$/;
+
+function stemRu(word: string): string {
+  const m = STEM_RVRE.exec(word);
+  if (!m) return word; // нет гласной кириллицы (латиница/цифры) → как есть
+  const pre = m[1];
+  let rv = m[2];
+  // Шаг 1: совершенный деепричастный → иначе возвратность + (прил. | глагол | сущ.).
+  const afterPg = rv.replace(STEM_PERFECTIVE_GERUND, "");
+  if (afterPg !== rv) {
+    rv = afterPg;
+  } else {
+    rv = rv.replace(STEM_REFLEXIVE, "");
+    const afterAdj = rv.replace(STEM_ADJECTIVE, "");
+    if (afterAdj !== rv) {
+      rv = afterAdj.replace(STEM_PARTICIPLE, "");
+    } else {
+      const afterVerb = rv.replace(STEM_VERB, "");
+      rv = afterVerb !== rv ? afterVerb : rv.replace(STEM_NOUN, "");
+    }
+  }
+  // Шаг 2: убрать концевую «и».
+  rv = rv.replace(STEM_I, "");
+  // Шаг 3: деривационный суффикс «ость» только в R2.
+  if (STEM_DERIVATIONAL.test(pre + rv)) rv = rv.replace(STEM_DER, "");
+  // Шаг 4: нн→н, превосходная степень, мягкий знак.
+  rv = rv.replace(STEM_NN, "н");
+  const afterSup = rv.replace(STEM_SUPERLATIVE, "");
+  if (afterSup !== rv) rv = afterSup.replace(STEM_NN, "н");
+  rv = rv.replace(STEM_SOFT, "");
+  return pre + rv;
+}
+
+/** Нормализация в термы: нижний регистр, ё→е, слова из букв длиной ≥3, без стоп-слов,
+ *  стемминг к основе. Стеммим после стоп-фильтра (список стоп-слов — в исходных формах). */
 function tokenize(s: string): string[] {
   const out: string[] = [];
   const matches = s.toLowerCase().replace(/ё/g, "е").match(/[а-яa-z0-9]+/g);
   if (!matches) return out;
   for (const w of matches) {
-    if (w.length >= 3 && !STOPWORDS.has(w)) out.push(w);
+    if (w.length >= 3 && !STOPWORDS.has(w)) out.push(stemRu(w));
   }
   return out;
 }
