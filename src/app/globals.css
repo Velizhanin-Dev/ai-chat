@@ -144,6 +144,16 @@ section[id] {
   font-weight: 600;
 }
 
+/* Кликабельный слой базы знаний: подсветка-аффорданс, что это ссылка. */
+.lp-layer-link {
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.lp-layer-link:hover {
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -16px color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
 /* Геро: тёплый ambient сверху по центру, гаснущий в чистый фон.
    На тёмной теме акцент слабее — иначе низ геро резко контрастит со
    следующей секцией. */

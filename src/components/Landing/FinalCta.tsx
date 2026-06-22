@@ -16,7 +16,14 @@ import {
 import { IconBrain, IconArrowRight } from "@tabler/icons-react";
 import Reveal from "./Reveal";
 
-const FOOTER_COLS = [
+type FooterCol = {
+  title: string;
+  titleHref?: string;
+  titleExternal?: boolean;
+  links: { label: string; href: string; external?: boolean }[];
+};
+
+const FOOTER_COLS: FooterCol[] = [
   {
     title: "Продукт",
     links: [
@@ -29,13 +36,15 @@ const FOOTER_COLS = [
   {
     title: "Методика",
     links: [
-      { label: "12 форматов", href: "#features" },
+      { label: "100+ форматов", href: "#features" },
       { label: "Для кого", href: "#audiences" },
       { label: "Открыть чат", href: "/chat" },
     ],
   },
   {
-    title: "Студия",
+    title: "VELIZHANIN",
+    titleHref: "https://velizhanin.com",
+    titleExternal: true,
     links: [
       { label: "content-могущество", href: "https://velizhanin.com", external: true },
       { label: "velizhanin.com", href: "https://velizhanin.com", external: true },
@@ -66,10 +75,10 @@ export default function FinalCta() {
                   c="white"
                   style={{ fontSize: "clamp(1.8rem, 4vw, 3rem)", maxWidth: 720 }}
                 >
-                  Собери следующий сценарий вместе с Николаем
+                  Собери следующую съёмку вместе с Николаем
                 </Title>
                 <Text c="white" opacity={0.9} maw={560} size="lg">
-                  Опиши канал и задачу — получи рабочий хук и структуру за минуту.
+                  Опиши канал и задачу — получи рабочий КП и сценарии за минуту.
                   Бесплатно и без регистрации.
                 </Text>
                 <Button
@@ -115,15 +124,29 @@ export default function FinalCta() {
                 </Text>
               </Group>
               <Text size="sm" c="dimmed" maw={240}>
-                AI-сценарист на методике студии «content-могущество».
+                AI-продюсер по методике Николая Велижанина.
               </Text>
             </Stack>
 
             {FOOTER_COLS.map((col) => (
               <Stack key={col.title} gap="sm">
-                <Text fw={600} size="sm">
-                  {col.title}
-                </Text>
+                {col.titleHref ? (
+                  <Anchor
+                    component={Link}
+                    href={col.titleHref}
+                    target={col.titleExternal ? "_blank" : undefined}
+                    fw={600}
+                    size="sm"
+                    c="inherit"
+                    underline="never"
+                  >
+                    {col.title}
+                  </Anchor>
+                ) : (
+                  <Text fw={600} size="sm">
+                    {col.title}
+                  </Text>
+                )}
                 {col.links.map((l) => (
                   <Anchor
                     key={l.label}

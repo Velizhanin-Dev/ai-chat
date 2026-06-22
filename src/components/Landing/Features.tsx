@@ -11,6 +11,7 @@ import {
   ThemeIcon,
   Badge,
   List,
+  Anchor,
   rem,
 } from "@mantine/core";
 import {
@@ -24,6 +25,7 @@ import {
   IconMessage2Bolt,
   IconAdjustments,
   IconRefresh,
+  IconExternalLink,
 } from "@tabler/icons-react";
 import Section from "./Section";
 import SectionHeading from "./SectionHeading";
@@ -84,7 +86,9 @@ function QuoteVisual() {
         className="lp-h2"
         style={{ fontSize: "clamp(1.4rem, 2.4vw, 1.9rem)" }}
       >
-        «Не бывает плохих ниш, бывает только наша ограниченность».
+        «За восемь лет деятельности мы поработали в самых ебанутых нишах,
+        которые только могут быть. От обработки металла до продажи франшизы
+        шашлыка. И в каждой мы находили уникальное решение».
       </Text>
       <Group gap="xs" mt="lg">
         <ThemeIcon size="md" radius="xl" color="brand" variant="light">
@@ -99,34 +103,85 @@ function QuoteVisual() {
 }
 
 /* ── Визуал 2: слои базы знаний ───────────────────────────────────────── */
-const LAYERS = [
-  { icon: IconBook2, title: "Книга", note: "длинные видео: сценарий, удержание, превью" },
-  { icon: IconBrandTelegram, title: "Открытый канал", note: "ВИСП, рилсы, актуальные тренды" },
-  { icon: IconLockAccess, title: "Закрытый клуб", note: "кейсы и разборы из практики студии" },
-  { icon: IconLayoutGrid, title: "12 форматов", note: "эталонные структуры коротких видео" },
+const LAYERS: { icon: typeof IconBook2; title: string; note: string; href?: string }[] = [
+  {
+    icon: IconBook2,
+    title: "Книга",
+    note: "«YouTube для вашего бизнеса. Пошаговый план создания и развития YouTube-канала»",
+    href: "https://www.ozon.ru/product/youtube-dlya-vashego-biznesa-poshagovyy-plan-sozdaniya-i-razvitiya-youtube-kanala-velizhanin-nikolay-1673825797/",
+  },
+  {
+    icon: IconBrandTelegram,
+    title: "Открытый канал",
+    note: "ВИСП, рилсы, актуальные тренды",
+    href: "https://t.me/velizhanincom",
+  },
+  {
+    icon: IconLockAccess,
+    title: "Закрытый клуб",
+    note: "закрытое Telegram-сообщество «Контент могущество. Клуб»",
+    href: "https://t.me/content_mogushestvo_bot?start=utm_ai",
+  },
+  { icon: IconLayoutGrid, title: "100+ форматов", note: "эталонные структуры коротких видео" },
   { icon: IconAlertTriangle, title: "Антипаттерны", note: "ошибки, которые он не повторит" },
 ];
 
 function LayersVisual() {
   return (
     <Stack gap="sm">
-      {LAYERS.map((l) => (
-        <Paper key={l.title} radius="md" withBorder p="md" style={{ background: "var(--mantine-color-body)" }}>
-          <Group gap="md" wrap="nowrap">
-            <ThemeIcon size={40} radius="md" color="brand" variant="light">
-              <l.icon size={20} />
-            </ThemeIcon>
-            <div>
-              <Text fw={600} size="sm">
-                {l.title}
-              </Text>
-              <Text size="sm" c="dimmed">
-                {l.note}
-              </Text>
-            </div>
-          </Group>
-        </Paper>
-      ))}
+      {LAYERS.map((l) => {
+        const card = (
+          <Paper
+            radius="md"
+            withBorder
+            p="md"
+            className={l.href ? "lp-layer-link" : undefined}
+            style={{ background: "var(--mantine-color-body)" }}
+          >
+            <Group gap="md" wrap="nowrap" align="center">
+              <ThemeIcon size={40} radius="md" color="brand" variant="light">
+                <l.icon size={20} />
+              </ThemeIcon>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Group gap={6} wrap="nowrap">
+                  <Text fw={600} size="sm">
+                    {l.title}
+                  </Text>
+                  {l.href && (
+                    <Text span fw={600} size="xs" style={{ color: "var(--color-accent)" }}>
+                      перейти
+                    </Text>
+                  )}
+                </Group>
+                <Text size="sm" c="dimmed">
+                  {l.note}
+                </Text>
+              </div>
+              {l.href && (
+                <IconExternalLink
+                  size={18}
+                  style={{ color: "var(--color-accent)", flexShrink: 0 }}
+                />
+              )}
+            </Group>
+          </Paper>
+        );
+
+        return l.href ? (
+          <Anchor
+            key={l.title}
+            href={l.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            underline="never"
+            c="inherit"
+          >
+            {card}
+          </Anchor>
+        ) : (
+          <div key={l.title}>{card}</div>
+        );
+      })}
     </Stack>
   );
 }
@@ -134,12 +189,12 @@ function LayersVisual() {
 /* ── Визуал 3: 12 форматов (реальные названия из методики) ─────────────── */
 const FORMATS = [
   "оценка идей",
-  "реакция на новости",
+  "харизма айрон фист",
   "глупый вопрос",
   "пересказ фильма",
   "анекдот / притча",
   "история из детства",
-  "эксперимент",
+  "харизма илон маск",
   "«ебучий гений»",
   "«в России сейчас…»",
   "худший совет",
@@ -188,7 +243,7 @@ export default function Features() {
           <SectionHeading
             eyebrow="возможности"
             title="Не очередной чат-бот, а продюсер в кармане"
-            subtitle="Три причины, почему сценарии получаются рабочими, а не «обобщённым ИИ-бредом»."
+            subtitle="Три причины, почему контент получается рабочим, а не «обобщённым ИИ-бредом»."
           />
         </Reveal>
 
@@ -218,7 +273,7 @@ export default function Features() {
             <FeatureRow
               eyebrow="Любой формат"
               title="Сценарий под формат, а не «универсальный»"
-              text="Длинные видео 10+ минут и короткие рилсы/шортсы — со своей логикой. Для коротких есть 12 эталонных форматов: называешь идею — получаешь готовую структуру."
+              text="Впервые нейросеть, которая анализирует вашу харизму и предлагает идеи, которые подойдут вам и не подойдут вашим конкурентам. Идеи, которые вам будут легко даваться и в кайф сниматься. Только под вашу харизму."
               visual={<FormatsVisual />}
             />
           </Reveal>
