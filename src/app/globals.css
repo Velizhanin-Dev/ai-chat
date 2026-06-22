@@ -154,25 +154,12 @@ section[id] {
   box-shadow: 0 8px 24px -16px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 
-/* Карточка автора в герое: лёгкий 3D-разворот к левому тексту (только на
-   десктопе, где карточка стоит сбоку). На наведение — выпрямляется. */
-.lp-founder-3d {
-  transition: transform 0.4s ease, box-shadow 0.4s ease;
-}
-@media (min-width: 62em) {
-  .lp-founder-3d {
-    transform: perspective(1500px) rotateY(-9deg);
-    transform-origin: right center;
-  }
-  .lp-founder-3d:hover {
-    transform: perspective(1500px) rotateY(0deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .lp-founder-3d {
-    transform: none;
-    transition: none;
-  }
+/* Карточка про Николая в герое. Визуально «тише» окна чата (оно — демо
+   продукта, главный объект): нейтральная приподнятая поверхность без тени —
+   читается как встроенная панель «об авторе», а не второе окно. Фон ОБЯЗАН
+   быть непрозрачным — он прячет нижний край фото, заходящего за карточку. */
+.hero-speech-bubble {
+  background: transparent;
 }
 
 /* Геро: тёплый ambient сверху по центру, гаснущий в чистый фон.

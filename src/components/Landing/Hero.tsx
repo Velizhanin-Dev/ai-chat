@@ -6,16 +6,13 @@ import {
   Box,
   Container,
   Stack,
-  Group,
   Button,
   Text,
   Title,
   SimpleGrid,
-  Grid,
   Paper,
   ThemeIcon,
   List,
-  Divider,
   Flex,
 } from "@mantine/core";
 import {
@@ -38,7 +35,7 @@ const STATS: { value: string; label: string; real?: boolean }[] = [
   { value: "8 лет", label: "в производстве контента" },
 ];
 
-// Регалии Николая для карточки автора (правая колонка героя).
+// Регалии Николая для «речевого облака» рядом с фото.
 const CREDENTIALS: { icon: typeof IconBook2; text: React.ReactNode }[] = [
   { icon: IconBook2, text: <>Автор книги «YouTube для вашего бизнеса»</> },
   {
@@ -52,66 +49,32 @@ const CREDENTIALS: { icon: typeof IconBook2; text: React.ReactNode }[] = [
   },
   {
     icon: IconUsers,
-    text: (
-      <>
-        Среди клиентов: Михаил Гребенюк, Седа Каспарова, Светлана Наумова
-      </>
-    ),
+    text: <>Среди клиентов: Михаил Гребенюк, Седа Каспарова, Светлана Наумова</>,
   },
   { icon: IconBrandYoutube, text: <>110+ каналов на ежемесячном ведении</> },
 ];
 
-function FounderCard() {
+/** Содержимое карточки про Николая — общее для десктопного и мобильного
+ *  варианта. Фото заходит ЗА карточку (см. Hero), отдельный отступ не нужен. */
+function FounderBubble() {
   return (
-    <Paper
-      radius="lg"
-      withBorder
-      shadow="md"
-      p="xl"
-      className="lp-founder-3d"
-      style={{ background: "var(--mantine-color-body)" }}
-    >
-      <Flex
-        direction={{ base: "column", md: "row" }}
-        align={{ base: "center", md: "flex-start" }}
-        gap="lg"
-      >
-        <Image
-          src="/images/photo.jpg"
-          alt="Николай Велижанин"
-          width={132}
-          height={146}
-          priority
-          style={{
-            borderRadius: "var(--radius-lg)",
-            objectFit: "cover",
-            display: "block",
-            boxShadow: "0 10px 30px -14px color-mix(in srgb, var(--color-accent) 60%, transparent)",
-          }}
-        />
-        <Stack
-          gap={6}
-          ta={{ base: "center", md: "left" }}
-          style={{ flex: 1, minWidth: 220, alignSelf: "stretch" }}
-        >
-          <Text className="lp-h2" style={{ fontSize: "clamp(1.3rem, 2.2vw, 1.7rem)" }}>
-            Николай Велижанин
-          </Text>
-          <Text size="sm" c="dimmed" style={{ lineHeight: 1.5 }}>
-            Пионер контент-маркетинга в России с 2016 года, основатель крупнейшей
-            в СНГ студии по продвижению бизнеса в YouTube и не только.
-          </Text>
-        </Stack>
-      </Flex>
-
-      <Divider my="lg" />
+    <Paper radius="lg" p="lg" className="hero-speech-bubble">
+      <Stack gap={4} mb="sm">
+        <Text className="lp-h2" style={{ fontSize: "1.25rem", lineHeight: 1.2 }}>
+          Николай Велижанин
+        </Text>
+        <Text size="sm" c="dimmed" style={{ lineHeight: 1.5 }}>
+          Пионер контент-маркетинга в России с 2016 года, основатель крупнейшей
+          в СНГ студии по продвижению бизнеса в YouTube и не только.
+        </Text>
+      </Stack>
 
       <List
-        spacing="sm"
+        spacing="xs"
         center
         icon={
-          <ThemeIcon color="brand" size={26} radius="xl" variant="light">
-            <IconBook2 size={15} />
+          <ThemeIcon color="brand" size={24} radius="xl" variant="light">
+            <IconBook2 size={14} />
           </ThemeIcon>
         }
       >
@@ -119,12 +82,12 @@ function FounderCard() {
           <List.Item
             key={i}
             icon={
-              <ThemeIcon color="brand" size={26} radius="xl" variant="light">
-                <c.icon size={15} />
+              <ThemeIcon color="brand" size={24} radius="xl" variant="light">
+                <c.icon size={14} />
               </ThemeIcon>
             }
           >
-            <Text size="sm" style={{ lineHeight: 1.45 }}>
+            <Text size="sm" style={{ lineHeight: 1.4 }}>
               {c.text}
             </Text>
           </List.Item>
@@ -144,61 +107,107 @@ export default function Hero() {
       }}
     >
       <Container size="lg" px="md">
-        {/* Первый экран: слева оффер + CTA, справа карточка автора с регалиями.
-            Рендерим сразу, без scroll-reveal, чтобы было видно мгновенно. */}
-        <Grid gutter={{ base: "xl", md: 48 }} align="center">
-          <Grid.Col span={{ base: 12, md: 6 }}>
-            <Stack align="flex-start" gap="lg" ta="left">
-              <Title
-                order={1}
-                className="lp-display"
-                style={{ fontSize: "clamp(2.2rem, 5vw, 3.8rem)" }}
-              >
-                Контент-маркетинг никогда ещё не был так прост
-              </Title>
+        {/* Оффер + CTA. Карточку автора убрали — Николай теперь «живёт» на
+            визуале чата ниже (фото + речевое облако). */}
+        <Stack align="center" gap="lg" ta="center" maw={900} mx="auto">
+          <Title
+            order={1}
+            className="lp-display"
+            style={{ fontSize: "clamp(2.2rem, 5vw, 3.8rem)" }}
+          >
+            Контент-маркетинг никогда ещё не был так прост
+          </Title>
 
-              <Text size="xl" c="dimmed" maw={520} style={{ lineHeight: 1.5 }}>
-                Контент-план, сценарии, шаблоны, сценарии длинных видео и рилсов
-                от Николая Велижанина.
-              </Text>
+          <Text size="xl" c="dimmed" maw={620} style={{ lineHeight: 1.5 }}>
+            Контент-план, сценарии, шаблоны, сценарии длинных видео и рилсов от
+            Николая Велижанина.
+          </Text>
 
-              <Flex
-                gap="sm"
-                mt="xs"
-                w="100%"
-                wrap="wrap"
-                justify={{ base: "center", md: "flex-start" }}
-              >
-                <Button
-                  component={Link}
-                  href="/chat"
-                  size="lg"
-                  radius="xl"
-                  color="brand"
-                  rightSection={<IconArrowRight size={18} />}
-                >
-                  Попробовать бесплатно
-                </Button>
-                <Button
-                  component="a"
-                  href="#how"
-                  size="lg"
-                  radius="xl"
-                  variant="default"
-                >
-                  Как это работает
-                </Button>
-              </Flex>
-            </Stack>
-          </Grid.Col>
+          <Flex gap="sm" mt="xs" w="100%" wrap="wrap" justify="center">
+            <Button
+              component={Link}
+              href="/chat"
+              size="lg"
+              radius="xl"
+              color="brand"
+              rightSection={<IconArrowRight size={18} />}
+            >
+              Попробовать бесплатно
+            </Button>
+            <Button
+              component="a"
+              href="#how"
+              size="lg"
+              radius="xl"
+              variant="default"
+            >
+              Как это работает
+            </Button>
+          </Flex>
+        </Stack>
 
-          <Grid.Col span={{ base: 12, md: 6 }}>
-            <FounderCard />
-          </Grid.Col>
-        </Grid>
+        {/* Визуал: чат на всю ширину; фото пристыковано к ВЕРХНЕМУ краю чата
+            (нижним краем уходит ЗА чат — кромка чата срезает обрез PNG), а справа
+            от фото — карточка-регалии, «стоящая» на том же чате. */}
+        {/* Десктоп: ряд [фото | регалии] стоит на чате; чат перекрывает низ фото. */}
+        <Box visibleFrom="md" maw={1060} mx="auto" mt={56}>
+          <Flex align="flex-end" gap={36} pos="relative" style={{ zIndex: 0 }}>
+            <Image
+              src="/images/photo-alpha.png"
+              alt="Николай Велижанин"
+              width={300}
+              height={401}
+              priority
+              style={{
+                display: "block",
+                flexShrink: 0,
+                width: 300,
+                height: "auto",
+                marginBottom: -40,
+                filter:
+                  "drop-shadow(0 18px 34px color-mix(in srgb, var(--color-accent) 30%, transparent))",
+                pointerEvents: "none",
+                userSelect: "none",
+              }}
+            />
+            <Box style={{ flex: 1, minWidth: 0 }}>
+              <FounderBubble />
+            </Box>
+          </Flex>
 
-        <Box maw={760} mx="auto" mt={64}>
-          <ChatMockup typing />
+          {/* Чат на всю ширину — zIndex выше, прячет нижний край фото. */}
+          <Box pos="relative" style={{ zIndex: 1 }}>
+            <ChatMockup typing />
+          </Box>
+        </Box>
+
+        {/* Мобайл/планшет: фото по центру над чатом (нижний край за чатом),
+            регалии — карточкой под чатом. */}
+        <Box hiddenFrom="md" mt={48}>
+          <Box ta="center">
+            <Image
+              src="/images/photo-alpha.png"
+              alt="Николай Велижанин"
+              width={208}
+              height={278}
+              style={{
+                position: "relative",
+                zIndex: 0,
+                display: "inline-block",
+                width: 208,
+                height: "auto",
+                marginBottom: -44,
+                filter:
+                  "drop-shadow(0 14px 28px color-mix(in srgb, var(--color-accent) 30%, transparent))",
+              }}
+            />
+          </Box>
+          <Box pos="relative" style={{ zIndex: 1 }}>
+            <ChatMockup typing />
+          </Box>
+          <Box mt="lg">
+            <FounderBubble />
+          </Box>
         </Box>
 
         <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xl" mt={64}>
