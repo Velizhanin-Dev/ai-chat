@@ -196,10 +196,36 @@ AI-ассистент Велижанина (методика КМК) в форм
 
 ## Стек (кратко)
 - Next.js 14 App Router + TypeScript
-- Claude API: `claude-haiku-4-5` / `claude-sonnet-4-6` (переключение через `body.model`)
+- LLM-провайдеры (стратегии, `src/lib/llm/*`): **Claude** (Anthropic SDK, `claude-opus-4-8`,
+  prompt caching + adaptive thinking/effort) и **GLM** (Z.ai / Zhipu, OpenAI-совместимый
+  стрим). Переключаются из чата (`provider` в теле `/api/chat`). Роутер знаний — отдельно
+  на `claude-haiku-4-5`.
 - PostgreSQL + Prisma ORM
 - Redux Toolkit + Mantine UI v7
 - Docker Compose
 
+## Переключатель модели (Claude / GLM)
+- 🟢 **Стратегии провайдера** — `src/lib/llm/`: `types.ts` (интерфейс `LlmStrategy` +
+  тип `LlmProvider`), `claude.ts` (Anthropic SDK: модель/effort/кэш/лог стоимости),
+  `glm.ts` (fetch на OpenAI-совместимый `/chat/completions`, парсинг SSE, склейка
+  system-блоков Anthropic в один system-месседж), `index.ts` (`getStrategy` /
+  `normalizeProvider`). Обе стратегии отдают текстовые дельты — `route.ts` оборачивает их
+  в SSE одинаково. `route.ts` больше не знает про конкретного провайдера: собирает system,
+  роутит знания, выбирает стратегию по `body.provider` (дефолт claude).
+- 🟢 **Стоимость в логах** — каждая стратегия логирует свою строку `[chat] provider=…`.
+  Claude — по тарифам Opus (вход/выход/кэш). GLM — по `usage` из последнего чанка стрима
+  (`prompt_tokens`, `completion_tokens`, `prompt_tokens_details.cached_tokens`): кэш у GLM
+  **автоматический** (implicit, `cache_control`/ttl не нужны и игнорируются), попадания
+  считаем по льготному тарифу. Тарифы GLM — константы в `glm.ts` (как тарифы Opus в
+  `claude.ts`); под GLM-5.2 (вход $1.4 / выход $4.4 / кэш $0.26 за 1M).
+- 🟢 **UI-переключатель** — `SegmentedControl` (Claude / GLM) в шапке чата рядом с
+  заголовком/удалением (`src/app/chat/page.tsx`). Выбор в `settings.provider`
+  (`store/settingsSlice.ts`, экшен `setProvider`), персистится в localStorage вместе с
+  остальными настройками, едет в `/api/chat` из `ChatInput`.
+
 ## Переменные окружения
-`ANTHROPIC_API_KEY`, `POSTGRES_URL`, `NEXT_PUBLIC_APP_URL`
+`ANTHROPIC_API_KEY`, `POSTGRES_URL`, `NEXT_PUBLIC_APP_URL`.
+GLM: `GLM_API_KEY` (обязателен для движка GLM), `GLM_MODEL` (дефолт `glm-5.2`),
+`GLM_BASE_URL` (дефолт `https://api.z.ai/api/paas/v4`; для bigmodel.cn —
+`https://open.bigmodel.cn/api/paas/v4`). Без `GLM_API_KEY` выбор GLM отдаёт ошибку,
+Claude работает как раньше. Тарифы GLM захардкожены в `glm.ts` (как у Opus в `claude.ts`).

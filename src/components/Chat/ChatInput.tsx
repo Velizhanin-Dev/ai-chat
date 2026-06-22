@@ -81,6 +81,7 @@ export default function ChatInput() {
   );
   const messages = active?.messages ?? EMPTY;
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
+  const provider = useAppSelector((s) => s.settings.provider);
   const brief = useAppSelector((s) => s.auth.user?.brief ?? null);
   const userId = useAppSelector((s) => s.auth.user?.id ?? null);
   const inputFocusSignal = useAppSelector((s) => s.chat.inputFocusSignal);
@@ -174,7 +175,7 @@ export default function ChatInput() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, aboutYou, brief }),
+        body: JSON.stringify({ messages: history, aboutYou, brief, provider }),
       });
 
       if (!response.ok) {
@@ -245,7 +246,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, messages, activeId, aboutYou, brief, dispatch]);
+  }, [input, isLoading, messages, activeId, aboutYou, brief, provider, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

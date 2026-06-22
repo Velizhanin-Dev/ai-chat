@@ -1,15 +1,26 @@
 "use client";
 
-import { Box, Title, Alert, Group, ActionIcon, Tooltip } from "@mantine/core";
+import {
+  Box,
+  Title,
+  Alert,
+  Group,
+  ActionIcon,
+  Tooltip,
+  SegmentedControl,
+} from "@mantine/core";
 import { IconAlertCircle, IconTrash } from "@tabler/icons-react";
 import ChatWindow from "@/components/Chat/ChatWindow";
 import ChatInput from "@/components/Chat/ChatInput";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
 import { deleteConversation } from "@/store/chatSlice";
+import { setProvider } from "@/store/settingsSlice";
+import type { LlmProvider } from "@/lib/llm/types";
 
 export default function ChatPage() {
   const error = useAppSelector((s) => s.chat.error);
   const activeId = useAppSelector((s) => s.chat.activeId);
+  const provider = useAppSelector((s) => s.settings.provider);
   const title = useAppSelector(
     (s) =>
       s.chat.conversations.find((c) => c.id === s.chat.activeId)?.title ?? "Новый чат"
@@ -27,19 +38,35 @@ export default function ChatPage() {
         <Title order={2} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {title}
         </Title>
-        {activeId && (
-          <Tooltip label="Удалить чат">
-            <ActionIcon
-              variant="light"
-              color="red"
-              size="lg"
-              onClick={handleDelete}
-              style={{ flexShrink: 0 }}
-            >
-              <IconTrash size={18} />
-            </ActionIcon>
+        <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {/* Переключатель движка модели: Claude (Anthropic) / GLM (Z.ai). Выбор
+              персистится в настройках и едет в /api/chat как provider. */}
+          <Tooltip label="Какой моделью отвечать">
+            <SegmentedControl
+              size="xs"
+              radius="md"
+              color="brand"
+              value={provider}
+              onChange={(v) => dispatch(setProvider(v as LlmProvider))}
+              data={[
+                { label: "Claude", value: "claude" },
+                { label: "GLM", value: "glm" },
+              ]}
+            />
           </Tooltip>
-        )}
+          {activeId && (
+            <Tooltip label="Удалить чат">
+              <ActionIcon
+                variant="light"
+                color="red"
+                size="lg"
+                onClick={handleDelete}
+              >
+                <IconTrash size={18} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
       </Group>
 
       {error && (

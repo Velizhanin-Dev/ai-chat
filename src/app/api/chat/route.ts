@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { getAnthropic } from "@/lib/anthropic";
 import type Anthropic from "@anthropic-ai/sdk";
 import { routeQuery, type RouteDecision } from "@/lib/router";
+import { getStrategy, normalizeProvider } from "@/lib/llm";
 import {
   buildBookContextBlock,
   selectFormatsBlock,
@@ -78,15 +78,8 @@ const SYSTEM_CORE = `Ты — Николай Велижанин, продюсе�
 
 Ниже по контексту тебе могут быть приложены: выдержки из моей книги (длинные видео), посты из моих TG-каналов (ВИСП, рилсы, шортсы, кейсы) и/или библиотека форматов коротких видео. Если какого-то слоя нет — значит, под этот запрос он не нужен; не выдумывай его содержимое. Если нужного нет нигде — скажи прямо «у меня в базе про это нет».`;
 
-const MODEL_ID = "claude-opus-4-8";
-// Opus 4.8 — единственная модель, что стабильно держит роль (Sonnet/Haiku сваливаются
-// в «гптшный» тон на длинной генерации). Поддерживает только adaptive thinking —
-// фиксированный budget_tokens возвращает 400. Глубину «размышлений» (и расход выходных
-// токенов) регулируем через effort. Пока high — качество, на котором тестировали роль;
-// после ввода роутинга (Фаза 1, см. docs/context-cost-plan.md) effort станет свой на
-// каждый тип запроса (off/low для болтовни, medium для генерации).
-const EFFORT: "low" | "medium" | "high" | "max" = "high";
-const MAX_TOKENS = 16000;
+// Модель/effort/стоимость теперь живут в стратегиях провайдера (src/lib/llm/*).
+// route.ts отвечает только за сборку system-промпта, роутинг знаний и SSE-обёртку.
 
 // Короткая директива «дисциплины вывода» для генерации (не для болтовни): режет
 // воду в ответе — это и дешевле (выход на Opus самый дорогой), и ближе к рубленому
@@ -213,87 +206,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Провайдер модели — из тела запроса (переключатель в чате). По умолчанию claude.
+    const provider = normalizeProvider(body?.provider);
+
     // Роутинг: какие слои знаний подгрузить под этот запрос (хребет — всегда).
     const lastUser = messages[messages.length - 1].content;
     const tRoute0 = Date.now();
     const route = await routeQuery(messages);
     const routeMs = Date.now() - tRoute0;
     const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief, userName);
-    // Болтовне глубокое мышление не нужно — отключаем (экономит выходные токены и
-    // латентность). Генерация (short/long/method) — adaptive thinking + effort.
-    const thinkCfg =
-      route.category === "chat"
-        ? { thinking: { type: "disabled" as const } }
-        : {
-            thinking: { type: "adaptive" as const },
-            output_config: { effort: EFFORT },
-          };
-
-    // Кэшируем историю диалога: брейкпоинт на последнем сообщении → на следующем
-    // ходу вся переписка читается из кэша (×0.1), а не по полной. Особенно дёшевы
-    // правки сценария по ходу диалога. TTL по умолчанию (5 мин — ходы идут часто).
-    const cachedMessages: Anthropic.MessageParam[] = messages.map((m, i) =>
-      i === messages.length - 1
-        ? {
-            role: m.role,
-            content: [
-              { type: "text", text: m.content, cache_control: { type: "ephemeral" } },
-            ],
-          }
-        : { role: m.role, content: m.content }
-    );
 
     const encoder = new TextEncoder();
-    const t0 = Date.now();
 
     const stream = new ReadableStream({
       async start(controller) {
         try {
           controller.enqueue(encoder.encode(": ping\n\n"));
 
-          const anthropicStream = getAnthropic().messages.stream({
-            model: MODEL_ID,
-            max_tokens: MAX_TOKENS,
-            ...thinkCfg,
+          // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
+          // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
+          const strategy = getStrategy(provider);
+          for await (const token of strategy.stream({
             system: systemBlocks,
-            messages: cachedMessages,
-          });
-
-          let firstTokenAt = 0;
-          for await (const event of anthropicStream) {
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              if (!firstTokenAt) firstTokenAt = Date.now();
-              const token = event.delta.text;
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
-              );
-            }
+            messages,
+            route,
+            routeMs,
+          })) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
+            );
           }
-
-          const finalMessage = await anthropicStream.finalMessage();
-          const u = finalMessage.usage;
-          const ttft = firstTokenAt ? firstTokenAt - t0 : -1;
-          const total = Date.now() - t0;
-          // Оценка стоимости запроса (Opus 4.8, $/M токенов). Роутер на Haiku —
-          // отдельный мелкий вызов, в эту сумму не входит. cache_create считаем по
-          // TTL: 1ч = 2× ($10), 5м = 1.25× ($6.25); чтение из кэша = 0.1× ($0.5).
-          const cc1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-          const cc5m = u.cache_creation?.ephemeral_5m_input_tokens ?? 0;
-          const cc1hEff =
-            cc1h || Math.max(0, (u.cache_creation_input_tokens ?? 0) - cc5m);
-          const cost =
-            ((u.input_tokens ?? 0) * 5 +
-              (u.output_tokens ?? 0) * 25 +
-              (u.cache_read_input_tokens ?? 0) * 0.5 +
-              cc1hEff * 10 +
-              cc5m * 6.25) /
-            1_000_000;
-          console.log(
-            `[chat] model=${finalMessage.model} effort=${route.category === "chat" ? "off" : EFFORT} route=${route.category} routeMs=${routeMs} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens} cost=$${cost.toFixed(4)}`
-          );
 
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.close();
