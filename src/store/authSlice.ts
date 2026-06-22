@@ -6,13 +6,21 @@ import type { Brief } from "@/lib/brief";
 // В Redux держим только «снимок» пользователя для UI; он гидратируется через
 // GET /api/auth/me при загрузке приложения (см. StoreProvider).
 
+// id'шники исторические (start/blogger/studio) и оставлены как есть, чтобы не
+// мигрировать БД (User.plan, default "start") и localStorage. Витрина тарифов
+// переопределена: start → Пробный (бесплатный день), blogger → Базовый (месяц),
+// studio → Максимальный (месяц). См. Pricing.tsx и SettingsModal.tsx.
 export type PlanId = "start" | "blogger" | "studio";
 
 export const PLAN_LABEL: Record<PlanId, string> = {
-  start: "Старт",
-  blogger: "Блогер",
-  studio: "Студия",
+  start: "Пробный",
+  blogger: "Базовый",
+  studio: "Максимальный",
 };
+
+// Порядок тарифов по возрастанию — чтобы понять, какой «выше» текущего
+// (для заглушки перехода на план выше в биллинге).
+export const PLAN_ORDER: PlanId[] = ["start", "blogger", "studio"];
 
 export interface AuthUser {
   id: string;

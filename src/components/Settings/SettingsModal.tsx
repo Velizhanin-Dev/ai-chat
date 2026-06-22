@@ -20,6 +20,7 @@ import {
   Divider,
   Loader,
   Tooltip,
+  Alert,
 } from "@mantine/core";
 import {
   IconUser,
@@ -30,15 +31,17 @@ import {
   IconMailExclamation,
   IconClipboardText,
   IconSparkles,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setAboutYou, setPlan, setLanguage } from "@/store/settingsSlice";
-import { authenticated, PLAN_LABEL, type PlanId } from "@/store/authSlice";
+import { setAboutYou, setLanguage } from "@/store/settingsSlice";
+import { authenticated, PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
 import { apiUpdateProfile, apiResendVerification } from "@/lib/auth-client";
 import { DISC_PROFILES } from "@/lib/brief";
 
-// Компактные тарифы для биллинга (мок). Срисованы с лендинга (Pricing.tsx),
-// но меньше и привязаны к PlanId — без бэкенда.
+// Компактные тарифы для биллинга. Срисованы с лендинга (Pricing.tsx), но меньше
+// и привязаны к PlanId. Переход на платный тариф — заглушка (эквайринг ещё не
+// подключён, см. дорожную карту в CLAUDE.md, п.2 «Платежи и подписки»).
 const PLANS: {
   id: PlanId;
   price: string;
@@ -48,20 +51,20 @@ const PLANS: {
   {
     id: "start",
     price: "0 ₽",
-    period: "чтобы попробовать",
-    features: ["Несколько сценариев в месяц", "Базовые форматы"],
+    period: "1 день · 18 запросов",
+    features: ["18 запросов на пробу", "Голос и методика Николая"],
   },
   {
     id: "blogger",
-    price: "[цена] ₽",
+    price: "4 000 ₽",
     period: "в месяц",
-    features: ["Безлимит сценариев", "Все 12 форматов", "История диалогов"],
+    features: ["3 контент-плана", "30 сценариев", "90 шортсов"],
   },
   {
     id: "studio",
-    price: "по запросу",
-    period: "для команд",
-    features: ["Несколько мест", "Единый стандарт", "Приоритетная поддержка"],
+    price: "10 000 ₽",
+    period: "в месяц",
+    features: ["КП без лимита", "Сценарии без лимита", "Шортсы без лимита"],
   },
 ];
 
@@ -79,7 +82,9 @@ export default function SettingsModal({
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const language = useAppSelector((s) => s.settings.language);
   const currentPlan = useAppSelector((s) => s.settings.plan);
-  const [paid, setPaid] = useState<PlanId | null>(null);
+  // Заглушка перехода на тариф: какой план юзер пытается оформить (онлайн-оплаты
+  // пока нет, поэтому реально plan не переключаем).
+  const [pendingPlan, setPendingPlan] = useState<PlanId | null>(null);
   // Профиль типа харизмы по сохранённому брифу (если пройден).
   const briefProfile = user?.brief?.disc ? DISC_PROFILES[user.brief.disc] : null;
 
@@ -133,9 +138,9 @@ export default function SettingsModal({
   };
 
   const handleChoosePlan = (id: PlanId) => {
-    // Мок-оплата: без бэкенда просто переключаем тариф.
-    dispatch(setPlan(id));
-    setPaid(id);
+    // Заглушка: онлайн-оплата ещё не подключена (см. CLAUDE.md, п.2 «Платежи»),
+    // поэтому тариф НЕ переключаем — показываем уведомление о ручном переходе.
+    setPendingPlan(id);
   };
 
   return (
@@ -345,7 +350,11 @@ export default function SettingsModal({
                         disabled={active}
                         onClick={() => handleChoosePlan(p.id)}
                       >
-                        {active ? "Подключён" : "Оплатить"}
+                        {active
+                          ? "Подключён"
+                          : PLAN_ORDER.indexOf(p.id) > PLAN_ORDER.indexOf(currentPlan)
+                            ? "Перейти на план выше"
+                            : "Перейти"}
                       </Button>
                     </Stack>
                   </Paper>
@@ -353,11 +362,19 @@ export default function SettingsModal({
               })}
             </SimpleGrid>
 
-            {paid && (
-              <Text size="xs" c="dimmed">
-                ✓ Оплата — заглушка (без бэкенда). Тариф переключён на «
-                {PLAN_LABEL[paid]}».
-              </Text>
+            {pendingPlan && (
+              <Alert
+                color="brand"
+                variant="light"
+                radius="md"
+                icon={<IconInfoCircle size={18} />}
+                withCloseButton
+                onClose={() => setPendingPlan(null)}
+                title={`Переход на тариф «${PLAN_LABEL[pendingPlan]}»`}
+              >
+                Онлайн-оплата скоро — подключаем эквайринг. Чтобы перейти на тариф
+                сейчас, напишите нам, и мы откроем доступ вручную.
+              </Alert>
             )}
           </Stack>
         </Tabs.Panel>

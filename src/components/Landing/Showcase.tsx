@@ -9,7 +9,6 @@ import {
   Title,
   Paper,
   ThemeIcon,
-  Avatar,
   SimpleGrid,
 } from "@mantine/core";
 import {
@@ -118,27 +117,37 @@ function VoiceDemo() {
   );
 }
 
-/* ── Отзывы ───────────────────────────────────────────────────────────── *
- * ПЛЕЙСХОЛДЕРЫ: тексты и имена вымышлены для вёрстки.
- * Замените на реальные отзывы с согласия авторов перед публикацией.            */
-const TESTIMONIALS = [
+/* ── Отзывы (реальные — от участников и клиентов студии) ───────────────── */
+type Testimonial = {
+  name: string;
+  role: string;
+  quote: string;
+  pros: string[];
+  cons: string[];
+};
+
+const TESTIMONIALS: Testimonial[] = [
   {
-    quote:
-      "Перестал залипать над чистым листом. Хук и структура за минуту — дальше только докрутить под себя.",
-    name: "[Имя автора]",
-    role: "[ниша · канал]",
+    name: "Анастасия",
+    role: "YouTube-продюсер",
+    quote: "Выдаёт такие темы, о которых я даже не задумывалась.",
+    pros: [
+      "Перед задачей подробно расспросила о проекте — не «расскажи, чем занимаешься», а целый опрос про боли, цели, портрет аудитории и продукт. По моим ответам сразу поняла архетип клиента — дальше нейросеть точно понимает, что мне нужно, и выдаёт темы, о которых я даже не задумывалась.",
+      "Не просто выдаёт темы, а объясняет свою позицию — почему это может сработать.",
+      "Получила разные техники, а не только «топ-списки» и «лучшее/худшее» — максимально разносторонний контент-план.",
+    ],
+    cons: [
+      "Может допускать смысловые ошибки: в нише финансов предложила shorts «Почему в России сейчас копить бессмысленно?» — и я не сразу поняла, что имелось в виду. Но это единственная ошибка на 8 выпусков и 16 shorts, и это с первой итерации — попросить переделать одну тему совсем не проблема.",
+    ],
   },
   {
-    quote:
-      "Отвечает реально как Николай на разборе — по делу и с характером, без воды «нейросетки».",
-    name: "[Имя автора]",
-    role: "[ниша · канал]",
-  },
-  {
-    quote:
-      "Командой гоним рилсы на потоке. 100+ форматов закрывают почти любую идею — качество ровное.",
-    name: "[Имя автора]",
-    role: "[студия · команда]",
+    name: "Дмитрий",
+    role: "участник КМК",
+    quote: "Молодцы — отлично поработали!",
+    pros: [
+      "Через три итерации получилось добротно — процентов 5–10 подрихтовать под себя, и можно прям сниматься. После первого варианта попросил сменить фокус, после второго — стандартный промпт для Клода: «оцени по 10-балльной и сделай мощнее».",
+    ],
+    cons: [],
   },
 ];
 
@@ -148,29 +157,61 @@ function Testimonials() {
       <Reveal>
         <SectionHeading eyebrow="отзывы" title="Что говорят те, кто уже снимает" />
       </Reveal>
-      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg">
+      <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
         {TESTIMONIALS.map((t, i) => (
-          <Reveal key={i} delay={i * 90} fill>
+          <Reveal key={t.name} delay={i * 90} fill>
             <Paper radius="lg" withBorder p="xl" h="100%" style={{ background: "var(--mantine-color-body)" }}>
-              <ThemeIcon size={32} radius="md" color="brand" variant="light" mb="md">
-                <IconQuote size={18} />
-              </ThemeIcon>
-              <Text style={{ lineHeight: 1.55 }} mb="lg">
-                {t.quote}
-              </Text>
-              <Group gap="sm">
-                <Avatar color="brand" radius="xl" variant="light">
-                  {t.name.charAt(1) || "А"}
-                </Avatar>
+              <Stack gap="md" h="100%">
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon size={36} radius="md" color="brand" variant="light">
+                    <IconQuote size={18} />
+                  </ThemeIcon>
+                  <div>
+                    <Text fw={600} size="sm">
+                      {t.name}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {t.role}
+                    </Text>
+                  </div>
+                </Group>
+
+                <Text fw={600} style={{ lineHeight: 1.45 }}>
+                  «{t.quote}»
+                </Text>
+
                 <div>
-                  <Text fw={600} size="sm">
-                    {t.name}
+                  <Text fw={600} size="xs" tt="uppercase" c="dimmed" mb={6} style={{ letterSpacing: "0.04em" }}>
+                    Плюсы
                   </Text>
-                  <Text size="xs" c="dimmed">
-                    {t.role}
-                  </Text>
+                  <Stack gap="xs">
+                    {t.pros.map((p, j) => (
+                      <Text key={j} size="sm" style={{ lineHeight: 1.55 }}>
+                        {p}
+                      </Text>
+                    ))}
+                  </Stack>
                 </div>
-              </Group>
+
+                <div>
+                  <Text fw={600} size="xs" tt="uppercase" c="dimmed" mb={6} style={{ letterSpacing: "0.04em" }}>
+                    Минусы
+                  </Text>
+                  {t.cons.length > 0 ? (
+                    <Stack gap="xs">
+                      {t.cons.map((c, j) => (
+                        <Text key={j} size="sm" style={{ lineHeight: 1.55 }}>
+                          {c}
+                        </Text>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Text size="sm" c="dimmed">
+                      Минусов не отметил.
+                    </Text>
+                  )}
+                </div>
+              </Stack>
             </Paper>
           </Reveal>
         ))}
