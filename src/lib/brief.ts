@@ -41,23 +41,27 @@ export const EMPTY_BRIEF: Brief = {
   disc: null,
 };
 
-// Поля брифа, обязательные для прохождения (forbidden — опционально, disc
-// проверяем отдельно по факту пройденного теста).
-const REQUIRED_TEXT: (keyof Brief)[] = [
-  "channel",
-  "niche",
-  "product",
-  "audience",
-  "expertise",
-  "goal",
-];
+// Лимиты длины текстовых полей. Единый источник правды для:
+//   1) обрезки на сервере (sanitizeBrief);
+//   2) maxLength на инпутах в UI (BriefFlow) — чтобы санитайзинг был виден сразу.
+export const BRIEF_LIMITS: Record<
+  "channel" | "niche" | "product" | "audience" | "expertise" | "goal" | "forbidden",
+  number
+> = {
+  channel: 200,
+  niche: 400,
+  product: 600,
+  audience: 600,
+  expertise: 600,
+  goal: 400,
+  forbidden: 400,
+};
 
-// Бриф считается пройденным, когда заполнены ключевые поля + есть тип DISC.
+// Бриф считается пройденным, как только пройден DISC-тест. Все поля «о проекте»
+// (канал/ниша/продукт/аудитория/экспертность/цель/камера/запреты) необязательны —
+// их можно пропустить и в модалке, и на странице по QR. Обязателен только тип DISC.
 export function isBriefComplete(b: Brief | null | undefined): boolean {
-  if (!b) return false;
-  if (!b.disc) return false;
-  if (!b.cameraExp) return false;
-  return REQUIRED_TEXT.every((k) => String(b[k] ?? "").trim().length > 0);
+  return Boolean(b?.disc);
 }
 
 // Нормализация (и обрезка) пришедшего с клиента брифа — общий код для сервера.
@@ -67,14 +71,14 @@ export function sanitizeBrief(input: unknown): Brief {
   const cam = String(o.cameraExp ?? "");
   const disc = String(o.disc ?? "") as DiscType;
   return {
-    channel: str(o.channel, 200),
-    niche: str(o.niche, 400),
-    product: str(o.product, 600),
-    audience: str(o.audience, 600),
-    expertise: str(o.expertise, 600),
-    goal: str(o.goal, 400),
+    channel: str(o.channel, BRIEF_LIMITS.channel),
+    niche: str(o.niche, BRIEF_LIMITS.niche),
+    product: str(o.product, BRIEF_LIMITS.product),
+    audience: str(o.audience, BRIEF_LIMITS.audience),
+    expertise: str(o.expertise, BRIEF_LIMITS.expertise),
+    goal: str(o.goal, BRIEF_LIMITS.goal),
     cameraExp: (["pro", "some", "none"].includes(cam) ? cam : "") as CameraExp,
-    forbidden: str(o.forbidden, 400),
+    forbidden: str(o.forbidden, BRIEF_LIMITS.forbidden),
     disc: (DISC_PROFILES[disc] ? disc : null) as DiscType | null,
   };
 }

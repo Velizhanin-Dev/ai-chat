@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   AppShell,
@@ -34,8 +34,9 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { loggedOut, PLAN_LABEL } from "@/store/authSlice";
-import { apiLogout } from "@/lib/auth-client";
+import { authenticated, loggedOut, PLAN_LABEL } from "@/store/authSlice";
+import { apiLogout, apiSaveBrief } from "@/lib/auth-client";
+import { readAnonBrief, clearAnonBrief } from "@/lib/anon-brief";
 import {
   startNewChat,
   setActiveConversation,
@@ -45,7 +46,8 @@ import Logo from "@/components/Brand/Logo";
 import SettingsModal from "@/components/Settings/SettingsModal";
 import BriefModal from "@/components/Brief/BriefModal";
 
-// Полноэкранные роуты без сайдбара/шапки приложения (как лендинг).
+// Полноэкранные роуты без сайдбара/шапки приложения (как лендинг). /brief —
+// анонимная страница брифа по QR-коду, у неё свой layout и нет гейта.
 const BARE_ROUTES = [
   "/",
   "/login",
@@ -53,6 +55,7 @@ const BARE_ROUTES = [
   "/forgot-password",
   "/reset-password",
   "/verify-email",
+  "/brief",
 ];
 
 function initials(name: string) {
@@ -98,15 +101,43 @@ export default function AppShellLayout({
   // принудительно (поверх чата, не закрыть, пока не заполнит). На лендинге/auth
   // не трогаем. Закрываем при выходе из аккаунта. НЕ автозакрываем по факту
   // прохождения — после теста показываем экран результата, его закрывает юзер.
+  //
+  // Перед открытием модалки пробуем подхватить анонимный бриф из localStorage —
+  // его мог заполнить пользователь на /brief по QR ещё до регистрации. Если он
+  // есть, молча отправляем на бэкенд: briefCompleted станет true и модалка не
+  // откроется (повторно проходить не нужно). Пробуем один раз на сессию входа.
   const onBareRoute = BARE_ROUTES.includes(pathname);
+  const bridgeTried = useRef(false);
   useEffect(() => {
     if (onBareRoute) return;
-    if (authReady && user && !user.briefCompleted) {
-      openBrief();
-    } else if (!user) {
+    if (!authReady) return;
+    if (!user) {
       closeBrief();
+      bridgeTried.current = false;
+      return;
     }
-  }, [authReady, user, onBareRoute, openBrief, closeBrief]);
+    if (user.briefCompleted) {
+      closeBrief();
+      return;
+    }
+    if (!bridgeTried.current) {
+      bridgeTried.current = true;
+      const anon = readAnonBrief();
+      if (anon) {
+        void (async () => {
+          const res = await apiSaveBrief(anon);
+          if (res.ok) {
+            dispatch(authenticated(res.data.user));
+            clearAnonBrief();
+          } else {
+            openBrief();
+          }
+        })();
+        return;
+      }
+    }
+    openBrief();
+  }, [authReady, user, onBareRoute, openBrief, closeBrief, dispatch]);
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");

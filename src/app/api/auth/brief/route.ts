@@ -5,9 +5,10 @@ import { getSessionUser, publicUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/http";
 import { sanitizeBrief, isBriefComplete } from "@/lib/brief";
 
-// Сохранение брифа клиента + результата DISC. Обязательный онбординг и кнопка
-// «Пройти бриф заново» в настройках бьют сюда. briefCompletedAt ставим только
-// когда бриф реально полный (ключевые поля + тип DISC) — это снимает гейт.
+// Сохранение брифа клиента + результата DISC. Обязательный онбординг, кнопка
+// «Пройти бриф заново» в настройках и мост анонимного брифа (заполнен на /brief
+// по QR) бьют сюда. Поля «о проекте» необязательны — briefCompletedAt ставим, как
+// только пройден DISC-тест (isBriefComplete), это снимает гейт.
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return apiError("Не авторизованы", 401);
@@ -15,7 +16,7 @@ export async function PATCH(req: Request) {
   const body = await readJson(req);
   const brief = sanitizeBrief(body?.brief);
   if (!isBriefComplete(brief)) {
-    return apiError("Заполните бриф полностью и пройдите тест", 400);
+    return apiError("Сначала пройдите тест о себе", 400);
   }
 
   const updated = await prisma.user.update({
