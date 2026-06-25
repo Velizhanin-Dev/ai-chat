@@ -17,6 +17,7 @@ import {
   Alert,
   List,
   Loader,
+  Image,
   Progress,
 } from "@mantine/core";
 import {
@@ -196,6 +197,9 @@ export interface BriefFlowProps {
   resultNote?: React.ReactNode;
   // Кнопки на экране результата. restart — снова с первого шага.
   resultActions: (ctx: { restart: () => void }) => React.ReactNode;
+  // Сообщает родителю, стоим ли мы на самом первом вопросе (step 0 / вопрос 1).
+  // Страница по QR прячет по нему свой заголовок после первого вопроса.
+  onAtStartChange?: (atStart: boolean) => void;
 }
 
 export default function BriefFlow({
@@ -205,6 +209,7 @@ export default function BriefFlow({
   onSubmit,
   resultNote,
   resultActions,
+  onAtStartChange,
 }: BriefFlowProps) {
   // step: 0 — о проекте, 1 — о себе (DISC), 2 — результат (тип харизмы).
   const [step, setStep] = useState(0);
@@ -279,6 +284,11 @@ export default function BriefFlow({
     }, 80);
     return () => clearTimeout(t);
   }, [step, sub]);
+
+  // Сообщаем родителю: на старте ли мы (первый вопрос шага «о проекте»).
+  useEffect(() => {
+    onAtStartChange?.(step === 0 && sub === 0 && !result);
+  }, [step, sub, result, onAtStartChange]);
 
   const setField = (key: keyof Brief, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -367,6 +377,17 @@ export default function BriefFlow({
   const innerTotal = step === 0 ? PROJECT_TOTAL : DISC_TOTAL;
   const innerValue = ((sub + 1) / innerTotal) * 100;
 
+  // Enter листает дальше (в т.ч. в больших полях). В Textarea оставляем
+  // Shift+Enter для переноса строки; на мобиле это тап по «Далее» на клавиатуре.
+  const advanceOnEnter = (
+    e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      projectNext();
+    }
+  };
+
   // ── Рендер активного поля «о проекте» ───────────────────────────────────────
   const renderProjectField = () => {
     if (!current) return null;
@@ -394,6 +415,9 @@ export default function BriefFlow({
           onFocus={(e) =>
             e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" })
           }
+          onKeyDown={advanceOnEnter}
+          // Кнопка действия мобильной клавиатуры — «Далее», а не «Перейти».
+          enterKeyHint="next"
           maxLength={BRIEF_LIMITS[current.key]}
           autosize
           minRows={3}
@@ -411,13 +435,9 @@ export default function BriefFlow({
         onFocus={(e) =>
           e.currentTarget.scrollIntoView({ block: "center", behavior: "smooth" })
         }
+        onKeyDown={advanceOnEnter}
+        enterKeyHint="next"
         maxLength={BRIEF_LIMITS[current.key]}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            projectNext();
-          }
-        }}
       />
     );
   };
@@ -585,6 +605,21 @@ export default function BriefFlow({
       {step === 2 && profile && (
         <Stack gap="md">
           <Paper withBorder radius="md" p="md">
+            {/* Картинка типажа. У файлов разный размер и пропорции (от широких до
+                портретных). Натуральный размер с потолками maw=100% / mah=220 +
+                центрирование: каждый масштабируется по своей стороне, влезает
+                везде и не режется/не искажается. */}
+            <Image
+              src={`/images/disc/${profile.code}.webp`}
+              alt={`Типаж «${profile.nick}»`}
+              fit="contain"
+              w="auto"
+              maw="100%"
+              mah={220}
+              mx="auto"
+              radius="md"
+              mb="md"
+            />
             <Group gap="xs" mb="xs">
               <ThemeIcon color="brand" variant="light" radius="xl" size="lg">
                 <IconSparkles size={18} />

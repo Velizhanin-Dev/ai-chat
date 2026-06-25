@@ -35,38 +35,10 @@ import {
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setLanguage } from "@/store/settingsSlice";
-import { authenticated, PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
-import { apiUpdateProfile, apiResendVerification } from "@/lib/auth-client";
+import { authenticated } from "@/store/authSlice";
+import { apiUpdateProfile, apiResendVerification, apiCreatePayment } from "@/lib/auth-client";
 import { DISC_PROFILES } from "@/lib/brief";
-
-// Компактные тарифы для биллинга. Срисованы с лендинга (Pricing.tsx), но меньше
-// и привязаны к PlanId. Переход на платный тариф — заглушка (эквайринг ещё не
-// подключён, см. дорожную карту в CLAUDE.md, п.2 «Платежи и подписки»).
-const PLANS: {
-  id: PlanId;
-  price: string;
-  period: string;
-  features: string[];
-}[] = [
-  {
-    id: "start",
-    price: "0 ₽",
-    period: "1 день · 18 запросов",
-    features: ["18 запросов на пробу", "Голос и методика Николая"],
-  },
-  {
-    id: "blogger",
-    price: "4 000 ₽",
-    period: "в месяц",
-    features: ["3 контент-плана", "30 сценариев", "90 шортсов"],
-  },
-  {
-    id: "studio",
-    price: "10 000 ₽",
-    period: "в месяц",
-    features: ["КП без лимита", "Сценарии без лимита", "Шортсы без лимита"],
-  },
-];
+import { formatPrice, type PublicPlan } from "@/lib/plans";
 
 export default function SettingsModal({
   opened,
@@ -82,9 +54,11 @@ export default function SettingsModal({
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const language = useAppSelector((s) => s.settings.language);
   const currentPlan = useAppSelector((s) => s.settings.plan);
-  // Заглушка перехода на тариф: какой план юзер пытается оформить (онлайн-оплаты
-  // пока нет, поэтому реально plan не переключаем).
-  const [pendingPlan, setPendingPlan] = useState<PlanId | null>(null);
+  // Оплата тарифа: какой план сейчас оформляется (лоадер на кнопке) и ошибка.
+  const [payingId, setPayingId] = useState<string | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
+  // Тарифы из БД (редактируются в админке). Тянем при открытии настроек.
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
   // Профиль типа харизмы по сохранённому брифу (если пройден).
   const briefProfile = user?.brief?.disc ? DISC_PROFILES[user.brief.disc] : null;
 
@@ -100,6 +74,15 @@ export default function SettingsModal({
   useEffect(() => {
     setName(user?.name ?? "");
   }, [user?.name]);
+
+  // Тарифы для биллинга — из публичного эндпоинта, при открытии модалки.
+  useEffect(() => {
+    if (!opened) return;
+    fetch("/api/plans", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { plans: PublicPlan[] }) => setPlans(d.plans))
+      .catch(() => {});
+  }, [opened]);
 
   // Чистим таймер дебаунса при размонтировании.
   useEffect(() => () => {
@@ -137,11 +120,21 @@ export default function SettingsModal({
     setResendState("sent");
   };
 
-  const handleChoosePlan = (id: PlanId) => {
-    // Заглушка: онлайн-оплата ещё не подключена (см. CLAUDE.md, п.2 «Платежи»),
-    // поэтому тариф НЕ переключаем — показываем уведомление о ручном переходе.
-    setPendingPlan(id);
+  const handleChoosePlan = async (id: string) => {
+    setPayError(null);
+    setPayingId(id);
+    const res = await apiCreatePayment(id);
+    if (res.ok) {
+      // Уходим на платёжную страницу ТБанк (лоадер не снимаем — навигация).
+      window.location.href = res.data.url;
+      return;
+    }
+    setPayError(res.error);
+    setPayingId(null);
   };
+
+  // «Тариф активен до …» — для платных тарифов со сроком (после оплаты).
+  const planExpiry = user?.planExpiresAt ? new Date(user.planExpiresAt) : null;
 
   return (
     <Modal
@@ -287,17 +280,16 @@ export default function SettingsModal({
         {/* ── Биллинг ───────────────────────────────────────────────── */}
         <Tabs.Panel value="billing">
           <Stack gap="md">
-            <Group gap="xs">
+            {planExpiry && (
               <Text size="sm" c="dimmed">
-                Текущий тариф:
+                Тариф активен до{" "}
+                <Text span fw={500} c="brand">
+                  {planExpiry.toLocaleDateString("ru-RU")}
+                </Text>
               </Text>
-              <Badge color="brand" variant="light" radius="sm">
-                {PLAN_LABEL[currentPlan]}
-              </Badge>
-            </Group>
-
+            )}
             <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
-              {PLANS.map((p) => {
+              {plans.map((p) => {
                 const active = p.id === currentPlan;
                 return (
                   <Paper
@@ -311,17 +303,10 @@ export default function SettingsModal({
                     }}
                   >
                     <Stack gap="xs" h="100%">
-                      <Group justify="space-between">
-                        <Text fw={600}>{PLAN_LABEL[p.id]}</Text>
-                        {active && (
-                          <Badge color="brand" size="sm" radius="sm">
-                            Текущий
-                          </Badge>
-                        )}
-                      </Group>
+                      <Text fw={600}>{p.label}</Text>
                       <div>
                         <Text fw={600} fz="xl" style={{ letterSpacing: "-0.02em" }}>
-                          {p.price}
+                          {formatPrice(p.priceRub)}
                         </Text>
                         <Text size="xs" c="dimmed">
                           {p.period}
@@ -348,13 +333,10 @@ export default function SettingsModal({
                         variant={active ? "light" : "filled"}
                         color="brand"
                         disabled={active}
+                        loading={payingId === p.id}
                         onClick={() => handleChoosePlan(p.id)}
                       >
-                        {active
-                          ? "Подключён"
-                          : PLAN_ORDER.indexOf(p.id) > PLAN_ORDER.indexOf(currentPlan)
-                            ? "Перейти на план выше"
-                            : "Перейти"}
+                        {active ? "Подключён" : "Перейти"}
                       </Button>
                     </Stack>
                   </Paper>
@@ -362,18 +344,17 @@ export default function SettingsModal({
               })}
             </SimpleGrid>
 
-            {pendingPlan && (
+            {payError && (
               <Alert
-                color="brand"
+                color="red"
                 variant="light"
                 radius="md"
                 icon={<IconInfoCircle size={18} />}
                 withCloseButton
-                onClose={() => setPendingPlan(null)}
-                title={`Переход на тариф «${PLAN_LABEL[pendingPlan]}»`}
+                onClose={() => setPayError(null)}
+                title="Не удалось перейти к оплате"
               >
-                Онлайн-оплата скоро — подключаем эквайринг. Чтобы перейти на тариф
-                сейчас, напишите нам, и мы откроем доступ вручную.
+                {payError}. Если повторяется — напишите нам, откроем доступ вручную.
               </Alert>
             )}
           </Stack>

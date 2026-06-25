@@ -27,7 +27,9 @@ const LINKS = [
   { href: "#faq", label: "Вопросы" },
 ];
 
-export default function LandingNav() {
+export default function LandingNav({ hidePricing = false }: { hidePricing?: boolean }) {
+  // В pre-launch тарифов нет — убираем и пункт «Тарифы» (иначе якорь в никуда).
+  const links = hidePricing ? LINKS.filter((l) => l.href !== "#pricing") : LINKS;
   const [opened, { toggle, close }] = useDisclosure(false);
   const [scrolled, setScrolled] = useState(false);
   const { setColorScheme } = useMantineColorScheme();
@@ -78,7 +80,7 @@ export default function LandingNav() {
 
         {/* Десктоп-навигация */}
         <Group gap="lg" visibleFrom="sm">
-          {LINKS.map((l) => (
+          {links.map((l) => (
             <Text
               key={l.href}
               component="a"
@@ -145,7 +147,7 @@ export default function LandingNav() {
         zIndex={200}
       >
         <Stack gap="md">
-          {LINKS.map((l) => (
+          {links.map((l) => (
             <Text
               key={l.href}
               component="a"

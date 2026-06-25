@@ -179,7 +179,26 @@ export async function POST(request: NextRequest) {
 
     // Имя — из серверной сессии (источник правды), а не с клиента.
     const sessionUser = await getSessionUser();
-    const userName = sessionUser?.name?.trim().slice(0, 100) ?? "";
+
+    // Чат — только для авторизованных с пройденным брифом. Энфорсим на СЕРВЕРЕ:
+    // клиентскую модалку брифа можно снести через devtools, поэтому единственная
+    // надёжная проверка — здесь (источник правды — briefCompletedAt + полнота брифа).
+    if (!sessionUser) {
+      return new Response(JSON.stringify({ error: "Войдите, чтобы общаться" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const briefDone =
+      Boolean(sessionUser.briefCompletedAt) && isBriefComplete(sanitizeBrief(sessionUser.brief));
+    if (!briefDone) {
+      return new Response(
+        JSON.stringify({ error: "Сначала пройдите короткое знакомство (бриф)", code: "BRIEF_REQUIRED" }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const userName = sessionUser.name?.trim().slice(0, 100) ?? "";
 
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       return new Response(

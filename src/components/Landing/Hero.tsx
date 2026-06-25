@@ -23,6 +23,7 @@ import {
   IconBrandYoutube,
 } from "@tabler/icons-react";
 import ChatMockup from "./ChatMockup";
+import LaunchCountdown from "./LaunchCountdown";
 
 /*
  * ВНИМАНИЕ: цифры ниже — ПЛЕЙСХОЛДЕРЫ. Замените на реальные показатели студии
@@ -97,7 +98,7 @@ function FounderBubble() {
   );
 }
 
-export default function Hero() {
+export default function Hero({ launchTarget }: { launchTarget?: string | null }) {
   return (
     <Box
       className="lp-hero-bg"
@@ -122,6 +123,13 @@ export default function Hero() {
             Контент-план, сценарии, шаблоны, сценарии длинных видео и рилсов от
             Николая Велижанина.
           </Text>
+
+          {/* Pre-launch: вместо обычного оффера показываем анимированный отсчёт. */}
+          {launchTarget && (
+            <Box w="100%" mt="xs">
+              <LaunchCountdown targetAt={launchTarget} />
+            </Box>
+          )}
 
           <Flex gap="sm" mt="xs" w="100%" wrap="wrap" justify="center">
             <Button

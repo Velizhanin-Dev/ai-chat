@@ -52,7 +52,11 @@ const FOOTER_COLS: FooterCol[] = [
   },
 ];
 
-export default function FinalCta() {
+export default function FinalCta({ hidePricing = false }: { hidePricing?: boolean }) {
+  // В pre-launch тарифов нет — убираем ссылку «Тарифы» и из футера.
+  const cols = hidePricing
+    ? FOOTER_COLS.map((c) => ({ ...c, links: c.links.filter((l) => l.href !== "#pricing") }))
+    : FOOTER_COLS;
   return (
     <>
       {/* Финальный CTA-баннер */}
@@ -128,7 +132,7 @@ export default function FinalCta() {
               </Text>
             </Stack>
 
-            {FOOTER_COLS.map((col) => (
+            {cols.map((col) => (
               <Stack key={col.title} gap="sm">
                 {col.titleHref ? (
                   <Anchor

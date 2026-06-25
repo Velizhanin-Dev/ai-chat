@@ -111,6 +111,8 @@ export function publicUser(u: User) {
     name: u.name,
     email: u.email,
     plan: u.plan,
+    role: u.role,
+    planExpiresAt: u.planExpiresAt ? u.planExpiresAt.toISOString() : null,
     emailVerified: Boolean(u.emailVerified),
     brief,
     // Источник правды «прошёл бриф» — серверный флаг briefCompletedAt; на всякий

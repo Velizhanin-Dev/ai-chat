@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Box, Paper, Group, Text, Button, ThemeIcon } from "@mantine/core";
 import { IconCookie } from "@tabler/icons-react";
+
+// Страницы, где плашка не нужна (напр. анонимный бриф по QR — отдельный фокусный
+// экран, лишний баннер только мешает).
+const HIDDEN_ON = ["/brief"];
 
 // Плашка-уведомление об использовании cookie (152-ФЗ). Согласие запоминаем в
 // localStorage, поэтому показываем ровно один раз. Никакого скрима — это баннер,
@@ -10,6 +15,7 @@ import { IconCookie } from "@tabler/icons-react";
 const CONSENT_KEY = "creative-chat:cookie-consent-v1";
 
 export default function CookieBanner() {
+  const pathname = usePathname();
   // На сервере и до монтирования — ничего (иначе расхождение гидратации:
   // localStorage доступен только в браузере).
   const [visible, setVisible] = useState(false);
@@ -31,6 +37,7 @@ export default function CookieBanner() {
     setVisible(false);
   };
 
+  if (HIDDEN_ON.includes(pathname)) return null;
   if (!visible) return null;
 
   return (

@@ -59,6 +59,30 @@ export function apiSaveBrief(brief: Brief) {
   return post<{ user: AuthUser }>("/api/auth/brief", { brief }, "PATCH");
 }
 
+// ── Платежи (эквайринг ТБанк) ────────────────────────────────────────────
+// Создать платёж за тариф → ссылка на платёжную страницу ТБанк.
+export function apiCreatePayment(planId: string) {
+  return post<{ url: string }>("/api/payments/create", { planId });
+}
+
+// Синхронизация платежа на возврате (SuccessURL) → статус + свежий юзер.
+export async function apiPaymentStatus(
+  orderId: string
+): Promise<Result<{ status: string; user: AuthUser | null }>> {
+  try {
+    const res = await fetch(`/api/payments/status?order=${encodeURIComponent(orderId)}`, {
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: (data as { error?: string }).error || "Ошибка" };
+    }
+    return { ok: true, data: data as { status: string; user: AuthUser | null } };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
 export function apiForgotPassword(email: string) {
   return post<{ ok: true }>("/api/auth/forgot-password", { email });
 }

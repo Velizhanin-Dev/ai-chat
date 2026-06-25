@@ -32,6 +32,7 @@ import {
   IconPlus,
   IconMessageCircle,
   IconTrash,
+  IconShieldLock,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { authenticated, loggedOut, PLAN_LABEL } from "@/store/authSlice";
@@ -106,7 +107,9 @@ export default function AppShellLayout({
   // его мог заполнить пользователь на /brief по QR ещё до регистрации. Если он
   // есть, молча отправляем на бэкенд: briefCompleted станет true и модалка не
   // откроется (повторно проходить не нужно). Пробуем один раз на сессию входа.
-  const onBareRoute = BARE_ROUTES.includes(pathname);
+  // /admin — собственный layout/shell (см. app/admin), чат-обвязку не навешиваем.
+  const onBareRoute =
+    BARE_ROUTES.includes(pathname) || pathname.startsWith("/admin");
   const bridgeTried = useRef(false);
   useEffect(() => {
     if (onBareRoute) return;
@@ -160,8 +163,8 @@ export default function AppShellLayout({
     close();
   };
 
-  // Лендинг и auth-страницы рендерим без сайдбара/шапки приложения.
-  if (BARE_ROUTES.includes(pathname)) {
+  // Лендинг, auth-страницы и админка рендерятся без чат-сайдбара/шапки.
+  if (onBareRoute) {
     return <>{children}</>;
   }
 
@@ -370,6 +373,15 @@ export default function AppShellLayout({
                   >
                     Настройки
                   </Menu.Item>
+                  {user.role === "admin" && (
+                    <Menu.Item
+                      component="a"
+                      href="/admin"
+                      leftSection={<IconShieldLock size={16} />}
+                    >
+                      Админка
+                    </Menu.Item>
+                  )}
                   <Menu.Divider />
                   <Menu.Item
                     color="red"
@@ -391,7 +403,19 @@ export default function AppShellLayout({
 
         <AppShell.Main>
           <Box maw={900} mx="auto">
-            {children}
+            {/* Пока бриф не пройден — НЕ рендерим чат под модалкой (иначе его видно,
+                если снести оверлей через devtools). Сервер всё равно блокирует
+                /api/chat без брифа, это лишь чтобы не светить интерфейс. */}
+            {authReady && user && !user.briefCompleted ? (
+              <Box ta="center" py={80}>
+                <Text c="dimmed">
+                  Заполни короткое знакомство — и откроется чат. Окно уже открыто
+                  поверх страницы.
+                </Text>
+              </Box>
+            ) : (
+              children
+            )}
           </Box>
         </AppShell.Main>
       </AppShell>

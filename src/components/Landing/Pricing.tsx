@@ -18,55 +18,9 @@ import { IconCheck } from "@tabler/icons-react";
 import Section from "./Section";
 import SectionHeading from "./SectionHeading";
 import Reveal from "./Reveal";
+import { formatPrice, type PublicPlan } from "@/lib/plans";
 
-/* ── Тарифы ───────────────────────────────────────────────────────────── */
-const PLANS = [
-  {
-    name: "Пробный",
-    price: "0 ₽",
-    period: "1 день · без карты",
-    features: [
-      "18 запросов на пробу",
-      "Голос и методика Николая",
-      "Без оплаты и привязки карты",
-    ],
-    cta: "Попробовать бесплатно",
-    href: "/chat",
-    highlighted: false,
-    variant: "default" as const,
-  },
-  {
-    name: "Базовый",
-    price: "4 000 ₽",
-    period: "в месяц",
-    features: [
-      "3 контент-плана",
-      "30 сценариев",
-      "90 шортсов",
-      "Все 100+ форматов и длинные видео",
-    ],
-    cta: "Оформить",
-    href: "/chat",
-    highlighted: true,
-    variant: "filled" as const,
-  },
-  {
-    name: "Максимальный",
-    price: "10 000 ₽",
-    period: "в месяц",
-    features: [
-      "Контент-планы без лимита",
-      "Сценарии без лимита",
-      "Шортсы без лимита",
-      "Приоритетная поддержка",
-    ],
-    cta: "Оформить",
-    href: "/chat",
-    highlighted: false,
-    variant: "default" as const,
-  },
-];
-
+/* ── FAQ (статичный) ──────────────────────────────────────────────────── */
 const FAQ = [
   {
     q: "Это правда отвечает как Велижанин?",
@@ -94,7 +48,8 @@ const FAQ = [
   },
 ];
 
-export default function Pricing() {
+// Тарифы приходят из БД (редактируются в админке) — серверно через app/page.tsx.
+export default function Pricing({ plans }: { plans: PublicPlan[] }) {
   return (
     <>
       <Section id="pricing" alt>
@@ -107,8 +62,10 @@ export default function Pricing() {
         </Reveal>
 
         <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg" style={{ alignItems: "stretch" }}>
-          {PLANS.map((p, i) => (
-            <Reveal key={p.name} delay={i * 90} fill>
+          {plans.map((p, i) => {
+            const isFree = p.priceRub === 0;
+            return (
+            <Reveal key={p.id} delay={i * 90} fill>
               <Paper
                 radius="lg"
                 p="xl"
@@ -126,7 +83,7 @@ export default function Pricing() {
                 <Stack gap="md" h="100%">
                   <Group justify="space-between">
                     <Text fw={600} fz="lg">
-                      {p.name}
+                      {p.label}
                     </Text>
                     {p.highlighted && (
                       <Badge color="brand" radius="sm" variant="filled" tt="none">
@@ -137,7 +94,7 @@ export default function Pricing() {
 
                   <div>
                     <Text className="lp-display" style={{ fontSize: "2.4rem" }}>
-                      {p.price}
+                      {formatPrice(p.priceRub)}
                     </Text>
                     <Text size="sm" c="dimmed">
                       {p.period}
@@ -159,20 +116,21 @@ export default function Pricing() {
 
                   <Button
                     component={Link}
-                    href={p.href}
+                    href="/chat"
                     radius="xl"
                     size="md"
                     color="brand"
-                    variant={p.variant}
+                    variant={p.highlighted ? "filled" : "default"}
                     mt="auto"
                     fullWidth
                   >
-                    {p.cta}
+                    {isFree ? "Попробовать бесплатно" : "Оформить"}
                   </Button>
                 </Stack>
               </Paper>
             </Reveal>
-          ))}
+            );
+          })}
         </SimpleGrid>
       </Section>
 

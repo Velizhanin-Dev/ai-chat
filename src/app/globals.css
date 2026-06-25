@@ -190,6 +190,58 @@ section[id] {
   background: color-mix(in srgb, var(--color-accent) 6%, var(--mantine-color-body));
 }
 
+/* Таймер «до запуска» в герое (LaunchCountdown). Тёплая бренд-подложка в тон
+   .lp-hero-bg + крупные цифры-«плашки»; при смене цифры — короткий пульс. */
+.launch-countdown {
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--mantine-color-body));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+  box-shadow: 0 20px 50px -28px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+[data-mantine-color-scheme="dark"] .launch-countdown {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--mantine-color-body));
+}
+.launch-countdown__cell {
+  min-width: clamp(48px, 13vw, 72px);
+  padding: 8px 4px;
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
+  text-align: center;
+}
+.launch-countdown__num {
+  display: block;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-size: clamp(1.8rem, 6vw, 2.8rem);
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+  animation: countdown-pop 0.42s ease-out;
+}
+.launch-countdown__sep {
+  font-weight: 600;
+  line-height: 1;
+  font-size: clamp(1.4rem, 4vw, 2.2rem);
+  color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  align-self: flex-start;
+  margin-top: clamp(8px, 2.5vw, 18px);
+}
+@keyframes countdown-pop {
+  0% {
+    transform: translateY(-3px) scale(1.08);
+    opacity: 0.4;
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .launch-countdown__num {
+    animation: none;
+  }
+}
+
 /* Плавное появление блоков при скролле.
    data-visible выставляет компонент <Reveal/> через IntersectionObserver. */
 .lp-reveal {

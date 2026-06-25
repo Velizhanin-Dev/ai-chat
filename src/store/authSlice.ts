@@ -27,6 +27,10 @@ export interface AuthUser {
   name: string;
   email: string;
   plan: PlanId;
+  // Роль из БД: "user" | "admin". Используется, чтобы показать вход в админку.
+  role: string;
+  // До какого момента активен платный тариф (ISO) или null. Заполняется оплатой.
+  planExpiresAt: string | null;
   emailVerified: boolean;
   // Бриф клиента + тип харизмы (DISC). null = не проходил бриф.
   brief: Brief | null;

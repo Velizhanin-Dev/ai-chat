@@ -4,17 +4,26 @@ import Features from "@/components/Landing/Features";
 import Showcase from "@/components/Landing/Showcase";
 import Pricing from "@/components/Landing/Pricing";
 import FinalCta from "@/components/Landing/FinalCta";
+import { getSettings } from "@/lib/settings";
+import { getActivePlans } from "@/lib/plans";
 
-export default function Home() {
+// Лендинг читает фичефлаги и тарифы серверно. Pre-launch (launch.countdownEnabled
+// + дата): в герое — таймер обратного отсчёта, тарифы скрыты до запуска.
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const [{ launch }, plans] = await Promise.all([getSettings(), getActivePlans()]);
+  const launchMode = launch.countdownEnabled && Boolean(launch.targetAt);
+
   return (
     <>
-      <LandingNav />
+      <LandingNav hidePricing={launchMode} />
       <main>
-        <Hero />
+        <Hero launchTarget={launchMode ? launch.targetAt : null} />
         <Features />
         <Showcase />
-        <Pricing />
-        <FinalCta />
+        {!launchMode && <Pricing plans={plans} />}
+        <FinalCta hidePricing={launchMode} />
       </main>
     </>
   );
