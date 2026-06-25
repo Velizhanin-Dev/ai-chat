@@ -96,11 +96,26 @@ export async function getSessionUser(): Promise<User | null> {
   // Сбой БД не должен ронять весь layout (он засевает юзера на КАЖДОЙ странице).
   // При ошибке деградируем до гостя.
   try {
-    return await prisma.user.findUnique({ where: { id: uid } });
+    const user = await prisma.user.findUnique({ where: { id: uid } });
+    if (user) touchLastSeen(user);
+    return user;
   } catch (err) {
     console.error("[auth] getSessionUser db error:", err);
     return null;
   }
+}
+
+// «Последний визит» — обновляем не чаще раза в SEEN_THROTTLE_MS на юзера, чтобы
+// не писать в БД на каждый авторизованный запрос. Fire-and-forget: не ждём и не
+// роняем запрос при ошибке (на чтение юзера это не влияет).
+const SEEN_THROTTLE_MS = 5 * 60 * 1000; // 5 минут
+
+function touchLastSeen(user: User): void {
+  const last = user.lastSeenAt ? user.lastSeenAt.getTime() : 0;
+  if (Date.now() - last < SEEN_THROTTLE_MS) return;
+  prisma.user
+    .update({ where: { id: user.id }, data: { lastSeenAt: new Date() } })
+    .catch((err) => console.error("[auth] touchLastSeen error:", err));
 }
 
 // Форма пользователя для клиента — без passwordHash и прочей внутрянки.

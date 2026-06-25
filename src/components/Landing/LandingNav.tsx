@@ -27,7 +27,13 @@ const LINKS = [
   { href: "#faq", label: "Вопросы" },
 ];
 
-export default function LandingNav({ hidePricing = false }: { hidePricing?: boolean }) {
+export default function LandingNav({
+  hidePricing = false,
+  launchMode = false,
+}: {
+  hidePricing?: boolean;
+  launchMode?: boolean;
+}) {
   // В pre-launch тарифов нет — убираем и пункт «Тарифы» (иначе якорь в никуда).
   const links = hidePricing ? LINKS.filter((l) => l.href !== "#pricing") : LINKS;
   const [opened, { toggle, close }] = useDisclosure(false);
@@ -111,26 +117,32 @@ export default function LandingNav({ hidePricing = false }: { hidePricing?: bool
             </ActionIcon>
           </Tooltip>
 
-          <Button
-            component={Link}
-            href="/login"
-            radius="xl"
-            color="brand"
-            variant="subtle"
-            visibleFrom="sm"
-          >
-            Войти
-          </Button>
+          {/* В режиме «до запуска» вход/регистрацию не предлагаем (внутрь
+              пускаем только админов; они заходят на /login напрямую). */}
+          {!launchMode && (
+            <>
+              <Button
+                component={Link}
+                href="/login"
+                radius="xl"
+                color="brand"
+                variant="subtle"
+                visibleFrom="sm"
+              >
+                Войти
+              </Button>
 
-          <Button
-            component={Link}
-            href="/register"
-            radius="xl"
-            color="brand"
-            visibleFrom="sm"
-          >
-            Начать
-          </Button>
+              <Button
+                component={Link}
+                href="/register"
+                radius="xl"
+                color="brand"
+                visibleFrom="sm"
+              >
+                Начать
+              </Button>
+            </>
+          )}
 
           <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Меню" />
         </Group>
@@ -160,26 +172,30 @@ export default function LandingNav({ hidePricing = false }: { hidePricing?: bool
               {l.label}
             </Text>
           ))}
-          <Button
-            component={Link}
-            href="/register"
-            radius="xl"
-            size="md"
-            mt="sm"
-            onClick={close}
-          >
-            Начать
-          </Button>
-          <Button
-            component={Link}
-            href="/login"
-            radius="xl"
-            size="md"
-            variant="default"
-            onClick={close}
-          >
-            Войти
-          </Button>
+          {!launchMode && (
+            <>
+              <Button
+                component={Link}
+                href="/register"
+                radius="xl"
+                size="md"
+                mt="sm"
+                onClick={close}
+              >
+                Начать
+              </Button>
+              <Button
+                component={Link}
+                href="/login"
+                radius="xl"
+                size="md"
+                variant="default"
+                onClick={close}
+              >
+                Войти
+              </Button>
+            </>
+          )}
         </Stack>
       </Drawer>
     </Box>

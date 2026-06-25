@@ -19,6 +19,12 @@ export interface AdminUserRow {
   briefCompleted: boolean;
   disc: DiscType | null;
   brief: Brief | null;
+  // Способ входа: "email" (есть пароль) и/или подключённые соцсети ("vk"/"yandex").
+  authMethods: string[];
+  // Платная подписка активна до (ISO) или null.
+  planExpiresAt: string | null;
+  // Последний визит (ISO) или null, если ни разу после введения поля.
+  lastSeenAt: string | null;
   createdAt: string;
 }
 
@@ -48,11 +54,16 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
+      include: { oauthAccounts: { select: { provider: true } } },
     }),
   ]);
 
   const users: AdminUserRow[] = rows.map((u) => {
     const brief: Brief | null = u.brief ? sanitizeBrief(u.brief) : null;
+    const authMethods = [
+      ...(u.passwordHash ? ["email"] : []),
+      ...u.oauthAccounts.map((a) => a.provider),
+    ];
     return {
       id: u.id,
       name: u.name,
@@ -63,6 +74,9 @@ export async function GET(req: Request) {
       briefCompleted: Boolean(u.briefCompletedAt) && isBriefComplete(brief),
       disc: brief?.disc ?? null,
       brief,
+      authMethods,
+      planExpiresAt: u.planExpiresAt ? u.planExpiresAt.toISOString() : null,
+      lastSeenAt: u.lastSeenAt ? u.lastSeenAt.toISOString() : null,
       createdAt: u.createdAt.toISOString(),
     };
   });

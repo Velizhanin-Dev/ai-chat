@@ -7,8 +7,14 @@
  * ВСЕГДА и здесь не участвует — здесь только «полка-фактура».
  */
 import { getAnthropic } from "./anthropic";
+import { recordStat } from "./stats";
+import { HAIKU_MODEL, haikuCost } from "./llm/claude";
+import { GLM_MODEL, glmComplete, glmCost } from "./llm/glm";
+import type { LlmProvider } from "./llm/types";
 
 export type QueryCategory = "chat" | "short" | "long" | "method";
+
+type RouterMeta = { userId?: string | null; conversationId?: string | null };
 
 export interface RouteDecision {
   category: QueryCategory;
@@ -21,8 +27,6 @@ export interface RouteDecision {
   /** Запрос для поиска по книге/форматам — расширен ключевыми словами от роутера. */
   searchQuery: string;
 }
-
-const ROUTER_MODEL = "claude-haiku-4-5";
 
 const ROUTER_SYSTEM = `Ты — классификатор запросов к ассистенту по созданию YouTube-контента.
 Классифицируй ПОСЛЕДНЕЕ сообщение пользователя. Контекст переписки используй ТОЛЬКО
@@ -116,11 +120,62 @@ function isEditFollowup(
 }
 
 /**
+ * Классификация запроса ГЛОБАЛЬНЫМ движком (claude haiku или glm). Возвращает
+ * сырой текст «<категория> | <ключевые слова>» и пишет телеметрию (kind=router).
+ */
+async function classify(
+  provider: LlmProvider,
+  ctx: { role: "user" | "assistant"; content: string }[],
+  meta: RouterMeta
+): Promise<string> {
+  if (provider === "glm") {
+    const { text, usage } = await glmComplete(
+      [{ role: "system", content: ROUTER_SYSTEM }, ...ctx],
+      40
+    );
+    const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    recordStat({
+      kind: "router",
+      provider: "glm",
+      model: GLM_MODEL,
+      userId: meta.userId,
+      conversationId: meta.conversationId,
+      inputTokens: Math.max(0, (usage?.prompt_tokens ?? 0) - cached),
+      outputTokens: usage?.completion_tokens ?? 0,
+      cachedTokens: cached,
+      costUsd: glmCost(usage),
+    });
+    return text;
+  }
+  const resp = await getAnthropic().messages.create({
+    model: HAIKU_MODEL,
+    max_tokens: 40,
+    system: ROUTER_SYSTEM,
+    messages: ctx.map((m) => ({ role: m.role, content: m.content })),
+  });
+  const raw = resp.content.find((b) => b.type === "text");
+  recordStat({
+    kind: "router",
+    provider: "claude",
+    model: HAIKU_MODEL,
+    userId: meta.userId,
+    conversationId: meta.conversationId,
+    inputTokens: resp.usage.input_tokens ?? 0,
+    outputTokens: resp.usage.output_tokens ?? 0,
+    costUsd: haikuCost(resp.usage.input_tokens ?? 0, resp.usage.output_tokens ?? 0),
+  });
+  return raw && raw.type === "text" ? raw.text : "";
+}
+
+/**
  * Классифицировать запрос и вернуть, какие слои грузить. messages — последние
- * сообщения диалога (для контекста follow-up вроде «сделай короче»).
+ * сообщения диалога (для контекста follow-up вроде «сделай короче»). provider —
+ * глобальный движок (из настроек админки), meta — атрибуция для телеметрии.
  */
 export async function routeQuery(
-  messages: { role: "user" | "assistant"; content: string }[]
+  messages: { role: "user" | "assistant"; content: string }[],
+  provider: LlmProvider = "claude",
+  meta: RouterMeta = {}
 ): Promise<RouteDecision> {
   const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
   // Очевидная болтовня — сразу chat, без вызова LLM-роутера.
@@ -136,14 +191,7 @@ export async function routeQuery(
   // Контекст: последние до 4 реплик, чтобы понять follow-up.
   const ctx = messages.slice(-4);
   try {
-    const resp = await getAnthropic().messages.create({
-      model: ROUTER_MODEL,
-      max_tokens: 40,
-      system: ROUTER_SYSTEM,
-      messages: ctx.map((m) => ({ role: m.role, content: m.content })),
-    });
-    const raw = resp.content.find((b) => b.type === "text");
-    const out = raw && raw.type === "text" ? raw.text : "";
+    const out = await classify(provider, ctx, meta);
     const [catPart, ...kw] = out.split("|");
     const word = catPart.toLowerCase().trim().replace(/[^a-z]/g, "");
     const keywords = kw.join("|").trim();

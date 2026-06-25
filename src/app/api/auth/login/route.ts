@@ -7,6 +7,8 @@ import {
   publicUser,
 } from "@/lib/auth";
 import { apiError, readJson, EMAIL_RE } from "@/lib/http";
+import { getSettings, isLaunchLocked } from "@/lib/settings";
+import { isAdmin } from "@/lib/admin";
 
 export async function POST(req: Request) {
   const body = await readJson(req);
@@ -25,6 +27,17 @@ export async function POST(req: Request) {
   if (!user || !user.passwordHash || !(await verifyPassword(password, user.passwordHash))) {
     return apiError("Неверная почта или пароль", 401);
   }
+
+  // Режим «до запуска»: пускаем внутрь только админов (страница входа открыта,
+  // но обычный юзер сессию не получает). Проверка серверная — не обходится.
+  if (isLaunchLocked(await getSettings()) && !isAdmin(user)) {
+    return apiError("Доступ к ассистенту откроется после запуска", 403);
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastSeenAt: new Date() },
+  });
 
   setSessionCookie(await signSession(user.id));
   return NextResponse.json({ user: publicUser(user) });

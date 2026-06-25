@@ -17,13 +17,13 @@ export default async function Home() {
 
   return (
     <>
-      <LandingNav hidePricing={launchMode} />
+      <LandingNav hidePricing={launchMode} launchMode={launchMode} />
       <main>
         <Hero launchTarget={launchMode ? launch.targetAt : null} />
         <Features />
         <Showcase />
         {!launchMode && <Pricing plans={plans} />}
-        <FinalCta hidePricing={launchMode} />
+        <FinalCta hidePricing={launchMode} launchMode={launchMode} />
       </main>
     </>
   );

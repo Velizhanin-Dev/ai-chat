@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "@mantine/form";
@@ -18,15 +18,24 @@ import {
 import { IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
 import SocialButtons from "@/components/Auth/SocialButtons";
-import { useAppDispatch } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { authenticated } from "@/store/authSlice";
 import { apiRegister } from "@/lib/auth-client";
+import { ymGoal } from "@/lib/metrika";
 
 export default function RegisterPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const authedOnMount = useAppSelector((s) => s.auth.ready && Boolean(s.auth.user));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Уже авторизован → уводим внутрь. Только на маунте: иначе сработает после
+  // самой регистрации (она логинит) и перебьёт переход на /verify-email.
+  useEffect(() => {
+    if (authedOnMount) router.replace("/chat");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -63,8 +72,12 @@ export default function RegisterPage() {
     // Регистрация сразу логинит (verify-gate off). Письмо подтверждения уже
     // ушло — напомним об этом на /verify-email, но вход уже работает.
     dispatch(authenticated(res.data.user));
+    ymGoal("signup");
     router.push("/verify-email");
   };
+
+  // Авторизованного не держим на форме регистрации (редирект запущен на маунте).
+  if (authedOnMount) return null;
 
   return (
     <AuthLayout
@@ -123,15 +136,32 @@ export default function RegisterPage() {
             {...form.getInputProps("confirm")}
           />
 
-          {/* TODO(Э2): обернуть названия документов в ссылки на /legal/* */}
           <Checkbox
             radius="sm"
             key={form.key("consent")}
             {...form.getInputProps("consent", { type: "checkbox" })}
             label={
               <Text size="sm">
-                Принимаю условия оферты, политику конфиденциальности и даю
-                согласие на обработку персональных данных
+                Принимаю{" "}
+                <Anchor
+                  component={Link}
+                  href="/legal/terms"
+                  target="_blank"
+                  c="brand"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Пользовательское соглашение
+                </Anchor>{" "}
+                и даю согласие на обработку персональных данных в соответствии с{" "}
+                <Anchor
+                  component={Link}
+                  href="/legal/privacy"
+                  target="_blank"
+                  c="brand"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Политикой конфиденциальности
+                </Anchor>
               </Text>
             }
           />

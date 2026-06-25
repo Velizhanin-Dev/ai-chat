@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Paper, Text, Stack, ScrollArea, Box, ThemeIcon } from "@mantine/core";
+import { Paper, Text, Stack, ScrollArea, Box, ThemeIcon, Loader, Center } from "@mantine/core";
 import { IconUser, IconRobot } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
@@ -20,6 +20,7 @@ export default function ChatWindow() {
   const messages = active?.messages ?? EMPTY;
   const streamingContent = useAppSelector((s) => s.chat.streamingContent);
   const isLoading = useAppSelector((s) => s.chat.isLoading);
+  const messagesLoading = useAppSelector((s) => s.chat.messagesLoading);
   const viewport = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -46,13 +47,20 @@ export default function ChatWindow() {
 
   return (
     <ScrollArea
-      h="calc(100vh - 260px)"
+      style={{ flex: 1, minHeight: 0 }}
       viewportRef={viewport}
       onScrollPositionChange={handleScroll}
       offsetScrollbars
     >
-      <Stack gap="md" p="md">
-        {messages.length === 0 && !isLoading && (
+      <Stack gap="md" px={{ base: 4, sm: "md" }} py="md">
+        {/* Ленивая загрузка сообщений открытого из истории диалога. */}
+        {messagesLoading && messages.length === 0 && (
+          <Center py={80}>
+            <Loader color="brand" />
+          </Center>
+        )}
+
+        {messages.length === 0 && !isLoading && !messagesLoading && (
           <Box ta="center" py={60}>
             <IconRobot size={48} stroke={1.2} color="var(--mantine-color-dimmed)" />
             <Text c="dimmed" size="lg" mt="md">

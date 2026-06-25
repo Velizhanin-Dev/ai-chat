@@ -6,6 +6,7 @@ import { IconClipboardText, IconArrowRight } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { authenticated } from "@/store/authSlice";
 import { apiSaveBrief } from "@/lib/auth-client";
+import { ymGoal } from "@/lib/metrika";
 import type { Brief } from "@/lib/brief";
 import BriefFlow from "@/components/Brief/BriefFlow";
 
@@ -31,7 +32,10 @@ export default function BriefModal({
 
   const handleSubmit = async (brief: Brief) => {
     const res = await apiSaveBrief(brief);
-    if (res.ok) dispatch(authenticated(res.data.user));
+    if (res.ok) {
+      dispatch(authenticated(res.data.user));
+      ymGoal("brief_complete", { disc: brief.disc, source: "account" });
+    }
     return res.ok ? { ok: true } : { ok: false, error: res.error };
   };
 

@@ -15,6 +15,7 @@ import {
 } from "@mantine/core";
 import { IconBrain, IconArrowRight } from "@tabler/icons-react";
 import Reveal from "./Reveal";
+import { LEGAL } from "@/lib/legal";
 
 type FooterCol = {
   title: string;
@@ -52,14 +53,22 @@ const FOOTER_COLS: FooterCol[] = [
   },
 ];
 
-export default function FinalCta({ hidePricing = false }: { hidePricing?: boolean }) {
+export default function FinalCta({
+  hidePricing = false,
+  launchMode = false,
+}: {
+  hidePricing?: boolean;
+  launchMode?: boolean;
+}) {
   // В pre-launch тарифов нет — убираем ссылку «Тарифы» и из футера.
   const cols = hidePricing
     ? FOOTER_COLS.map((c) => ({ ...c, links: c.links.filter((l) => l.href !== "#pricing") }))
     : FOOTER_COLS;
   return (
     <>
-      {/* Финальный CTA-баннер */}
+      {/* Финальный CTA-баннер. В режиме «до запуска» его «Попробовать» неактуален —
+          скрываем весь баннер (доступ откроется на старте), оставляя футер. */}
+      {!launchMode && (
       <Box style={{ paddingBlock: "clamp(48px, 7vw, 80px)", background: "var(--mantine-color-body)" }}>
         <Container size="lg" px="md">
           <Reveal>
@@ -101,6 +110,7 @@ export default function FinalCta({ hidePricing = false }: { hidePricing?: boolea
           </Reveal>
         </Container>
       </Box>
+      )}
 
       {/* Футер */}
       <Box
@@ -168,8 +178,23 @@ export default function FinalCta({ hidePricing = false }: { hidePricing?: boolea
             ))}
           </SimpleGrid>
 
-          <Text size="xs" c="dimmed" mt="xl">
-            © 2026 VELIZHANIN AI · студия «content-могущество»
+          <Group justify="space-between" mt="xl" gap="md">
+            <Text size="xs" c="dimmed">
+              © 2026 VELIZHANIN AI · студия «content-могущество»
+            </Text>
+            <Group gap="md">
+              <Anchor component={Link} href="/legal/terms" c="dimmed" size="xs" underline="never">
+                Пользовательское соглашение
+              </Anchor>
+              <Anchor component={Link} href="/legal/privacy" c="dimmed" size="xs" underline="never">
+                Политика конфиденциальности
+              </Anchor>
+            </Group>
+          </Group>
+
+          <Text size="xs" c="dimmed" mt="md" style={{ lineHeight: 1.5 }}>
+            {LEGAL.operator} · ИНН {LEGAL.inn} · ОГРНИП {LEGAL.ogrnip} · {LEGAL.address} ·{" "}
+            тел. {LEGAL.phone} · {LEGAL.email}
           </Text>
         </Container>
       </Box>

@@ -48,7 +48,7 @@ export async function createPayment(user: User, planId: string): Promise<CreateP
 
   const plan = (await getPlans()).find((p) => p.id === planId);
   if (!plan || !plan.active) return { ok: false, error: "Тариф не найден" };
-  if (plan.priceRub <= 0) return { ok: false, error: "Этот тариф бесплатный" };
+  if (plan.priceRub <= 0) return { ok: false, error: "Перейти на бесплатный тариф нельзя" };
 
   const amount = plan.priceRub * 100; // копейки
   const payment = await prisma.payment.create({

@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { getAnthropic } from "@/lib/anthropic";
+import { generateTitle } from "@/lib/llm/title";
+import { getSettings } from "@/lib/settings";
+import { getSessionUser } from "@/lib/auth";
 
-// Генерация короткого КОНТЕКСТНОГО заголовка диалога по первому сообщению юзера —
-// как в ChatGPT/Claude (слева не сырой текст запроса, а тема: «хук для видео»,
-// «приветственный диалог» и т.п.). Дешёвая haiku, без стрима.
-const TITLE_MODEL = "claude-haiku-4-5";
-
+// Короткий контекстный заголовок диалога по первому сообщению. Движок —
+// ГЛОБАЛЬНЫЙ (выбран в админке): Claude больше не зашит, заголовок делает та же
+// модель, что и отвечает в чате (см. src/lib/llm/title.ts). Стат пишется внутри.
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -14,25 +14,14 @@ export async function POST(request: NextRequest) {
     if (!message) {
       return Response.json({ error: "message обязателен" }, { status: 400 });
     }
+    const conversationId =
+      typeof body?.conversationId === "string" ? body.conversationId : null;
 
-    const res = await getAnthropic().messages.create({
-      model: TITLE_MODEL,
-      max_tokens: 24,
-      system:
-        "Ты придумываешь короткий заголовок для диалога по первому сообщению пользователя. " +
-        "Верни ТОЛЬКО заголовок: 2–5 слов, по сути запроса (тема/намерение), на русском, " +
-        "без кавычек, без точки в конце, с заглавной буквы. " +
-        'Примеры: «привет» → Приветственный диалог; «сделай хук для видео про кофе» → Хук для видео про кофе; ' +
-        "«придумай идею для рилса» → Идея для рилса.",
-      messages: [{ role: "user", content: message }],
+    const [{ provider }, user] = await Promise.all([getSettings(), getSessionUser()]);
+    const title = await generateTitle(provider, message, {
+      userId: user?.id ?? null,
+      conversationId,
     });
-
-    const text = res.content.find((b) => b.type === "text");
-    const title =
-      text && text.type === "text"
-        ? text.text.trim().replace(/^["«»']+|["«»'.]+$/g, "").slice(0, 60)
-        : "";
-
     return Response.json({ title });
   } catch (err) {
     console.error("Title error:", err);

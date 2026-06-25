@@ -24,6 +24,9 @@ export async function PATCH(req: Request) {
   if (typeof input.briefPageEnabled === "boolean") {
     patch.briefPageEnabled = input.briefPageEnabled;
   }
+  if (input.provider === "claude" || input.provider === "glm") {
+    patch.provider = input.provider;
+  }
   if (input.launch && typeof input.launch === "object") {
     const { countdownEnabled, targetAt } = input.launch;
     let iso: string | null = null;

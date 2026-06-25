@@ -11,8 +11,11 @@ import {
   Badge,
   Button,
   ThemeIcon,
+  Burger,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import {
+  IconLayoutDashboard,
   IconToggleRight,
   IconUsers,
   IconCurrencyRubel,
@@ -21,8 +24,6 @@ import {
 } from "@tabler/icons-react";
 import LogoMark from "@/components/Brand/LogoMark";
 
-// Сайдбар-навигация админки. disabled-пункты — это будущие фазы (юзеры, тарифы):
-// показываем структуру, но не ведём на пустые страницы (бейдж «скоро»).
 type NavItem = {
   href: string;
   label: string;
@@ -30,10 +31,12 @@ type NavItem = {
   soon?: boolean;
 };
 
+// Главная админки — дашборд; далее пользователи, тарифы, флаги.
 const NAV: NavItem[] = [
-  { href: "/admin", label: "Флаги и настройки", icon: IconToggleRight },
+  { href: "/admin", label: "Дашборд", icon: IconLayoutDashboard },
   { href: "/admin/users", label: "Пользователи", icon: IconUsers },
   { href: "/admin/plans", label: "Тарифы", icon: IconCurrencyRubel },
+  { href: "/admin/flags", label: "Флаги и настройки", icon: IconToggleRight },
 ];
 
 export default function AdminShell({
@@ -44,12 +47,20 @@ export default function AdminShell({
   userName: string;
 }) {
   const pathname = usePathname();
+  // На мобиле сайдбар — оверлей, по умолчанию свёрнут; бургер в шапке открывает,
+  // тап по пункту — закрывает (иначе меню перекрывает контент). На десктопе виден всегда.
+  const [mobileOpened, { toggle: toggleMobile, close: closeMobile }] = useDisclosure(false);
 
   return (
-    <AppShell header={{ height: 60 }} navbar={{ width: 260, breakpoint: "sm" }} padding="lg">
+    <AppShell
+      header={{ height: 60 }}
+      navbar={{ width: 260, breakpoint: "sm", collapsed: { mobile: !mobileOpened } }}
+      padding="lg"
+    >
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="xs" wrap="nowrap">
+            <Burger opened={mobileOpened} onClick={toggleMobile} hiddenFrom="sm" size="sm" aria-label="Меню" />
             <LogoMark box="md" glyph={18} />
             <Text fw={600} fz="lg" style={{ letterSpacing: "-0.02em" }}>
               Админка
@@ -109,6 +120,7 @@ export default function AdminShell({
                 component={Link}
                 href={item.href}
                 p="xs"
+                onClick={closeMobile}
                 style={{
                   borderRadius: 8,
                   background: active ? "var(--mantine-color-brand-light)" : "transparent",
@@ -122,7 +134,7 @@ export default function AdminShell({
       </AppShell.Navbar>
 
       <AppShell.Main>
-        <div style={{ maxWidth: 760, margin: "0 auto" }}>{children}</div>
+        <div style={{ maxWidth: 1180, margin: "0 auto" }}>{children}</div>
       </AppShell.Main>
     </AppShell>
   );

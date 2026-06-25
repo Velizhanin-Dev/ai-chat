@@ -24,6 +24,7 @@ import {
 } from "@tabler/icons-react";
 import ChatMockup from "./ChatMockup";
 import LaunchCountdown from "./LaunchCountdown";
+import { ymGoal } from "@/lib/metrika";
 
 /*
  * ВНИМАНИЕ: цифры ниже — ПЛЕЙСХОЛДЕРЫ. Замените на реальные показатели студии
@@ -132,16 +133,21 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
           )}
 
           <Flex gap="sm" mt="xs" w="100%" wrap="wrap" justify="center">
-            <Button
-              component={Link}
-              href="/chat"
-              size="lg"
-              radius="xl"
-              color="brand"
-              rightSection={<IconArrowRight size={18} />}
-            >
-              Попробовать бесплатно
-            </Button>
+            {/* В режиме «до запуска» CTA «Попробовать» не показываем — доступ
+                откроется на старте (см. таймер выше). */}
+            {!launchTarget && (
+              <Button
+                component={Link}
+                href="/chat"
+                size="lg"
+                radius="xl"
+                color="brand"
+                rightSection={<IconArrowRight size={18} />}
+                onClick={() => ymGoal("cta_try")}
+              >
+                Попробовать бесплатно
+              </Button>
+            )}
             <Button
               component="a"
               href="#how"

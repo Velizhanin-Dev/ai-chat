@@ -1,12 +1,14 @@
 import "@mantine/core/styles.css";
+import "@mantine/charts/styles.css";
 import "./globals.css";
 
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import { MantineProvider, ColorSchemeScript } from "@mantine/core";
 import StoreProvider from "@/store/StoreProvider";
 import AppShellLayout from "@/components/Shell/AppShell";
 import CookieBanner from "@/components/CookieBanner";
+import YandexMetrika from "@/components/Analytics/YandexMetrika";
 import { theme } from "@/theme";
 import { getSessionUser, publicUser } from "@/lib/auth";
 import type { AuthUser } from "@/store/authSlice";
@@ -18,6 +20,15 @@ const brandFont = Manrope({
   variable: "--font-brand",
   display: "swap",
 });
+
+// На мобиле клавиатура должна «сжимать» контент (resizes-content), чтобы поле
+// ввода чата оставалось над ней, а сообщения скроллились, а не уезжали под
+// клавиатуру. Ширину/масштаб задаём явно (иначе кастомный viewport их сбросит).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  interactiveWidget: "resizes-content",
+};
 
 export const metadata: Metadata = {
   title: "VELIZHANIN AI",
@@ -50,6 +61,7 @@ export default async function RootLayout({
         <ColorSchemeScript defaultColorScheme="auto" />
       </head>
       <body>
+        <YandexMetrika />
         <MantineProvider defaultColorScheme="auto" theme={theme}>
           <StoreProvider initialUser={initialUser}>
             <AppShellLayout>{children}</AppShellLayout>

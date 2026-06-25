@@ -13,6 +13,10 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
+  // Подгружены ли сообщения с сервера. В списке диалоги приходят метаданными
+  // (messages: []), сообщения тянутся лениво при открытии. У новосозданного
+  // диалога — true (он пуст и весь в памяти).
+  messagesLoaded: boolean;
 }
 
 interface ChatState {
@@ -22,11 +26,13 @@ interface ChatState {
   isLoading: boolean;
   streamingContent: string;
   error: string | null;
+  // Идёт ленивая подгрузка сообщений открытого диалога с сервера.
+  messagesLoading: boolean;
   // Тик-сигнал «поставь фокус в поле ввода» (растёт при «Новый чат»). UI-only,
   // не персистится — ChatInput фокусирует textarea при изменении значения.
   inputFocusSignal: number;
-  // Завершена ли гидратация из localStorage. Пока false — сайдбар показывает
-  // скелетоны вместо «Пока нет диалогов» (иначе мелькает ложное «пусто»).
+  // Завершена ли загрузка списка диалогов с сервера. Пока false — сайдбар
+  // показывает скелетоны вместо «Пока нет диалогов» (иначе мелькает ложное «пусто»).
   hydrated: boolean;
 }
 
@@ -51,6 +57,7 @@ export function makeConversation(): Conversation {
     messages: [],
     createdAt: ts,
     updatedAt: ts,
+    messagesLoaded: true, // новый диалог пуст и целиком в памяти
   };
 }
 
@@ -60,6 +67,7 @@ const initialState: ChatState = {
   isLoading: false,
   streamingContent: "",
   error: null,
+  messagesLoading: false,
   inputFocusSignal: 0,
   hydrated: false,
 };
@@ -126,6 +134,21 @@ const chatSlice = createSlice({
     setLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
     },
+    setMessagesLoading(state, action: PayloadAction<boolean>) {
+      state.messagesLoading = action.payload;
+    },
+    // Лениво подгруженные с сервера сообщения диалога.
+    setConversationMessages(
+      state,
+      action: PayloadAction<{ id: string; messages: ChatMessage[] }>
+    ) {
+      const conv = state.conversations.find((c) => c.id === action.payload.id);
+      if (conv) {
+        conv.messages = action.payload.messages;
+        conv.messagesLoaded = true;
+      }
+      state.messagesLoading = false;
+    },
     setStreamingContent(state, action: PayloadAction<string>) {
       state.streamingContent = action.payload;
     },
@@ -138,22 +161,23 @@ const chatSlice = createSlice({
     setError(state, action: PayloadAction<string | null>) {
       state.error = action.payload;
     },
-    hydrate(
-      state,
-      action: PayloadAction<{ conversations: Conversation[]; activeId: string | null }>
-    ) {
+    // Список диалогов с сервера (метаданными). Стартуем на пустом «новом чате»
+    // (activeId=null) — сообщения тянутся лениво при открытии диалога. Это и
+    // кросс-девайснее: на любом устройстве видишь свежий композер + всю историю.
+    hydrate(state, action: PayloadAction<{ conversations: Conversation[] }>) {
       state.conversations = action.payload.conversations;
-      state.activeId =
-        action.payload.activeId &&
-        action.payload.conversations.some((c) => c.id === action.payload.activeId)
-          ? action.payload.activeId
-          : action.payload.conversations[0]?.id ?? null;
+      state.activeId = null;
       state.hydrated = true;
     },
-    // Помечаем гидратацию завершённой, даже если в localStorage пусто (hydrate
-    // тогда не вызывается). Вызывается из StoreProvider после загрузки.
+    // Помечаем загрузку завершённой, даже если список пуст / гость (hydrate тогда
+    // не вызывается). Вызывается из загрузчика после ответа сервера.
     chatHydrated(state) {
       state.hydrated = true;
+    },
+    // Сброс при выходе из аккаунта / смене юзера. hydrated=true: известно пустое
+    // состояние, сайдбар не должен залипать на скелетонах.
+    resetChat() {
+      return { ...initialState, hydrated: true };
     },
   },
 });
@@ -166,12 +190,15 @@ export const {
   renameConversation,
   addMessage,
   setLoading,
+  setMessagesLoading,
+  setConversationMessages,
   setStreamingContent,
   appendStreamingContent,
   finalizeStreaming,
   setError,
   hydrate,
   chatHydrated,
+  resetChat,
 } = chatSlice.actions;
 
 export default chatSlice.reducer;

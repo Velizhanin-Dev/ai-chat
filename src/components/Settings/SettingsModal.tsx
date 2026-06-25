@@ -39,6 +39,7 @@ import { authenticated } from "@/store/authSlice";
 import { apiUpdateProfile, apiResendVerification, apiCreatePayment } from "@/lib/auth-client";
 import { DISC_PROFILES } from "@/lib/brief";
 import { formatPrice, type PublicPlan } from "@/lib/plans";
+import { ymGoal } from "@/lib/metrika";
 
 export default function SettingsModal({
   opened,
@@ -53,7 +54,9 @@ export default function SettingsModal({
   const user = useAppSelector((s) => s.auth.user);
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const language = useAppSelector((s) => s.settings.language);
-  const currentPlan = useAppSelector((s) => s.settings.plan);
+  // Текущий тариф — из аккаунта (источник правды, обновляется оплатой/синком),
+  // а не из settings.plan (клиентский дефолт, не синхронизируется с биллингом).
+  const currentPlan = user?.plan;
   // Оплата тарифа: какой план сейчас оформляется (лоадер на кнопке) и ошибка.
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
@@ -125,6 +128,7 @@ export default function SettingsModal({
     setPayingId(id);
     const res = await apiCreatePayment(id);
     if (res.ok) {
+      ymGoal("payment_start", { plan: id });
       // Уходим на платёжную страницу ТБанк (лоадер не снимаем — навигация).
       window.location.href = res.data.url;
       return;
@@ -354,7 +358,7 @@ export default function SettingsModal({
                 onClose={() => setPayError(null)}
                 title="Не удалось перейти к оплате"
               >
-                {payError}. Если повторяется — напишите нам, откроем доступ вручную.
+                {payError}. Если ошибка повторяется — напишите нам, исправим.
               </Alert>
             )}
           </Stack>

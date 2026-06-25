@@ -1,8 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { RouteDecision } from "../router";
 
-// Провайдер модели. Переключается из чата (см. settingsSlice.provider) и едет в
-// теле запроса `/api/chat` как `provider`. Стратегии — в claude.ts / glm.ts.
+// Провайдер модели. ГЛОБАЛЬНЫЙ выбор: настраивается в админке и хранится в
+// AppSetting.provider (см. src/lib/settings.ts), применяется ко всем юзерам — и в
+// чате, и при генерации заголовка. Стратегии — в claude.ts / glm.ts.
 export type LlmProvider = "claude" | "glm";
 
 export interface StreamArgs {
@@ -12,6 +13,9 @@ export interface StreamArgs {
   messages: { role: "user" | "assistant"; content: string }[];
   route: RouteDecision;
   routeMs: number;
+  // Атрибуция для телеметрии (Stat): кто и в каком диалоге. Стратегия пишет
+  // статистику сама после подсчёта стоимости (см. recordStat).
+  meta?: { userId?: string | null; conversationId?: string | null };
 }
 
 export interface LlmStrategy {

@@ -19,11 +19,18 @@ import {
 import { IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
 import SocialButtons from "@/components/Auth/SocialButtons";
-import { useAppDispatch } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { authenticated } from "@/store/authSlice";
 import { apiLogin } from "@/lib/auth-client";
+import { ymGoal } from "@/lib/metrika";
 
 const APP_HOME = "/chat";
+
+// Безопасный внутренний путь возврата из ?next (иначе APP_HOME).
+function safeNext(): string {
+  const next = new URLSearchParams(window.location.search).get("next");
+  return next && next.startsWith("/") && !next.startsWith("//") ? next : APP_HOME;
+}
 
 // Сообщения по кодам ошибок из OAuth-колбэка (?error=...).
 const OAUTH_ERRORS: Record<string, string> = {
@@ -34,13 +41,23 @@ const OAUTH_ERRORS: Record<string, string> = {
   oauth_state_missing: "Сессия входа истекла. Попробуйте ещё раз.",
   oauth_state_bad: "Сессия входа повреждена. Попробуйте ещё раз.",
   oauth_state_mismatch: "Сессия входа не совпала. Попробуйте ещё раз.",
+  launch_locked: "Доступ к ассистенту откроется после запуска.",
 };
 
 export default function LoginPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
+  const authedOnMount = useAppSelector((s) => s.auth.ready && Boolean(s.auth.user));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Уже авторизован (сессия с сервера засеяна в стор) → нечего делать на /login,
+  // уводим внутрь. Только на маунте: чтобы не конфликтовать с навигацией после
+  // ручного входа (там submit сам решает, куда вести).
+  useEffect(() => {
+    if (authedOnMount) router.replace(safeNext());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Ошибка после неудачного OAuth-редиректа (?error=...). Читаем на клиенте,
   // чтобы не тащить useSearchParams (требует Suspense на странице).
@@ -68,13 +85,14 @@ export default function LoginPage() {
       return;
     }
     dispatch(authenticated(res.data.user));
+    ymGoal("login");
     // Возврат на исходный роут, если пришли по редиректу из middleware
     // (/login?next=/chat). Берём только безопасный внутренний путь.
-    const next = new URLSearchParams(window.location.search).get("next");
-    const dest =
-      next && next.startsWith("/") && !next.startsWith("//") ? next : APP_HOME;
-    router.push(dest);
+    router.push(safeNext());
   };
+
+  // Авторизованного не держим на форме входа (редирект уже запущен на маунте).
+  if (authedOnMount) return null;
 
   return (
     <AuthLayout

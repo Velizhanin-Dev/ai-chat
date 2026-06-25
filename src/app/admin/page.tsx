@@ -5,93 +5,114 @@ import {
   Title,
   Text,
   Stack,
-  Paper,
   Group,
-  Switch,
-  Button,
-  Alert,
-  Loader,
-  Input,
+  Paper,
+  SimpleGrid,
   ThemeIcon,
-  Badge,
+  SegmentedControl,
+  Loader,
+  Alert,
+  Box,
 } from "@mantine/core";
+import { AreaChart, BarChart, LineChart, DonutChart } from "@mantine/charts";
 import {
-  IconClipboardText,
-  IconRocket,
-  IconCheck,
+  IconCurrencyDollar,
+  IconMessage,
+  IconMessages,
+  IconLetterCase,
+  IconUsers,
+  IconUserPlus,
   IconAlertCircle,
 } from "@tabler/icons-react";
-import type { AppSettings } from "@/lib/settings";
+import type { DashboardData, TopUser } from "@/lib/stats";
 
-// ISO (UTC) → значение для <input type="datetime-local"> (локальное время).
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
+// ── Форматтеры ────────────────────────────────────────────────────────────
+const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
+const compact = (n: number) =>
+  new Intl.NumberFormat("ru-RU", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+const int = (n: number) => n.toLocaleString("ru-RU");
 
-export default function AdminSettingsPage() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+const CATEGORY_LABEL: Record<string, string> = {
+  chat: "Болтовня",
+  short: "Короткие видео",
+  long: "Длинные видео",
+  method: "Методика",
+};
+const providerLabel = (p: string) => (p === "glm" ? "GLM" : p === "claude" ? "Claude" : p);
+// «YYYY-MM-DD» → «DD.MM» для оси времени.
+const shortDay = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+
+const RANGES = [
+  { label: "7 дней", value: "7" },
+  { label: "30 дней", value: "30" },
+  { label: "90 дней", value: "90" },
+];
+
+export default function AdminDashboardPage() {
+  const [days, setDays] = useState("30");
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/admin/settings", { cache: "no-store" });
-        if (!res.ok) throw new Error();
-        const data = (await res.json()) as { settings: AppSettings };
-        setSettings(data.settings);
-      } catch {
-        setError("Не удалось загрузить настройки");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  const patch = (p: Partial<AppSettings>) => {
-    setSettings((s) => (s ? { ...s, ...p } : s));
-    setSaved(false);
-  };
-  const patchLaunch = (p: Partial<AppSettings["launch"]>) => {
-    setSettings((s) => (s ? { ...s, launch: { ...s.launch, ...p } } : s));
-    setSaved(false);
-  };
-
-  const save = async () => {
-    if (!settings) return;
-    setSaving(true);
+    let alive = true;
+    setLoading(true);
     setError(null);
-    try {
-      const res = await fetch("/api/admin/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings }),
-      });
-      const data = (await res.json()) as { settings?: AppSettings; error?: string };
-      if (!res.ok || !data.settings) throw new Error(data.error || "Ошибка");
-      setSettings(data.settings);
-      setSaved(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось сохранить");
-    } finally {
-      setSaving(false);
-    }
-  };
+    fetch(`/api/admin/stats?days=${days}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { data: DashboardData }) => {
+        if (alive) setData(d.data);
+      })
+      .catch(() => alive && setError("Не удалось загрузить статистику"))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [days]);
+
+  const series = (data?.series ?? []).map((s) => ({
+    date: shortDay(s.day),
+    cost: Number(s.cost.toFixed(4)),
+    tokens: s.tokens,
+    requests: s.requests,
+  }));
+
+  const providerData = (data?.providers ?? [])
+    .map((p) => ({
+      name: providerLabel(p.provider),
+      value: p.requests,
+      color: p.provider === "glm" ? "blue.6" : "brand.6",
+    }))
+    .filter((p) => p.value > 0);
+
+  const categoryData = (data?.categories ?? []).map((c) => ({
+    category: CATEGORY_LABEL[c.category] ?? c.category,
+    requests: c.requests,
+  }));
+
+  const isEmpty =
+    data &&
+    data.totals.requests === 0 &&
+    data.totals.tokens === 0 &&
+    data.totals.costUsd === 0;
 
   return (
     <Stack gap="lg">
-      <div>
-        <Title order={2}>Флаги и настройки</Title>
-        <Text c="dimmed" size="sm" mt={4}>
-          Включай и выключай фичи на лету — без редеплоя.
-        </Text>
-      </div>
+      <Group justify="space-between" align="flex-end" wrap="wrap" gap="sm">
+        <div>
+          <Title order={2}>Дашборд</Title>
+          <Text c="dimmed" size="sm" mt={4}>
+            Потребление модели, активность и топ пользователей за период.
+          </Text>
+        </div>
+        <SegmentedControl
+          color="brand"
+          radius="md"
+          value={days}
+          onChange={setDays}
+          data={RANGES}
+        />
+      </Group>
 
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />}>
@@ -99,92 +120,201 @@ export default function AdminSettingsPage() {
         </Alert>
       )}
 
-      {loading || !settings ? (
-        <Group justify="center" py={48}>
+      {loading || !data ? (
+        <Group justify="center" py={64}>
           <Loader color="brand" />
         </Group>
       ) : (
         <>
-          {/* Страница брифа */}
-          <Paper withBorder radius="md" p="lg">
-            <Group justify="space-between" wrap="nowrap" align="flex-start">
-              <Group gap="sm" wrap="nowrap" align="flex-start">
-                <ThemeIcon color="brand" variant="light" radius="md" size="lg">
-                  <IconClipboardText size={18} />
-                </ThemeIcon>
-                <div>
-                  <Text fw={600}>Страница брифа по QR</Text>
-                  <Text size="sm" c="dimmed">
-                    Анонимный бриф на <code>/brief</code>. Выкл → страница отдаёт 404.
-                  </Text>
-                </div>
-              </Group>
-              <Switch
-                size="lg"
-                color="brand"
-                checked={settings.briefPageEnabled}
-                onChange={(e) => patch({ briefPageEnabled: e.currentTarget.checked })}
-              />
-            </Group>
-          </Paper>
+          {/* KPI */}
+          <SimpleGrid cols={{ base: 2, sm: 3, lg: 6 }} spacing="md">
+            <Kpi icon={<IconCurrencyDollar size={18} />} label="Потрачено" value={money(data.totals.costUsd)} />
+            <Kpi icon={<IconMessage size={18} />} label="Запросов" value={int(data.totals.requests)} />
+            <Kpi icon={<IconMessages size={18} />} label="Чатов" value={int(data.totals.chats)} />
+            <Kpi icon={<IconLetterCase size={18} />} label="Токенов" value={compact(data.totals.tokens)} />
+            <Kpi icon={<IconUsers size={18} />} label="Активных" value={int(data.totals.activeUsers)} />
+            <Kpi icon={<IconUserPlus size={18} />} label="Новых" value={int(data.totals.newUsers)} />
+          </SimpleGrid>
 
-          {/* Режим «скоро запуск» */}
-          <Paper withBorder radius="md" p="lg">
-            <Group justify="space-between" wrap="nowrap" align="flex-start" mb="md">
-              <Group gap="sm" wrap="nowrap" align="flex-start">
-                <ThemeIcon color="brand" variant="light" radius="md" size="lg">
-                  <IconRocket size={18} />
-                </ThemeIcon>
-                <div>
-                  <Text fw={600}>
-                    Таймер запуска{" "}
-                    <Badge color="brand" variant="light" size="sm" radius="sm">
-                      pre-launch
-                    </Badge>
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    При включении на лендинге скрываются тарифы, а в герое
-                    показывается анимированный отсчёт до даты запуска.
-                  </Text>
-                </div>
-              </Group>
-              <Switch
-                size="lg"
-                color="brand"
-                checked={settings.launch.countdownEnabled}
-                onChange={(e) => patchLaunch({ countdownEnabled: e.currentTarget.checked })}
-              />
-            </Group>
+          {isEmpty && (
+            <Alert color="gray" variant="light" icon={<IconAlertCircle size={16} />}>
+              За выбранный период запросов ещё не было — графики наполнятся, как только
+              пользователи начнут общаться с ассистентом.
+            </Alert>
+          )}
 
-            <Input.Wrapper
-              label="Дата и время запуска"
-              description="Локальное время. К нему идёт обратный отсчёт."
-            >
-              <Input
-                type="datetime-local"
-                value={isoToLocalInput(settings.launch.targetAt)}
-                onChange={(e) => {
-                  const v = e.currentTarget.value;
-                  patchLaunch({ targetAt: v ? new Date(v).toISOString() : null });
-                }}
-                disabled={!settings.launch.countdownEnabled}
-              />
-            </Input.Wrapper>
-          </Paper>
+          {/* Расходы по дням */}
+          <ChartCard title="Расходы по дням, $">
+            <AreaChart
+              h={240}
+              data={series}
+              dataKey="date"
+              series={[{ name: "cost", label: "Расходы", color: "brand.6" }]}
+              curveType="monotone"
+              withGradient
+              withDots={false}
+              valueFormatter={(v) => money(v)}
+              gridAxis="y"
+              tickLine="none"
+            />
+          </ChartCard>
 
-          <Group justify="flex-end">
-            {saved && !saving && (
-              <Group gap={6} c="teal">
-                <IconCheck size={18} />
-                <Text size="sm">Сохранено</Text>
-              </Group>
-            )}
-            <Button color="brand" radius="md" onClick={save} loading={saving}>
-              Сохранить
-            </Button>
-          </Group>
+          {/* Токены + запросы по дням */}
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <ChartCard title="Токены по дням">
+              <LineChart
+                h={220}
+                data={series}
+                dataKey="date"
+                series={[{ name: "tokens", label: "Токены", color: "blue.6" }]}
+                curveType="monotone"
+                withDots={false}
+                valueFormatter={(v) => compact(v)}
+                gridAxis="y"
+                tickLine="none"
+              />
+            </ChartCard>
+            <ChartCard title="Запросы по дням">
+              <BarChart
+                h={220}
+                data={series}
+                dataKey="date"
+                series={[{ name: "requests", label: "Запросы", color: "teal.6" }]}
+                gridAxis="y"
+                tickLine="none"
+              />
+            </ChartCard>
+          </SimpleGrid>
+
+          {/* Провайдеры + категории */}
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <ChartCard title="Запросы по движкам">
+              {providerData.length === 0 ? (
+                <EmptyHint />
+              ) : (
+                <Group justify="center" py="sm">
+                  <DonutChart
+                    h={200}
+                    data={providerData}
+                    withLabelsLine
+                    withLabels
+                    tooltipDataSource="segment"
+                    chartLabel="Запросы"
+                  />
+                </Group>
+              )}
+            </ChartCard>
+            <ChartCard title="Запросы по типу">
+              {categoryData.length === 0 ? (
+                <EmptyHint />
+              ) : (
+                <BarChart
+                  h={200}
+                  data={categoryData}
+                  dataKey="category"
+                  orientation="vertical"
+                  series={[{ name: "requests", label: "Запросы", color: "grape.6" }]}
+                  gridAxis="x"
+                  tickLine="none"
+                />
+              )}
+            </ChartCard>
+          </SimpleGrid>
+
+          {/* Топ пользователей */}
+          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+            <TopList title="Топ по запросам" rows={data.topByRequests} metric="requests" />
+            <TopList title="Топ по тратам" rows={data.topBySpend} metric="cost" />
+          </SimpleGrid>
         </>
       )}
     </Stack>
+  );
+}
+
+function Kpi({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Group gap={8} mb={8} wrap="nowrap">
+        <ThemeIcon variant="light" color="brand" radius="md" size="md">
+          {icon}
+        </ThemeIcon>
+        <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: "0.03em" }}>
+          {label}
+        </Text>
+      </Group>
+      <Text fz={26} fw={700} style={{ letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </Text>
+    </Paper>
+  );
+}
+
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Text fw={600} size="sm" mb="md">
+        {title}
+      </Text>
+      {children}
+    </Paper>
+  );
+}
+
+function EmptyHint() {
+  return (
+    <Box ta="center" py={48}>
+      <Text size="sm" c="dimmed">
+        Пока нет данных
+      </Text>
+    </Box>
+  );
+}
+
+function TopList({
+  title,
+  rows,
+  metric,
+}: {
+  title: string;
+  rows: TopUser[];
+  metric: "requests" | "cost";
+}) {
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Text fw={600} size="sm" mb="md">
+        {title}
+      </Text>
+      {rows.length === 0 ? (
+        <EmptyHint />
+      ) : (
+        <Stack gap={10}>
+          {rows.map((u, i) => (
+            <Group key={u.userId} justify="space-between" wrap="nowrap" gap="sm">
+              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                <Text size="sm" c="dimmed" fw={600} w={18} ta="right" style={{ flexShrink: 0 }}>
+                  {i + 1}
+                </Text>
+                <div style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={500} truncate>
+                    {u.name}
+                  </Text>
+                  <Text size="xs" c="dimmed" truncate>
+                    {u.email}
+                  </Text>
+                </div>
+              </Group>
+              <Text
+                size="sm"
+                fw={700}
+                style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+              >
+                {metric === "cost" ? money(u.cost) : int(u.requests)}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Paper>
   );
 }

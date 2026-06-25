@@ -42,7 +42,14 @@ import {
   startNewChat,
   setActiveConversation,
   deleteConversation,
+  hydrate,
+  resetChat,
 } from "@/store/chatSlice";
+import {
+  apiListConversations,
+  apiDeleteConversation,
+  migrateLocalConversations,
+} from "@/lib/chat-client";
 import Logo from "@/components/Brand/Logo";
 import SettingsModal from "@/components/Settings/SettingsModal";
 import BriefModal from "@/components/Brief/BriefModal";
@@ -98,6 +105,35 @@ export default function AppShellLayout({
   const chatHydratedFlag = useAppSelector((s) => s.chat.hydrated);
   const dispatch = useAppDispatch();
 
+  // ── Загрузка истории чата из БД (кросс-девайсно) ───────────────────────
+  // Источник правды по диалогам — БД. При входе (или смене юзера) разово
+  // переносим старую localStorage-историю в БД, затем тянем список диалогов
+  // (метаданными; сообщения грузятся лениво при открытии). На логауте — сброс.
+  // Грузим один раз на юзера (ref-гард), эффект переживает клиентскую навигацию
+  // (AppShell в layout, не размонтируется).
+  const loadedForUser = useRef<string | null>(null);
+  useEffect(() => {
+    if (!authReady) return;
+    if (!user) {
+      if (loadedForUser.current !== null) {
+        dispatch(resetChat());
+        loadedForUser.current = null;
+      } else {
+        // Гость на первом рендере — снимаем скелетоны (известно: истории нет).
+        dispatch(resetChat());
+      }
+      return;
+    }
+    if (loadedForUser.current === user.id) return;
+    loadedForUser.current = user.id;
+    void (async () => {
+      await migrateLocalConversations();
+      const res = await apiListConversations();
+      if (res.ok) dispatch(hydrate({ conversations: res.data }));
+      else dispatch(resetChat()); // ошибка сети — пустой список, но без залипания
+    })();
+  }, [authReady, user?.id, dispatch]);
+
   // Обязательный гейт: залогинен, но бриф не пройден → открываем модалку брифа
   // принудительно (поверх чата, не закрыть, пока не заполнит). На лендинге/auth
   // не трогаем. Закрываем при выходе из аккаунта. НЕ автозакрываем по факту
@@ -107,9 +143,12 @@ export default function AppShellLayout({
   // его мог заполнить пользователь на /brief по QR ещё до регистрации. Если он
   // есть, молча отправляем на бэкенд: briefCompleted станет true и модалка не
   // откроется (повторно проходить не нужно). Пробуем один раз на сессию входа.
-  // /admin — собственный layout/shell (см. app/admin), чат-обвязку не навешиваем.
+  // /admin — собственный layout/shell (см. app/admin); /legal/* — правовые
+  // страницы со своим layout. Чат-обвязку на них не навешиваем.
   const onBareRoute =
-    BARE_ROUTES.includes(pathname) || pathname.startsWith("/admin");
+    BARE_ROUTES.includes(pathname) ||
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/legal");
   const bridgeTried = useRef(false);
   useEffect(() => {
     if (onBareRoute) return;
@@ -190,13 +229,16 @@ export default function AppShellLayout({
       />
       <AppShell
         header={{ height: 60 }}
-        navbar={{ width: 280, breakpoint: "sm", collapsed: { mobile: !opened } }}
-        padding="md"
+        // Бургер-режим (сайдбар оверлеем) держим вплоть до iPad: постоянный
+        // сайдбар появляется только на десктопе (≥ lg = 1200px). На планшетах
+        // и телефонах — бургер. Все hiddenFrom/visibleFrom ниже синхронны с lg.
+        navbar={{ width: 280, breakpoint: "lg", collapsed: { mobile: !opened } }}
+        padding={{ base: "xs", sm: "md" }}
       >
         <AppShell.Header>
           <Group h="100%" px="md" justify="space-between">
             <Group gap="sm">
-              <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
+              <Burger opened={opened} onClick={toggle} hiddenFrom="lg" size="sm" />
               <Logo markHref="/" textHref="/chat" />
             </Group>
           </Group>
@@ -213,7 +255,7 @@ export default function AppShellLayout({
               leftSection={<IconPlus size={18} />}
               onClick={handleNewChat}
               mb="sm"
-              visibleFrom="sm"
+              visibleFrom="lg"
             >
               Новый чат
             </Button>
@@ -279,6 +321,7 @@ export default function AppShellLayout({
                           onClick={(e) => {
                             e.stopPropagation();
                             dispatch(deleteConversation(conv.id));
+                            void apiDeleteConversation(conv.id);
                           }}
                           style={{ flexShrink: 0 }}
                         >
@@ -302,7 +345,7 @@ export default function AppShellLayout({
               leftSection={<IconPlus size={20} />}
               onClick={handleNewChat}
               mb="sm"
-              hiddenFrom="sm"
+              hiddenFrom="lg"
             >
               Новый чат
             </Button>
@@ -401,8 +444,18 @@ export default function AppShellLayout({
           </AppShell.Section>
         </AppShell.Navbar>
 
-        <AppShell.Main>
-          <Box maw={900} mx="auto">
+        {/* Main фиксируем по высоте вьюпорта (100dvh — учитывает адресную строку
+            и сжатие под клавиатуру на мобиле, см. viewport.interactiveWidget).
+            Внутри — flex-колонка: титл/алерты сверху, окно сообщений тянется и
+            скроллится само, поле ввода прижато снизу. Так страница целиком НЕ
+            скроллится (титл не уезжает), а при клавиатуре виден верх. */}
+        <AppShell.Main style={{ height: "100dvh", minHeight: 0 }}>
+          <Box
+            maw={900}
+            mx="auto"
+            h="100%"
+            style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+          >
             {/* Пока бриф не пройден — НЕ рендерим чат под модалкой (иначе его видно,
                 если снести оверлей через devtools). Сервер всё равно блокирует
                 /api/chat без брифа, это лишь чтобы не светить интерфейс. */}

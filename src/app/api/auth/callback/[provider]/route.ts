@@ -6,6 +6,9 @@ import {
   OAUTH_STATE_COOKIE,
 } from "@/lib/oauth";
 import { signSession, sessionCookie } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { getSettings, isLaunchLocked } from "@/lib/settings";
+import { isAdmin } from "@/lib/admin";
 
 // Колбэк OAuth: сверяем state, обмениваем code на профиль, находим/создаём
 // юзера, ставим сессию и редиректим на next (по умолчанию /chat). Любая
@@ -57,6 +60,16 @@ export async function GET(
       deviceId,
     });
     const user = await findOrCreateOAuthUser(provider, profile);
+
+    // Режим «до запуска»: внутрь только админов (см. логин).
+    if (isLaunchLocked(await getSettings()) && !isAdmin(user)) {
+      return clearState(NextResponse.redirect(failUrl("launch_locked")));
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastSeenAt: new Date() },
+    });
     const token = await signSession(user.id);
 
     const next =

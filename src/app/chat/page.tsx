@@ -7,25 +7,31 @@ import {
   Group,
   ActionIcon,
   Tooltip,
-  SegmentedControl,
 } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { IconAlertCircle, IconTrash, IconCheck } from "@tabler/icons-react";
 import ChatWindow from "@/components/Chat/ChatWindow";
 import ChatInput from "@/components/Chat/ChatInput";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
-import { deleteConversation } from "@/store/chatSlice";
-import { setProvider } from "@/store/settingsSlice";
+import {
+  deleteConversation,
+  setMessagesLoading,
+  setConversationMessages,
+} from "@/store/chatSlice";
 import { authenticated } from "@/store/authSlice";
 import { apiPaymentStatus } from "@/lib/auth-client";
-import type { LlmProvider } from "@/lib/llm/types";
+import { apiGetMessages, apiDeleteConversation } from "@/lib/chat-client";
+import { ymGoal } from "@/lib/metrika";
 
 type PayNotice = { type: "success" | "pending" | "fail"; text: string };
 
 export default function ChatPage() {
   const error = useAppSelector((s) => s.chat.error);
   const activeId = useAppSelector((s) => s.chat.activeId);
-  const provider = useAppSelector((s) => s.settings.provider);
+  // Загружены ли сообщения открытого диалога (метаданные приходят без них).
+  const activeLoaded = useAppSelector(
+    (s) => s.chat.conversations.find((c) => c.id === s.chat.activeId)?.messagesLoaded ?? true
+  );
   const title = useAppSelector(
     (s) =>
       s.chat.conversations.find((c) => c.id === s.chat.activeId)?.title ?? "Новый чат"
@@ -45,6 +51,7 @@ export default function ChatPage() {
       void apiPaymentStatus(order).then((res) => {
         if (res.ok && res.data.status === "CONFIRMED") {
           if (res.data.user) dispatch(authenticated(res.data.user));
+          ymGoal("payment_success", { order });
           setPayNotice({ type: "success", text: "Оплата прошла — тариф активирован." });
         } else {
           setPayNotice({
@@ -59,46 +66,49 @@ export default function ChatPage() {
     window.history.replaceState({}, "", "/chat");
   }, [dispatch]);
 
+  // Ленивая подгрузка сообщений при открытии диалога из истории. Новосозданные
+  // диалоги уже messagesLoaded=true, для них фетча не будет.
+  useEffect(() => {
+    if (!activeId || activeLoaded) return;
+    const id = activeId;
+    dispatch(setMessagesLoading(true));
+    void apiGetMessages(id).then((res) => {
+      if (res.ok) dispatch(setConversationMessages({ id, messages: res.data }));
+      else dispatch(setMessagesLoading(false));
+    });
+  }, [activeId, activeLoaded, dispatch]);
+
   const handleDelete = () => {
     if (!activeId) return;
     dispatch(deleteConversation(activeId));
+    void apiDeleteConversation(activeId);
   };
 
   return (
     <>
-      <Group justify="space-between" mb="md" wrap="nowrap">
-        <Title order={2} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <Group justify="space-between" mb={{ base: "xs", sm: "md" }} wrap="nowrap" style={{ flexShrink: 0 }}>
+        <Title
+          order={2}
+          fz={{ base: "1.35rem", sm: "1.75rem" }}
+          style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
           {title}
         </Title>
-        <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
-          {/* Переключатель движка модели: Claude (Anthropic) / GLM (Z.ai). Выбор
-              персистится в настройках и едет в /api/chat как provider. */}
-          <Tooltip label="Какой моделью отвечать">
-            <SegmentedControl
-              size="xs"
-              radius="md"
-              color="brand"
-              value={provider}
-              onChange={(v) => dispatch(setProvider(v as LlmProvider))}
-              data={[
-                { label: "Claude", value: "claude" },
-                { label: "GLM", value: "glm" },
-              ]}
-            />
+        {/* Движок модели теперь глобальный (выбирается в админке) — тумблера
+            Claude/GLM у пользователя больше нет. */}
+        {activeId && (
+          <Tooltip label="Удалить чат">
+            <ActionIcon
+              variant="light"
+              color="red"
+              size="lg"
+              onClick={handleDelete}
+              style={{ flexShrink: 0 }}
+            >
+              <IconTrash size={18} />
+            </ActionIcon>
           </Tooltip>
-          {activeId && (
-            <Tooltip label="Удалить чат">
-              <ActionIcon
-                variant="light"
-                color="red"
-                size="lg"
-                onClick={handleDelete}
-              >
-                <IconTrash size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
+        )}
       </Group>
 
       {payNotice && (
@@ -128,9 +138,9 @@ export default function ChatPage() {
       )}
 
       {/* Без карточки-обводки: сообщения «текут» по фону страницы, композер —
-          отдельным мягким блоком снизу (см. ChatInput). На тёмной теме это
-          убирает резкие серые линии. */}
-      <Box>
+          отдельным мягким блоком снизу (см. ChatInput). Flex-колонка: окно
+          сообщений тянется (flex:1) и скроллится само, ввод прижат снизу. */}
+      <Box style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <ChatWindow />
         <ChatInput />
       </Box>

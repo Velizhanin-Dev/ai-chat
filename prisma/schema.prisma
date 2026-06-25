@@ -24,12 +24,41 @@ model Chunk {
   createdAt  DateTime @default(now())
 }
 
+// Легаси: сообщения по sessionId без привязки к юзеру — больше не используется
+// (история чатов теперь в Conversation/Message ниже). Таблицу не трогаем.
 model ChatMessage {
   id        String   @id @default(cuid())
   role      String
   content   String
   sessionId String
   createdAt DateTime @default(now())
+}
+
+// ── История чатов (кросс-девайсная) ────────────────────────────────────────
+// Источник правды по диалогам пользователя. id диалога генерит клиент (nanoid)
+// и шлёт в /api/chat — там диалог создаётся и пополняется сообщениями. Сообщения
+// тянутся лениво (GET /api/conversations/[id]); список — метаданными.
+model Conversation {
+  id        String    @id // клиентский nanoid (см. chatSlice.makeConversation)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String    @default("Новый чат")
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // "user" | "assistant"
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -59,11 +88,43 @@ model User {
   // автосписаний (регистрируем при первом платеже, Recurrent=Y).
   planExpiresAt DateTime?
   rebillId      String?
+  // Последний визит — обновляется при входе и (с троттлингом) на любом
+  // авторизованном запросе через getSessionUser. null = ни разу после введения поля.
+  lastSeenAt    DateTime?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   tokens        VerificationToken[]
   oauthAccounts OAuthAccount[]
   payments      Payment[]
+  conversations Conversation[]
+  stats         Stat[]
+}
+
+// Телеметрия каждого вызова модели (снимаем то, что раньше уходило только в логи).
+// Источник для CRM-дашборда админки: деньги, запросы, чаты, токены, топ юзеров.
+// kind: "chat" (ответ ассистента) | "title" (заголовок диалога) | "router"
+// (классификатор знаний). userId — SetNull при удалении юзера (финансовую историю
+// не теряем, просто обезличивается). Стоимость — в USD (тарифы провайдеров $).
+model Stat {
+  id               String   @id @default(cuid())
+  createdAt        DateTime @default(now())
+  kind             String
+  provider         String // "claude" | "glm"
+  model            String
+  userId           String?
+  user             User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  conversationId   String?
+  routeCategory    String? // chat|short|long|method (для kind=chat/router)
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cachedTokens     Int      @default(0) // чтение из кэша
+  cacheWriteTokens Int      @default(0)
+  costUsd          Float    @default(0)
+  latencyMs        Int?
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([kind, createdAt])
 }
 
 // Платежи (эквайринг ТБанк). Источник правды по факту оплаты — вебхук-уведомление

@@ -18,6 +18,9 @@ import {
   List,
   Alert,
   Accordion,
+  Select,
+  Button,
+  Divider,
 } from "@mantine/core";
 import {
   IconSearch,
@@ -26,9 +29,11 @@ import {
   IconCheck,
   IconMail,
   IconMailOff,
+  IconTrash,
+  IconDeviceFloppy,
 } from "@tabler/icons-react";
 import { DISC_PROFILES, CAMERA_OPTIONS } from "@/lib/brief";
-import { PLAN_LABEL, type PlanId } from "@/store/authSlice";
+import { PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
 import { formatPrice } from "@/lib/plans";
 import type { AdminUserRow } from "@/app/api/admin/users/route";
 import type { AdminPaymentRow } from "@/app/api/admin/payments/route";
@@ -69,6 +74,32 @@ function planLabel(plan: string) {
   return PLAN_LABEL[plan as PlanId] ?? plan;
 }
 
+// Способ входа → человекочитаемая подпись.
+const AUTH_LABEL: Record<string, string> = {
+  email: "Email и пароль",
+  vk: "VK ID",
+  yandex: "Яндекс",
+};
+const authLabel = (m: string) => AUTH_LABEL[m] ?? m;
+
+// Опции для Select тарифа/роли.
+const PLAN_OPTIONS = PLAN_ORDER.map((id) => ({ value: id, label: PLAN_LABEL[id] }));
+const ROLE_OPTIONS = [
+  { value: "user", label: "Пользователь" },
+  { value: "admin", label: "Администратор" },
+];
+
+// ISO → значение для <input type="datetime-local"> (в локальном времени).
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+}
+
 export default function AdminUsersPage() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -80,6 +111,80 @@ export default function AdminUsersPage() {
   const [selected, setSelected] = useState<AdminUserRow | null>(null);
   // История платежей выбранного юзера (грузим при открытии карточки).
   const [payments, setPayments] = useState<AdminPaymentRow[] | null>(null);
+  // Версия списка — бампаем после правок/удаления, чтобы перезагрузить таблицу.
+  const [version, setVersion] = useState(0);
+
+  // ── Управление выбранным юзером (роль / тариф / срок подписки / удаление) ──
+  const [editRole, setEditRole] = useState("user");
+  const [editPlan, setEditPlan] = useState("start");
+  const [editExpires, setEditExpires] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Засеваем форму правки при выборе юзера.
+  useEffect(() => {
+    if (!selected) return;
+    setEditRole(selected.role);
+    setEditPlan(selected.plan);
+    setEditExpires(toLocalInput(selected.planExpiresAt));
+    setSaveErr(null);
+    setSaved(false);
+    setConfirmDelete(false);
+  }, [selected]);
+
+  const dirty =
+    !!selected &&
+    (editRole !== selected.role ||
+      editPlan !== selected.plan ||
+      editExpires !== toLocalInput(selected.planExpiresAt));
+
+  async function handleSave() {
+    if (!selected) return;
+    setSaving(true);
+    setSaveErr(null);
+    setSaved(false);
+    try {
+      const res = await fetch(`/api/admin/users/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: editRole,
+          plan: editPlan,
+          planExpiresAt: editExpires ? new Date(editExpires).toISOString() : null,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || "Не удалось сохранить");
+      setSelected(d.user);
+      setSaved(true);
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : "Не удалось сохранить");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selected) return;
+    setDeleting(true);
+    setSaveErr(null);
+    try {
+      const res = await fetch(`/api/admin/users/${selected.id}`, { method: "DELETE" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || "Не удалось удалить");
+      setSelected(null);
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : "Не удалось удалить");
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     if (!selected) {
@@ -124,7 +229,7 @@ export default function AdminUsersPage() {
       alive = false;
       clearTimeout(t);
     };
-  }, [q, page]);
+  }, [q, page, version]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const profile = selected?.disc ? DISC_PROFILES[selected.disc] : null;
@@ -276,122 +381,292 @@ export default function AdminUsersPage() {
       >
         {selected && (
           <Stack gap="md">
-            <Stack gap={4}>
-              <Group gap="xs" wrap="nowrap">
-                {selected.emailVerified ? <IconMail size={14} /> : <IconMailOff size={14} />}
-                <Text size="sm">{selected.email}</Text>
-              </Group>
-              <Group gap="xs">
-                <Badge variant="default" radius="sm">
-                  {planLabel(selected.plan)}
-                </Badge>
-                {selected.role === "admin" && (
-                  <Badge color="brand" variant="light" radius="sm">
-                    admin
-                  </Badge>
-                )}
-                <Badge
-                  color={selected.briefCompleted ? "teal" : "gray"}
-                  variant="light"
-                  radius="sm"
-                >
-                  бриф: {selected.briefCompleted ? "пройден" : "нет"}
-                </Badge>
-              </Group>
-              <Text size="xs" c="dimmed">
-                Регистрация: {new Date(selected.createdAt).toLocaleString("ru-RU")}
-              </Text>
-            </Stack>
-
-            {/* Архетип харизмы */}
-            {profile && (
-              <Paper withBorder radius="md" p="md">
-                <Image
-                  src={`/images/disc/${profile.code}.webp`}
-                  alt={`Типаж «${profile.nick}»`}
-                  fit="contain"
-                  w="auto"
-                  maw="100%"
-                  mah={180}
-                  mx="auto"
-                  radius="md"
-                  mb="md"
-                />
-                <Group gap="xs" mb="xs">
-                  <ThemeIcon color="brand" variant="light" radius="xl" size="md">
-                    <IconSparkles size={16} />
-                  </ThemeIcon>
-                  <Title order={5}>
-                    «{profile.nick}»{" "}
-                    <Text span c="dimmed" fz="sm">
-                      ({profile.code})
-                    </Text>
-                  </Title>
-                </Group>
-                <Text size="sm" mb="sm">
-                  {profile.character}
-                </Text>
-                <List size="sm" spacing={4}>
-                  <List.Item>
-                    <Text span fw={500}>
-                      Форматы:
-                    </Text>{" "}
-                    {profile.formats}
-                  </List.Item>
-                  <List.Item>
-                    <Text span fw={500}>
-                      Заводит:
-                    </Text>{" "}
-                    {profile.works}
-                  </List.Item>
-                  <List.Item>
-                    <Text span fw={500}>
-                      Убивает:
-                    </Text>{" "}
-                    {profile.kills}
-                  </List.Item>
-                </List>
-              </Paper>
-            )}
-
-            {/* Поля брифа «о проекте» — отдельным блоком */}
+            {/* Основная информация — обычной карточкой, без сворачивания */}
             <Paper withBorder radius="md" p="md">
-              <Text fw={600} size="sm" mb="xs">
-                Бриф о проекте
-              </Text>
-              {selected.brief &&
-              (BRIEF_FIELDS.some((f) => selected.brief?.[f.key]) || selected.brief.cameraExp) ? (
-                <Stack gap="sm">
-                  {BRIEF_FIELDS.map((f) => {
-                    const v = selected.brief?.[f.key];
-                    if (!v) return null;
-                    return (
-                      <div key={f.key}>
-                        <Text size="xs" c="dimmed">
-                          {f.label}
-                        </Text>
-                        <Text size="sm">{String(v)}</Text>
-                      </div>
-                    );
-                  })}
-                  {selected.brief.cameraExp && (
-                    <div>
-                      <Text size="xs" c="dimmed">
-                        Опыт на камере
-                      </Text>
-                      <Text size="sm">{cameraLabel(selected.brief.cameraExp)}</Text>
-                    </div>
-                  )}
-                </Stack>
-              ) : (
-                <Text size="sm" c="dimmed">
-                  Поля «о проекте» не заполнены (можно пропускать — обязателен только тест).
-                </Text>
-              )}
+              <Stack gap="sm">
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Имя
+                  </Text>
+                  <Text size="sm">{selected.name}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Почта
+                  </Text>
+                  <Group gap={6} wrap="nowrap">
+                    {selected.emailVerified ? (
+                      <IconMail size={14} />
+                    ) : (
+                      <IconMailOff size={14} />
+                    )}
+                    <Text size="sm">{selected.email}</Text>
+                    <Text size="xs" c="dimmed">
+                      {selected.emailVerified ? "(подтверждена)" : "(не подтверждена)"}
+                    </Text>
+                  </Group>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Способ входа
+                  </Text>
+                  <Text size="sm">
+                    {selected.authMethods.length
+                      ? selected.authMethods.map(authLabel).join(", ")
+                      : "—"}
+                  </Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Тариф
+                  </Text>
+                  <Text size="sm">{planLabel(selected.plan)}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Подписка активна до
+                  </Text>
+                  <Text size="sm">
+                    {selected.planExpiresAt
+                      ? new Date(selected.planExpiresAt).toLocaleString("ru-RU")
+                      : "—"}
+                  </Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Роль
+                  </Text>
+                  <Text size="sm">
+                    {selected.role === "admin" ? "Администратор" : "Пользователь"}
+                  </Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Бриф
+                  </Text>
+                  <Text size="sm">{selected.briefCompleted ? "пройден" : "не пройден"}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Регистрация
+                  </Text>
+                  <Text size="sm">{new Date(selected.createdAt).toLocaleString("ru-RU")}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Последний визит
+                  </Text>
+                  <Text size="sm">
+                    {selected.lastSeenAt
+                      ? new Date(selected.lastSeenAt).toLocaleString("ru-RU")
+                      : "—"}
+                  </Text>
+                </div>
+              </Stack>
             </Paper>
 
-            {/* История платежей (пополнения) — сворачиваемым блоком. «Траты» — позже. */}
-            <Accordion variant="separated" radius="md" chevronPosition="right">
+            {/* Управление: роль / тариф / срок подписки + удаление */}
+            <Paper withBorder radius="md" p="md">
+              <Text fw={600} size="sm" mb="sm">
+                Управление
+              </Text>
+              <Stack gap="sm">
+                <Select
+                  label="Роль"
+                  data={ROLE_OPTIONS}
+                  value={editRole}
+                  onChange={(v) => v && setEditRole(v)}
+                  allowDeselect={false}
+                  comboboxProps={{ withinPortal: false }}
+                />
+                <Select
+                  label="Тариф"
+                  data={PLAN_OPTIONS}
+                  value={editPlan}
+                  onChange={(v) => v && setEditPlan(v)}
+                  allowDeselect={false}
+                  comboboxProps={{ withinPortal: false }}
+                />
+                <TextInput
+                  label="Подписка активна до"
+                  type="datetime-local"
+                  value={editExpires}
+                  onChange={(e) => setEditExpires(e.currentTarget.value)}
+                  description="Пусто = без платной подписки"
+                  rightSection={
+                    editExpires ? (
+                      <Text
+                        component="button"
+                        type="button"
+                        c="dimmed"
+                        fz="xs"
+                        onClick={() => setEditExpires("")}
+                        style={{ cursor: "pointer", background: "none", border: 0 }}
+                      >
+                        очистить
+                      </Text>
+                    ) : null
+                  }
+                  rightSectionWidth={64}
+                />
+
+                {saveErr && (
+                  <Alert color="red" icon={<IconAlertCircle size={16} />} py="xs">
+                    {saveErr}
+                  </Alert>
+                )}
+
+                <Group justify="space-between" mt="xs">
+                  <Button
+                    color="brand"
+                    leftSection={<IconDeviceFloppy size={16} />}
+                    loading={saving}
+                    disabled={!dirty}
+                    onClick={handleSave}
+                  >
+                    {saved && !dirty ? "Сохранено" : "Сохранить"}
+                  </Button>
+
+                  {confirmDelete ? (
+                    <Group gap="xs">
+                      <Button
+                        color="red"
+                        variant="filled"
+                        size="sm"
+                        loading={deleting}
+                        onClick={handleDelete}
+                      >
+                        Точно удалить
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        color="gray"
+                        size="sm"
+                        onClick={() => setConfirmDelete(false)}
+                      >
+                        Отмена
+                      </Button>
+                    </Group>
+                  ) : (
+                    <Button
+                      color="red"
+                      variant="light"
+                      size="sm"
+                      leftSection={<IconTrash size={16} />}
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      Удалить
+                    </Button>
+                  )}
+                </Group>
+              </Stack>
+            </Paper>
+
+            {/* Тип личности, бриф и платежи — сворачиваемыми блоками */}
+            <Accordion
+              variant="separated"
+              radius="md"
+              chevronPosition="right"
+              multiple
+            >
+              {profile && (
+                <Accordion.Item value="disc">
+                  <Accordion.Control>
+                    <Text fw={600} size="sm">
+                      Тип личности — «{profile.nick}»
+                    </Text>
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    <Image
+                      src={`/images/disc/${profile.code}.webp`}
+                      alt={`Типаж «${profile.nick}»`}
+                      fit="contain"
+                      w="auto"
+                      maw="100%"
+                      mah={180}
+                      mx="auto"
+                      radius="md"
+                      mb="md"
+                    />
+                    <Group gap="xs" mb="xs">
+                      <ThemeIcon color="brand" variant="light" radius="xl" size="md">
+                        <IconSparkles size={16} />
+                      </ThemeIcon>
+                      <Title order={5}>
+                        «{profile.nick}»{" "}
+                        <Text span c="dimmed" fz="sm">
+                          ({profile.code})
+                        </Text>
+                      </Title>
+                    </Group>
+                    <Text size="sm" mb="sm">
+                      {profile.character}
+                    </Text>
+                    <List size="sm" spacing={4}>
+                      <List.Item>
+                        <Text span fw={500}>
+                          Форматы:
+                        </Text>{" "}
+                        {profile.formats}
+                      </List.Item>
+                      <List.Item>
+                        <Text span fw={500}>
+                          Заводит:
+                        </Text>{" "}
+                        {profile.works}
+                      </List.Item>
+                      <List.Item>
+                        <Text span fw={500}>
+                          Убивает:
+                        </Text>{" "}
+                        {profile.kills}
+                      </List.Item>
+                    </List>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              )}
+
+              <Accordion.Item value="brief">
+                <Accordion.Control>
+                  <Text fw={600} size="sm">
+                    Бриф о проекте
+                  </Text>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  {selected.brief &&
+                  (BRIEF_FIELDS.some((f) => selected.brief?.[f.key]) ||
+                    selected.brief.cameraExp) ? (
+                    <Stack gap="sm">
+                      {BRIEF_FIELDS.map((f) => {
+                        const v = selected.brief?.[f.key];
+                        if (!v) return null;
+                        return (
+                          <div key={f.key}>
+                            <Text size="xs" c="dimmed">
+                              {f.label}
+                            </Text>
+                            <Text size="sm">{String(v)}</Text>
+                          </div>
+                        );
+                      })}
+                      {selected.brief.cameraExp && (
+                        <div>
+                          <Text size="xs" c="dimmed">
+                            Опыт на камере
+                          </Text>
+                          <Text size="sm">{cameraLabel(selected.brief.cameraExp)}</Text>
+                        </div>
+                      )}
+                    </Stack>
+                  ) : (
+                    <Text size="sm" c="dimmed">
+                      Поля «о проекте» не заполнены (можно пропускать — обязателен только тест).
+                    </Text>
+                  )}
+                </Accordion.Panel>
+              </Accordion.Item>
+
+              {/* История платежей (пополнения). «Траты» — позже. */}
               <Accordion.Item value="payments">
                 <Accordion.Control>
                   <Text fw={600} size="sm">

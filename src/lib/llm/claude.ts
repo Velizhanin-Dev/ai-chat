@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropic } from "../anthropic";
+import { recordStat } from "../stats";
 import type { LlmStrategy, StreamArgs } from "./types";
 
 // Opus 4.8 — единственная модель, что стабильно держит роль (Sonnet/Haiku
@@ -10,9 +11,16 @@ const MODEL_ID = "claude-opus-4-8";
 const EFFORT: "low" | "medium" | "high" | "max" = "high";
 const MAX_TOKENS = 16000;
 
+// Haiku 4.5 — дешёвая модель для служебных вызовов (роутер знаний, заголовок
+// диалога). Тарифы $/M: вход $1 / выход $5 (кэш на этих вызовах не используем).
+export const HAIKU_MODEL = "claude-haiku-4-5";
+export function haikuCost(inputTokens: number, outputTokens: number): number {
+  return (inputTokens * 1 + outputTokens * 5) / 1_000_000;
+}
+
 export const claudeStrategy: LlmStrategy = {
   provider: "claude",
-  async *stream({ system, messages, route, routeMs }: StreamArgs) {
+  async *stream({ system, messages, route, routeMs, meta }: StreamArgs) {
     // Болтовне глубокое мышление не нужно — отключаем (экономит выходные токены и
     // латентность). Генерация (short/long/method) — adaptive thinking + effort.
     const thinkCfg =
@@ -76,5 +84,21 @@ export const claudeStrategy: LlmStrategy = {
     console.log(
       `[chat] provider=claude model=${finalMessage.model} effort=${route.category === "chat" ? "off" : EFFORT} route=${route.category} routeMs=${routeMs} stop=${finalMessage.stop_reason} ttft=${ttft}ms total=${total}ms cache_read=${u.cache_read_input_tokens ?? 0} cache_create=${u.cache_creation_input_tokens ?? 0} input=${u.input_tokens} output=${u.output_tokens} cost=$${cost.toFixed(4)}`
     );
+
+    // Телеметрия в БД (для дашборда). Fire-and-forget — на ответ не влияет.
+    recordStat({
+      kind: "chat",
+      provider: "claude",
+      model: finalMessage.model,
+      userId: meta?.userId,
+      conversationId: meta?.conversationId,
+      routeCategory: route.category,
+      inputTokens: u.input_tokens ?? 0,
+      outputTokens: u.output_tokens ?? 0,
+      cachedTokens: u.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: (u.cache_creation_input_tokens ?? 0),
+      costUsd: cost,
+      latencyMs: total,
+    });
   },
 };

@@ -9,6 +9,8 @@ import {
 } from "@/lib/auth";
 import { sendVerificationEmail } from "@/lib/mail";
 import { apiError, readJson, EMAIL_RE } from "@/lib/http";
+import { getSettings, isLaunchLocked } from "@/lib/settings";
+import { isAdmin } from "@/lib/admin";
 
 export async function POST(req: Request) {
   const body = await readJson(req);
@@ -28,6 +30,13 @@ export async function POST(req: Request) {
   const user = await prisma.user.create({
     data: { name, email, passwordHash: await hashPassword(password) },
   });
+
+  // Режим «до запуска»: аккаунт создаём (ранняя регистрация), но внутрь не пускаем
+  // никого, кроме админов — сессию и письмо не выдаём (как и логин). После старта
+  // юзер просто войдёт. Bootstrap-админ по почте проходит (isAdmin по email).
+  if (isLaunchLocked(await getSettings()) && !isAdmin(user)) {
+    return apiError("Доступ к ассистенту откроется после запуска", 403);
+  }
 
   // Письмо для подтверждения отправляем, но вход не блокируем (verify-gate off).
   const token = await createToken(user.id, "email_verify");

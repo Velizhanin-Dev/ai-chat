@@ -7,6 +7,7 @@ import { IconArrowRight, IconRefresh } from "@tabler/icons-react";
 import LogoMark from "@/components/Brand/LogoMark";
 import BriefFlow from "@/components/Brief/BriefFlow";
 import { writeAnonBrief } from "@/lib/anon-brief";
+import { ymGoal } from "@/lib/metrika";
 import type { Brief } from "@/lib/brief";
 
 // Клиентская часть страницы брифа по QR. Гейт по фичефлагу briefPageEnabled —
@@ -29,6 +30,7 @@ export default function BriefStandaloneClient() {
 
   const handleSubmit = async (brief: Brief) => {
     writeAnonBrief(brief);
+    ymGoal("brief_complete", { disc: brief.disc, source: "qr" });
     return { ok: true };
   };
 

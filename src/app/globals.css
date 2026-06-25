@@ -190,56 +190,214 @@ section[id] {
   background: color-mix(in srgb, var(--color-accent) 6%, var(--mantine-color-body));
 }
 
-/* Таймер «до запуска» в герое (LaunchCountdown). Тёплая бренд-подложка в тон
-   .lp-hero-bg + крупные цифры-«плашки»; при смене цифры — короткий пульс. */
-.launch-countdown {
-  background: color-mix(in srgb, var(--color-accent) 8%, var(--mantine-color-body));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
-  box-shadow: 0 20px 50px -28px color-mix(in srgb, var(--color-accent) 55%, transparent);
+/* Таймер «до запуска» в герое (LaunchCountdown) — крупные бренд-цифры с
+   одометр-роллом, дышащим акцентным свечением и «живой» пульсирующей точкой.
+   Всё движение на transform/opacity; см. prefers-reduced-motion ниже. */
+.lc {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
+  padding: clamp(20px, 3vw, 34px) clamp(16px, 3vw, 40px);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 10%, var(--mantine-color-body)),
+    color-mix(in srgb, var(--color-accent) 4%, var(--mantine-color-body))
+  );
+  border: 1px solid color-mix(in srgb, var(--color-accent) 26%, transparent);
+  box-shadow: 0 30px 70px -36px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
-[data-mantine-color-scheme="dark"] .launch-countdown {
-  background: color-mix(in srgb, var(--color-accent) 12%, var(--mantine-color-body));
+[data-mantine-color-scheme="dark"] .lc {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-accent) 16%, var(--mantine-color-body)),
+    color-mix(in srgb, var(--color-accent) 7%, var(--mantine-color-body))
+  );
 }
-.launch-countdown__cell {
-  min-width: clamp(48px, 13vw, 72px);
-  padding: 8px 4px;
-  border-radius: var(--mantine-radius-md);
-  background: var(--mantine-color-body);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
-  text-align: center;
+/* дышащее акцентное свечение за цифрами */
+.lc::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 42%;
+  width: 115%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-accent) 30%, transparent),
+    transparent 60%
+  );
+  filter: blur(42px);
+  opacity: 0.5;
+  animation: lc-breathe 5s ease-in-out infinite;
 }
-.launch-countdown__num {
+.lc-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+.lc-eyebrow-text {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  /* Mantine-токен, чтобы цвет корректно инвертировался в тёмной теме
+     (бренд-токен --color-text зафиксирован на #212121 и в dark не виден). */
+  color: var(--mantine-color-text);
+  font-size: clamp(0.95rem, 2.4vw, 1.1rem);
+}
+.lc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 70%, transparent);
+  animation: lc-pulse 1.9s ease-out infinite;
+}
+.lc-clock {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: clamp(6px, 1.6vw, 18px);
+  margin-top: clamp(14px, 2.2vw, 24px);
+}
+.lc-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.lc-digits {
+  display: flex;
+  gap: 3px;
+}
+.lc-digit {
   display: block;
+  height: 1.12em;
+  line-height: 1.12;
+  overflow: hidden;
+  font-size: clamp(2.4rem, 9vw, 4rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-accent);
+}
+.lc-digit--ph {
+  color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.lc-digit__roll {
+  display: flex;
+  flex-direction: column;
+  transition: transform 680ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.lc-digit__roll > span {
+  height: 1.12em;
+  line-height: 1.12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lc-label {
+  font-size: clamp(11px, 1.5vw, 13px);
+  color: var(--mantine-color-dimmed);
+}
+.lc-sep {
+  font-size: clamp(1.6rem, 5vw, 2.4rem);
   font-weight: 600;
   line-height: 1;
+  color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  margin-top: clamp(4px, 1.2vw, 12px);
+  animation: lc-blink 1.05s steps(1, end) infinite;
+}
+.lc-caption {
+  margin-top: clamp(12px, 2vw, 18px);
+  text-align: center;
+  font-size: clamp(12px, 1.6vw, 14px);
+  color: var(--mantine-color-dimmed);
+}
+.lc-done {
+  text-align: center;
+  margin-top: 10px;
+  font-weight: 600;
   letter-spacing: -0.02em;
+  line-height: 0.92;
   font-size: clamp(1.8rem, 6vw, 2.8rem);
   color: var(--color-accent);
-  font-variant-numeric: tabular-nums;
-  animation: countdown-pop 0.42s ease-out;
 }
-.launch-countdown__sep {
-  font-weight: 600;
-  line-height: 1;
-  font-size: clamp(1.4rem, 4vw, 2.2rem);
-  color: color-mix(in srgb, var(--color-accent) 55%, transparent);
-  align-self: flex-start;
-  margin-top: clamp(8px, 2.5vw, 18px);
+.lc-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-@keyframes countdown-pop {
-  0% {
-    transform: translateY(-3px) scale(1.08);
+@keyframes lc-breathe {
+  0%,
+  100% {
     opacity: 0.4;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 0.62;
+    transform: scale(1.06);
+  }
+}
+@keyframes lc-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 11px transparent;
   }
   100% {
-    transform: none;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes lc-blink {
+  0%,
+  50% {
     opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0.25;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .launch-countdown__num {
+  .lc::before,
+  .lc-dot,
+  .lc-sep {
     animation: none;
   }
+  .lc-sep {
+    opacity: 0.7;
+  }
+  .lc-digit__roll {
+    transition: none;
+  }
+}
+
+/* Маркированные списки в правовых документах (/legal/*). Плейн <ul>/<li>, т.к.
+   Mantine List.Item — compound-компонент и не рендерится из server component
+   (ошибка React Client Manifest). */
+.legal-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.legal-list li {
+  line-height: 1.6;
 }
 
 /* Плавное появление блоков при скролле.

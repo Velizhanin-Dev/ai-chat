@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Box, Paper, Group, Stack, Text } from "@mantine/core";
 
-// Анимированный обратный отсчёт «до запуска AI-ассистента». Показывается в герое
-// лендинга, когда включён pre-launch (см. settings.launch). Время считаем на
-// клиенте: до маунта рендерим прочерки (без hydration mismatch), затем тикаем.
+// Обратный отсчёт «до запуска AI-ассистента» в герое лендинга (pre-launch,
+// см. settings.launch). Время считаем на клиенте: до маунта — статичные прочерки
+// (без hydration mismatch), затем тикаем раз в секунду.
+//
+// Фишка: крупные бренд-цифры катятся «одометром» (каждая цифра — вертикальная
+// лента 0–9, сдвигается transform'ом при смене), живая пульсирующая точка и
+// дышащее акцентное свечение за цифрами. Всё на transform/opacity, с уважением
+// к prefers-reduced-motion (см. .lc* в globals.css).
 
 interface Parts {
   d: number;
@@ -27,7 +31,39 @@ function partsTo(target: number): Parts {
   };
 }
 
-const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+// Одна цифра-«барабан»: лента 0–9, сдвиг по вертикали = текущее значение.
+// null → статичный прочерк (до гидратации).
+function Digit({ d }: { d: number | null }) {
+  if (d === null) {
+    return <span className="lc-digit lc-digit--ph">–</span>;
+  }
+  return (
+    <span className="lc-digit">
+      <span className="lc-digit__roll" style={{ transform: `translateY(-${d * 10}%)` }}>
+        {Array.from({ length: 10 }, (_, n) => (
+          <span key={n}>{n}</span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+// Группа из двух цифр (дни/часы/минуты/секунды) + подпись.
+function Group({ value, label }: { value: number | null; label: string }) {
+  // Дни теоретически могут быть >99 — тогда показываем как есть (без барабана),
+  // но для near-term запуска это всегда 2 цифры.
+  const tens = value === null ? null : Math.floor(value / 10) % 10;
+  const ones = value === null ? null : value % 10;
+  return (
+    <div className="lc-group">
+      <div className="lc-digits">
+        <Digit d={tens} />
+        <Digit d={ones} />
+      </div>
+      <span className="lc-label">{label}</span>
+    </div>
+  );
+}
 
 export default function LaunchCountdown({ targetAt }: { targetAt: string }) {
   const target = new Date(targetAt).getTime();
@@ -39,54 +75,45 @@ export default function LaunchCountdown({ targetAt }: { targetAt: string }) {
     return () => clearInterval(id);
   }, [target]);
 
-  const cells: { value: string; label: string }[] = [
-    { value: t ? pad(t.d) : "––", label: "дней" },
-    { value: t ? pad(t.h) : "––", label: "часов" },
-    { value: t ? pad(t.m) : "––", label: "минут" },
-    { value: t ? pad(t.s) : "––", label: "секунд" },
-  ];
+  const done = t?.done ?? false;
+
+  // Текст для скринридеров (без секунд — чтобы не «тарахтело»). aria-live не
+  // ставим: цифры обновляются ежесекундно, озвучивать каждую не нужно.
+  const sr = done
+    ? "AI-ассистент запущен"
+    : t
+    ? `До запуска: ${t.d} дн ${t.h} ч ${t.m} мин`
+    : "Идёт обратный отсчёт до запуска";
 
   return (
-    <Paper
-      radius="lg"
-      p={{ base: "md", sm: "lg" }}
-      className="launch-countdown"
-      maw={560}
-      mx="auto"
-      w="100%"
-    >
-      <Text ta="center" fw={600} c="dimmed" tt="uppercase" fz="sm" style={{ letterSpacing: "0.08em" }}>
-        {t?.done ? "Запускаемся" : "До запуска AI-ассистента осталось"}
-      </Text>
+    <div className="lc" role="timer">
+      <span className="lc-sr">{sr}</span>
 
-      {!t?.done ? (
-        <Group justify="center" gap="sm" mt="md" wrap="nowrap">
-          {cells.map((c, i) => (
-            <Group key={c.label} gap="sm" wrap="nowrap">
-              <Stack gap={2} align="center">
-                <Box className="launch-countdown__cell">
-                  {/* key=значение → ремаунт и анимация «пульса» при смене цифры */}
-                  <span key={c.value} className="launch-countdown__num">
-                    {c.value}
-                  </span>
-                </Box>
-                <Text fz="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: "0.06em" }}>
-                  {c.label}
-                </Text>
-              </Stack>
-              {i < cells.length - 1 && (
-                <Text className="launch-countdown__sep" aria-hidden>
-                  :
-                </Text>
-              )}
-            </Group>
-          ))}
-        </Group>
+      <div className="lc-eyebrow">
+        <span className="lc-dot" aria-hidden />
+        <span className="lc-eyebrow-text">
+          {done ? "Запускаемся" : "До запуска осталось"}
+        </span>
+      </div>
+
+      {done ? (
+        <div className="lc-done">Велижанин AI — в эфире</div>
       ) : (
-        <Text ta="center" className="lp-display" mt="xs" style={{ fontSize: "2rem", color: "var(--color-accent)" }}>
-          🚀 Уже здесь
-        </Text>
+        <>
+          <div className="lc-clock" aria-hidden>
+            <Group value={t ? t.d : null} label="дней" />
+            <span className="lc-sep">:</span>
+            <Group value={t ? t.h : null} label="часов" />
+            <span className="lc-sep">:</span>
+            <Group value={t ? t.m : null} label="минут" />
+            <span className="lc-sep">:</span>
+            <Group value={t ? t.s : null} label="секунд" />
+          </div>
+          <div className="lc-caption">
+            Собираем ассистента по методике Николая Велижанина
+          </div>
+        </>
       )}
-    </Paper>
+    </div>
   );
 }

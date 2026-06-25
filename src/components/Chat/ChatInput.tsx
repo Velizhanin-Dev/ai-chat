@@ -15,6 +15,8 @@ import {
   setError,
 } from "@/store/chatSlice";
 import type { ChatMessage } from "@/store/chatSlice";
+import { ymGoal } from "@/lib/metrika";
+import { apiRenameConversation } from "@/lib/chat-client";
 import { v4 as uuidv4 } from "uuid";
 
 const EMPTY: ChatMessage[] = [];
@@ -61,11 +63,16 @@ async function generateTitle(message: string, convId: string, dispatch: ReturnTy
     const res = await fetch("/api/title", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, conversationId: convId }),
     });
     if (!res.ok) return;
     const data = (await res.json()) as { title?: string };
-    if (data.title) dispatch(renameConversation({ id: convId, title: data.title }));
+    if (data.title) {
+      dispatch(renameConversation({ id: convId, title: data.title }));
+      // Сохраняем контекстный заголовок в БД (диалог уже создан сервером в
+      // /api/chat). Fire-and-forget; при гонке 404 → останется фолбэк-заголовок.
+      void apiRenameConversation(convId, data.title);
+    }
   } catch {
     // молча — фолбэк-заголовок уже стоит
   }
@@ -81,7 +88,6 @@ export default function ChatInput() {
   );
   const messages = active?.messages ?? EMPTY;
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
-  const provider = useAppSelector((s) => s.settings.provider);
   const brief = useAppSelector((s) => s.auth.user?.brief ?? null);
   const userId = useAppSelector((s) => s.auth.user?.id ?? null);
   const inputFocusSignal = useAppSelector((s) => s.chat.inputFocusSignal);
@@ -146,6 +152,7 @@ export default function ChatInput() {
     // Первое сообщение диалога? (нет активного ИЛИ активный пуст) — тогда после
     // отправки попросим у нейронки контекстный заголовок.
     const isFirstMessage = !activeId || messages.length === 0;
+    ymGoal("chat_message", { first: isFirstMessage });
     // Диалог создаётся ЛЕНИВО — ровно здесь, при первом сообщении.
     let convId = activeId;
     if (!convId) {
@@ -175,7 +182,7 @@ export default function ChatInput() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, aboutYou, brief, provider }),
+        body: JSON.stringify({ messages: history, aboutYou, brief, conversationId: convId }),
       });
 
       if (!response.ok) {
@@ -246,7 +253,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, messages, activeId, aboutYou, brief, provider, dispatch]);
+  }, [input, isLoading, messages, activeId, aboutYou, brief, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -260,7 +267,7 @@ export default function ChatInput() {
     // которая чуть приподнята над фоном (тема-токен, корректно в обеих темах).
     // Textarea — unstyled, сливается с поверхностью; фокус показываем кольцом
     // на самой поверхности (:focus-within), чтобы не терять видимость фокуса.
-    <Box px="md" pb="md" pt="xs">
+    <Box px={{ base: 4, sm: "md" }} pb="md" pt="xs" style={{ flexShrink: 0 }}>
       <Group
         align="flex-end"
         gap="xs"

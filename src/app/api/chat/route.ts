@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
 import { routeQuery, type RouteDecision } from "@/lib/router";
-import { getStrategy, normalizeProvider } from "@/lib/llm";
+import { getStrategy } from "@/lib/llm";
 import {
   buildBookContextBlock,
   selectFormatsBlock,
@@ -11,8 +11,20 @@ import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
 import { sanitizeBrief, buildBriefBlock, isBriefComplete, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
+import { getSettings, isLaunchLocked } from "@/lib/settings";
+import { isAdmin } from "@/lib/admin";
+import { prisma } from "@/lib/prisma";
 
 const HISTORY_LIMIT = 20;
+const CONV_TITLE_MAX = 40;
+
+// Фолбэк-заголовок диалога из первого сообщения (как на клиенте в chatSlice).
+// Контекстный заголовок от нейронки приедет позже отдельным PATCH.
+function fallbackTitle(text: string): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  if (!clean) return "Новый чат";
+  return clean.length > CONV_TITLE_MAX ? clean.slice(0, CONV_TITLE_MAX).trimEnd() + "…" : clean;
+}
 
 type ClientMessage = { role: "user" | "assistant"; content: string };
 
@@ -189,6 +201,22 @@ export async function POST(request: NextRequest) {
         headers: { "Content-Type": "application/json" },
       });
     }
+
+    // Глобальные настройки (провайдер модели + режим запуска) — читаем один раз.
+    const settings = await getSettings();
+
+    // Режим «до запуска»: пока таймер активен, ассистентом пользуются только
+    // админы. Это надёжный серверный гейт (клиентские кнопки/страницы — лишь UX).
+    if (isLaunchLocked(settings) && !isAdmin(sessionUser)) {
+      return new Response(
+        JSON.stringify({
+          error: "AI-ассистент ещё не запущен — открой чат после старта",
+          code: "LAUNCH_LOCKED",
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const briefDone =
       Boolean(sessionUser.briefCompletedAt) && isBriefComplete(sanitizeBrief(sessionUser.brief));
     if (!briefDone) {
@@ -225,13 +253,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Провайдер модели — из тела запроса (переключатель в чате). По умолчанию claude.
-    const provider = normalizeProvider(body?.provider);
+    // ── История чата (кросс-девайсная) ─────────────────────────────────────
+    // id диалога генерит клиент (nanoid) и шлёт сюда. Создаём диалог ДО стрима
+    // (с фолбэк-заголовком), чтобы он существовал к моменту PATCH-заголовка от
+    // /api/title. Пару «вопрос+ответ» допишем после успешного стрима ниже.
+    const lastUserContent = messages[messages.length - 1].content;
+    const conversationId =
+      typeof body?.conversationId === "string" && body.conversationId.length <= 64
+        ? body.conversationId
+        : null;
+    // persistId непустой → пишем историю; null → диалог чужой/битый, не пишем.
+    let persistId: string | null = null;
+    let createdConvNow = false;
+    if (conversationId) {
+      try {
+        const existing = await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          select: { userId: true },
+        });
+        if (existing) {
+          if (existing.userId === sessionUser.id) persistId = conversationId;
+          // чужой id — молча не пишем (persistId остаётся null)
+        } else {
+          await prisma.conversation.create({
+            data: { id: conversationId, userId: sessionUser.id, title: fallbackTitle(lastUserContent) },
+          });
+          persistId = conversationId;
+          createdConvNow = true;
+        }
+      } catch (err) {
+        console.error("[chat] conversation ensure error:", err);
+      }
+    }
+
+    // Провайдер модели — ГЛОБАЛЬНЫЙ, из настроек админки (не из тела запроса).
+    // Пользователь движок не выбирает.
+    const provider = settings.provider;
 
     // Роутинг: какие слои знаний подгрузить под этот запрос (хребет — всегда).
+    // Тем же глобальным движком (provider) + атрибуция для телеметрии.
     const lastUser = messages[messages.length - 1].content;
     const tRoute0 = Date.now();
-    const route = await routeQuery(messages);
+    const route = await routeQuery(messages, provider, {
+      userId: sessionUser.id,
+      conversationId,
+    });
     const routeMs = Date.now() - tRoute0;
     const systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief, userName);
 
@@ -245,21 +311,50 @@ export async function POST(request: NextRequest) {
           // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
           // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
           const strategy = getStrategy(provider);
+          let assistantText = "";
           for await (const token of strategy.stream({
             system: systemBlocks,
             messages,
             route,
             routeMs,
+            meta: { userId: sessionUser.id, conversationId },
           })) {
+            assistantText += token;
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
             );
+          }
+
+          // Успешный ответ — дописываем пару «вопрос+ответ» в историю. Вложенный
+          // create обновляет диалог (триггерит @updatedAt → свежие сверху).
+          // Ошибку записи глотаем: ответ уже у пользователя, история вторична.
+          if (persistId && assistantText.trim()) {
+            prisma.conversation
+              .update({
+                where: { id: persistId },
+                data: {
+                  messages: {
+                    create: [
+                      { role: "user", content: lastUserContent },
+                      { role: "assistant", content: assistantText },
+                    ],
+                  },
+                },
+              })
+              .catch((err) => console.error("[chat] persist messages error:", err));
           }
 
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.close();
         } catch (err) {
           console.error("Stream error:", err);
+          // Стрим упал — если диалог только что создали под этот запрос, он пуст;
+          // подчищаем, чтобы в истории не оставалось пустышек.
+          if (createdConvNow && persistId) {
+            prisma.conversation
+              .delete({ where: { id: persistId } })
+              .catch((e) => console.error("[chat] cleanup empty conversation error:", e));
+          }
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({ error: "Ошибка генерации ответа" })}\n\n`
