@@ -4,7 +4,7 @@ import { LegalHeader, LegalBody } from "@/components/Legal/LegalDoc";
 import { PRIVACY_TITLE, PRIVACY_BLOCKS } from "@/lib/legal-privacy";
 
 export const metadata: Metadata = {
-  title: "Политика конфиденциальности — VELIZHANIN AI",
+  title: "Политика конфиденциальности",
   robots: { index: true, follow: true },
 };
 

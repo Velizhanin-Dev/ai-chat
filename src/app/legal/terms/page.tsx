@@ -4,7 +4,7 @@ import { LegalHeader, LegalBody } from "@/components/Legal/LegalDoc";
 import { TERMS_TITLE, TERMS_BLOCKS } from "@/lib/legal-terms";
 
 export const metadata: Metadata = {
-  title: "Пользовательское соглашение — VELIZHANIN AI",
+  title: "Пользовательское соглашение",
   robots: { index: true, follow: true },
 };
 

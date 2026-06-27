@@ -522,6 +522,21 @@ AI-ассистент Велижанина (методика КМК) в форм
     (нажал «Перейти», параметр `plan`), `payment_success` (оплата подтверждена, параметр
     `order`), `cta_try` (кнопка «Попробовать» в герое). Точки — register/login `page.tsx`,
     `BriefModal`/`BriefStandaloneClient`, `ChatInput`, `SettingsModal`, `chat/page.tsx`, `Hero`.
+- 🟢 **SEO (метадата, sitemap, robots, JSON-LD).** Канонический URL — `src/lib/site.ts`
+  (`SITE_URL` из `NEXT_PUBLIC_APP_URL`, фолбэк `https://velizhanin.com`; апекс, т.к. www
+  301→апекс в Caddy). `app/layout.tsx` metadata: `metadataBase`, титл-шаблон
+  (`default` «VELIZHANIN AI — AI-продюсер YouTube по методике Велижанина» + `template`
+  `%s — VELIZHANIN AI` для подстраниц), расширенный `description`, `keywords`, Open Graph
+  и Twitter-карточка (OG-картинка пока квадратный лого 512 — `TODO` заменить на баннер
+  1200×630). JSON-LD (`WebSite` + `Organization` с `founder` Николай Велижанин) — `<script
+  type="application/ld+json">` в `<body>` для брендового поиска. Титлы юр-страниц укорочены
+  до короткой формы (шаблон сам добавляет «— VELIZHANIN AI», иначе был бы дубль).
+  - **`app/robots.ts`** → `/robots.txt`: индексируем всё, кроме приватных/гейтнутых
+    (`/chat`, `/admin`, `/api/`, `/payment`, `/brief`); ссылка на sitemap + host.
+  - **`app/sitemap.ts`** → `/sitemap.xml`: только публичные страницы — лендинг (`priority 1`)
+    + `/legal/terms` + `/legal/privacy`. Приватные роуты не включаем.
+  - ⚠️ `NEXT_PUBLIC_APP_URL` инлайнится на сборке (как `NEXT_PUBLIC_YM_ID`) — на проде
+    задать на BUILD-стадии, иначе sitemap/OG получат фолбэк-домен.
 - **Аналитика (доп.)** — при желании Plausible как лёгкая альтернатива/дубль
 - **Онбординг** — welcome-флоу для новых юзеров
 
@@ -552,6 +567,17 @@ AI-ассистент Велижанина (методика КМК) в форм
   **автоматический** (implicit, `cache_control`/ttl не нужны и игнорируются), попадания
   считаем по льготному тарифу. Тарифы GLM — константы в `glm.ts` (как тарифы Opus в
   `claude.ts`); под GLM-5.2 (вход $1.4 / выход $4.4 / кэш $0.26 за 1M).
+- 🟢 **Скрытый авто-ретрай GLM при перегрузе (concurrency Z.ai).** `glmStrategy.stream`
+  оборачивает открытие+чтение стрима в retry-цикл: при `429` (упёрлись в лимит
+  одновременных запросов Z.ai), `5xx`/`408`, сетевом сбое или обрыве **до первого
+  токена** — повторяет до `GLM_MAX_RETRIES` раз (env, дефолт 3) с экспоненциальной
+  паузой+джиттером (`glmBackoffMs`: ~0.6→1.2→2.4с, кап 4с; уважает `Retry-After`).
+  Ретрай **невидим** — пока пользователю не отдан ни один токен, он видит только
+  индикатор загрузки, а `: ping` из `route.ts` держит SSE живым. Как только пошёл
+  текст (`firstTokenAt`) — обрыв уже НЕ прячем (нельзя переписать показанное),
+  пробрасываем ошибку. Роутер (`router.ts`) к перегрузу устойчив отдельно — его
+  `try/catch` откатывается на keyword-эвристику. Задел под нагрузку ~50–100
+  одновременных юзеров на одном GLM-аккаунте.
 - 🟢 **Выбор движка — глобальный, в админке (не пользовательский).** Тумблер Claude/GLM
   у пользователя в шапке чата **убран**. Теперь движок — глобальная настройка
   `AppSettings.provider` (`AppSetting` key `provider`, дефолт `claude`, см. `src/lib/settings.ts`),

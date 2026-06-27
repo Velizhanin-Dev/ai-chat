@@ -12,6 +12,7 @@ import YandexMetrika from "@/components/Analytics/YandexMetrika";
 import { theme } from "@/theme";
 import { getSessionUser, publicUser } from "@/lib/auth";
 import type { AuthUser } from "@/store/authSlice";
+import { SITE_URL, SITE_NAME } from "@/lib/site";
 
 // Рабочий фолбэк к фирменному RandomGrotesque: близкий по характеру grotesque
 // с поддержкой кириллицы. Подставляется через CSS-переменную --font-brand.
@@ -30,9 +31,47 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
+const SITE_DESCRIPTION =
+  "Создавайте YouTube-контент с ИИ-помощником Николая Велижанина: сценарии, хуки, идеи для роликов, Shorts и Reels по методике КМК студии VELIZHANIN.";
+
 export const metadata: Metadata = {
-  title: "VELIZHANIN AI",
-  description: "AI-ассистент по методике YouTube-контента Николая Велижанина",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    // На подстраницах (напр. /legal) подставляется «<тайтл страницы> — VELIZHANIN AI».
+    default: "VELIZHANIN AI — AI-продюсер YouTube по методике Велижанина",
+    template: "%s — VELIZHANIN AI",
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: [
+    "Николай Велижанин",
+    "VELIZHANIN",
+    "методика КМК",
+    "AI-продюсер YouTube",
+    "сценарий для YouTube",
+    "идеи для Shorts",
+    "Reels",
+    "продвижение на YouTube",
+    "AI-ассистент",
+  ],
+  openGraph: {
+    type: "website",
+    locale: "ru_RU",
+    url: SITE_URL,
+    siteName: SITE_NAME,
+    title: "VELIZHANIN AI — AI-продюсер YouTube по методике Велижанина",
+    description: SITE_DESCRIPTION,
+    // TODO: заменить на полноценный баннер 1200×630; пока — квадратный лого-фолбэк.
+    images: [
+      { url: "/android-chrome-512x512.png", width: 512, height: 512, alt: SITE_NAME },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "VELIZHANIN AI — AI-продюсер YouTube по методике Велижанина",
+    description: SITE_DESCRIPTION,
+    images: ["/android-chrome-512x512.png"],
+  },
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
@@ -65,6 +104,29 @@ export default async function RootLayout({
         <ColorSchemeScript defaultColorScheme="auto" />
       </head>
       <body>
+        {/* Структурированные данные для брендового поиска (Велижанин ↔ продукт). */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify([
+              {
+                "@context": "https://schema.org",
+                "@type": "WebSite",
+                name: SITE_NAME,
+                url: SITE_URL,
+                inLanguage: "ru-RU",
+              },
+              {
+                "@context": "https://schema.org",
+                "@type": "Organization",
+                name: SITE_NAME,
+                url: SITE_URL,
+                logo: `${SITE_URL}/android-chrome-512x512.png`,
+                founder: { "@type": "Person", name: "Николай Велижанин" },
+              },
+            ]),
+          }}
+        />
         <YandexMetrika />
         <MantineProvider defaultColorScheme="auto" theme={theme}>
           <StoreProvider initialUser={initialUser}>

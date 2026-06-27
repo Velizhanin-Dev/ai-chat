@@ -7,6 +7,28 @@ const GLM_BASE_URL = process.env.GLM_BASE_URL || "https://api.z.ai/api/paas/v4";
 export const GLM_MODEL = process.env.GLM_MODEL || "glm-5.2";
 const GLM_MAX_TOKENS = 16000;
 
+// ── Авто-ретрай при перегрузе GLM ───────────────────────────────────────────
+// Z.ai при превышении concurrency отбивает запрос (429) ещё на этапе admission,
+// т.е. ДО первого токена. Пока пользователю не отдан ни один токен, повторная
+// попытка невидима (он видит индикатор загрузки) — ретраим 429/5xx/таймаут/сеть.
+// Как только пошёл текст — обрыв уже НЕ прячем (нельзя переписать показанное).
+const GLM_MAX_RETRIES = Math.max(0, Number(process.env.GLM_MAX_RETRIES ?? 3));
+
+function glmSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Экспоненциальная пауза с джиттером: попытка 1→~0.6с, 2→~1.2с, 3→~2.4с (кап 4с).
+// Джиттер размазывает повторы, чтобы толпа не долбила Z.ai синхронно.
+function glmBackoffMs(attempt: number): number {
+  const base = Math.min(4000, 600 * 2 ** (attempt - 1));
+  return base + Math.floor(Math.random() * 300);
+}
+
+function glmRetryable(status: number): boolean {
+  return status === 429 || status === 408 || status >= 500;
+}
+
 // Тарифы ($/M токенов) для оценки стоимости в логах — GLM-5.2
 // (docs.z.ai/guides/overview/pricing: вход $1.4 / выход $4.4 / кэш-вход $0.26).
 // Кэш у GLM автоматический (implicit), попадания приходят в
@@ -82,70 +104,116 @@ export const glmStrategy: LlmStrategy = {
       ...messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 
-    const t0 = Date.now();
-    const resp = await fetch(`${GLM_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: GLM_MODEL,
-        messages: oaMessages,
-        stream: true,
-        max_tokens: GLM_MAX_TOKENS,
-      }),
+    const requestBody = JSON.stringify({
+      model: GLM_MODEL,
+      messages: oaMessages,
+      stream: true,
+      max_tokens: GLM_MAX_TOKENS,
     });
 
-    if (!resp.ok || !resp.body) {
-      const errText = await resp.text().catch(() => "");
-      throw new Error(`GLM API ${resp.status}: ${errText.slice(0, 300)}`);
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const t0 = Date.now();
     let firstTokenAt = 0;
     let outChars = 0;
     // usage GLM возвращает в последнем чанке стрима (choices пустой, есть usage).
     // Ловим оппортунистически — из любого чанка, где он есть.
     let usage: GlmUsage | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE: события разделены \n; держим неполную хвостовую строку в буфере.
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-
-        let parsed: {
-          choices?: { delta?: { content?: string } }[];
-          usage?: GlmUsage;
-        };
-        try {
-          parsed = JSON.parse(data);
-        } catch {
-          // битый/частичный чанк — пропускаем (хвост уже сохранён в buffer)
+    // Открытие + чтение стрима с авто-ретраем. Повторяем, ПОКА firstTokenAt === 0
+    // (пользователю ещё ничего не отдано) — тогда ретрай невидим. attempt 0 —
+    // первая попытка, далее до GLM_MAX_RETRIES повторов с нарастающей паузой.
+    for (let attempt = 0; ; attempt++) {
+      let resp: Response;
+      try {
+        resp = await fetch(`${GLM_BASE_URL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: requestBody,
+        });
+      } catch (netErr) {
+        // Сетевой сбой до ответа — повторяем (токенов ещё не было гарантированно).
+        if (attempt < GLM_MAX_RETRIES) {
+          console.warn(
+            `[chat] provider=glm network error, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
+          );
+          await glmSleep(glmBackoffMs(attempt + 1));
           continue;
         }
-        if (parsed.usage) usage = parsed.usage;
-        // Берём только content. reasoning_content (если модель «думает») не
-        // показываем — наружу идёт чистый ответ, как у claude-стратегии.
-        const delta = parsed?.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta.length) {
-          if (!firstTokenAt) firstTokenAt = Date.now();
-          outChars += delta.length;
-          yield delta;
-        }
+        throw netErr;
       }
+
+      if (!resp.ok || !resp.body) {
+        if (glmRetryable(resp.status) && attempt < GLM_MAX_RETRIES) {
+          // 429 = упёрлись в concurrency Z.ai; ждём слот (уважаем Retry-After).
+          const ra = Number(resp.headers.get("retry-after"));
+          const waitMs =
+            Number.isFinite(ra) && ra > 0 ? ra * 1000 : glmBackoffMs(attempt + 1);
+          console.warn(
+            `[chat] provider=glm ${resp.status}, retry ${attempt + 1}/${GLM_MAX_RETRIES} in ${waitMs}ms`
+          );
+          await resp.text().catch(() => ""); // осушаем тело, чтобы не висло соединение
+          await glmSleep(waitMs);
+          continue;
+        }
+        const errText = await resp.text().catch(() => "");
+        throw new Error(`GLM API ${resp.status}: ${errText.slice(0, 300)}`);
+      }
+
+      // Стрим открыт — читаем. Обрыв ДО первого токена тоже ретраим; после
+      // первого токена — пробрасываем (показанный текст не переписать).
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE: события разделены \n; держим неполную хвостовую строку в буфере.
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (!data || data === "[DONE]") continue;
+
+            let parsed: {
+              choices?: { delta?: { content?: string } }[];
+              usage?: GlmUsage;
+            };
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              // битый/частичный чанк — пропускаем (хвост уже сохранён в buffer)
+              continue;
+            }
+            if (parsed.usage) usage = parsed.usage;
+            // Берём только content. reasoning_content (если модель «думает») не
+            // показываем — наружу идёт чистый ответ, как у claude-стратегии.
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta.length) {
+              if (!firstTokenAt) firstTokenAt = Date.now();
+              outChars += delta.length;
+              yield delta;
+            }
+          }
+        }
+      } catch (readErr) {
+        if (firstTokenAt === 0 && attempt < GLM_MAX_RETRIES) {
+          console.warn(
+            `[chat] provider=glm stream broke before first token, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
+          );
+          await glmSleep(glmBackoffMs(attempt + 1));
+          continue;
+        }
+        throw readErr;
+      }
+      break; // дочитали успешно — выходим из retry-цикла
     }
 
     const ttft = firstTokenAt ? firstTokenAt - t0 : -1;
