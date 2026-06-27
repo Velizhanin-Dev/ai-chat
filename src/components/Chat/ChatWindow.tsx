@@ -146,7 +146,7 @@ export default function ChatWindow() {
               style={{ width: "fit-content" }}
             >
               {streamingContent ? (
-                <Markdown content={streamingContent} />
+                <Markdown content={streamingContent} streaming />
               ) : (
                 <Text component="span" size="sm" c="dimmed" fs="italic">
                   печатает

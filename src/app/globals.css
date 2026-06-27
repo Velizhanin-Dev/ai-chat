@@ -129,6 +129,20 @@ section[id] {
 .md-body table {
   font-size: 0.85em;
 }
+/* Мигающая каретка, пока ответ «печатается» (только стриминговый баббл —
+   класс md-streaming). Сидит инлайн в конце последнего блока через ::after. */
+.md-streaming > :last-child::after {
+  content: "▊";
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--mantine-color-brand-6, #ec582e);
+  animation: blink 1s step-end infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-streaming > :last-child::after {
+    animation: none;
+  }
+}
 
 /* Фирменный «тесный» вид крупных заголовков:
    плотный интерлиньяж + отрицательный трекинг (см. design-system.md §2). */

@@ -55,6 +55,77 @@ function clearChatDraft() {
   }
 }
 
+// ── Плавная «печать» ответа ──────────────────────────────────────────────────
+// Модель отдаёт дельты рвано (то по букве, то целым предложением). Чтобы текст
+// «печатался» ровно, копим пришедшее в буфер и раскрываем его в стор с постоянной
+// частотой (~30fps) адаптивным шагом: малое отставание → по 2 символа за кадр,
+// большое (стрим «убежал» вперёд) → ~1/8 остатка, чтобы догнать без рывка в конец.
+// Уважает prefers-reduced-motion — там отдаём сразу, без анимации печати.
+const TYPE_TICK_MS = 33; // ~30 кадров/с
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
+interface Typewriter {
+  push: (text: string) => void; // добавить пришедший из сети кусок
+  end: () => Promise<void>; // дождаться, пока весь буфер допечатается
+  cancel: () => void; // прервать (ошибка/размонтирование)
+}
+
+function makeTypewriter(onReveal: (chunk: string) => void): Typewriter {
+  const instant = prefersReducedMotion();
+  let received = "";
+  let revealed = 0;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let ended = false;
+  let resolveEnd: (() => void) | null = null;
+
+  const stop = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+
+  const tick = () => {
+    if (revealed < received.length) {
+      const remaining = received.length - revealed;
+      const step = Math.max(2, Math.ceil(remaining / 8));
+      const chunk = received.slice(revealed, revealed + step);
+      revealed += chunk.length;
+      onReveal(chunk);
+    }
+    if (revealed >= received.length && ended) {
+      stop();
+      resolveEnd?.();
+    }
+  };
+
+  return {
+    push(text) {
+      if (instant) {
+        onReveal(text);
+        return;
+      }
+      received += text;
+      if (!timer) timer = setInterval(tick, TYPE_TICK_MS);
+    },
+    end() {
+      if (instant || revealed >= received.length) return Promise.resolve();
+      ended = true;
+      return new Promise<void>((res) => (resolveEnd = res));
+    },
+    cancel() {
+      stop();
+      resolveEnd?.();
+    },
+  };
+}
+
 export default function ChatInput({
   locked = false,
   lockReason = "ok",
@@ -162,6 +233,11 @@ export default function ChatInput({
       content: m.content,
     }));
 
+    // Печатная машинка: ровно «допечатывает» рваные дельты стрима в стор.
+    const typewriter = makeTypewriter((chunk) =>
+      dispatch(appendStreamingContent(chunk))
+    );
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -223,12 +299,14 @@ export default function ChatInput({
             if (parsed.error) throw new Error(parsed.error);
             if (parsed.token) {
               fullContent += parsed.token;
-              dispatch(appendStreamingContent(parsed.token));
+              typewriter.push(parsed.token);
             }
           }
         }
       }
 
+      // Стрим закончился — дать машинке допечатать остаток буфера, потом финализ.
+      await typewriter.end();
       dispatch(finalizeStreaming());
       dispatch(
         addMessage({
@@ -242,6 +320,7 @@ export default function ChatInput({
       // чтобы остаток в биллинге не отставал. Серверу это не доверяем (там — истина).
       dispatch(bumpRequestsUsed());
     } catch (err) {
+      typewriter.cancel(); // не оставляем таймер печати висеть
       const message =
         err instanceof Error ? err.message : "Произошла ошибка";
       dispatch(setError(message));

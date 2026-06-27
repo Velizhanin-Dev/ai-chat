@@ -8,9 +8,19 @@ import remarkGfm from "remark-gfm";
 // TypographyStylesProvider даёт Mantine-стили для h1–h6, списков, code, таблиц и т.д.
 // Ссылки открываем в новой вкладке. Класс md-body поджимает внешние отступы внутри
 // баббла (см. globals.css).
-export default function Markdown({ content }: { content: string }) {
+// streaming=true вешает класс md-streaming → мигающая каретка в конце текста
+// (см. globals.css). Включаем только на «живом» (печатаемом) баббле.
+export default function Markdown({
+  content,
+  streaming = false,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
   return (
-    <TypographyStylesProvider className="md-body">
+    <TypographyStylesProvider
+      className={streaming ? "md-body md-streaming" : "md-body"}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
