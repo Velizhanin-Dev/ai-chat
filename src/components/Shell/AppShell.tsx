@@ -16,7 +16,6 @@ import {
   Tooltip,
   Button,
   Menu,
-  Badge,
   ScrollArea,
   Skeleton,
   useMantineColorScheme,
@@ -31,40 +30,27 @@ import {
   IconSettings,
   IconPlus,
   IconMessageCircle,
-  IconTrash,
   IconShieldLock,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { authenticated, loggedOut, PLAN_LABEL } from "@/store/authSlice";
-import { apiLogout, apiSaveBrief } from "@/lib/auth-client";
-import { readAnonBrief, clearAnonBrief } from "@/lib/anon-brief";
+import { loggedOut } from "@/store/authSlice";
+import { apiLogout } from "@/lib/auth-client";
+import { readIntendedPlan, clearIntendedPlan } from "@/lib/intended-plan";
+import { readLastProject, writeLastProject } from "@/lib/last-project";
+import { useChatAccess } from "@/hooks/useChatAccess";
 import {
-  startNewChat,
+  startBriefing,
   setActiveConversation,
-  deleteConversation,
   hydrate,
   resetChat,
 } from "@/store/chatSlice";
 import {
   apiListConversations,
-  apiDeleteConversation,
   migrateLocalConversations,
 } from "@/lib/chat-client";
 import Logo from "@/components/Brand/Logo";
+import RequestsRing from "@/components/Chat/RequestsRing";
 import SettingsModal from "@/components/Settings/SettingsModal";
-import BriefModal from "@/components/Brief/BriefModal";
-
-// Полноэкранные роуты без сайдбара/шапки приложения (как лендинг). /brief —
-// анонимная страница брифа по QR-коду, у неё свой layout и нет гейта.
-const BARE_ROUTES = [
-  "/",
-  "/login",
-  "/register",
-  "/forgot-password",
-  "/reset-password",
-  "/verify-email",
-  "/brief",
-];
 
 function initials(name: string) {
   return name
@@ -84,8 +70,13 @@ export default function AppShellLayout({
   const [opened, { toggle, close }] = useDisclosure();
   const [settingsOpened, { open: openSettings, close: closeSettings }] =
     useDisclosure(false);
-  const [briefOpened, { open: openBrief, close: closeBrief }] =
-    useDisclosure(false);
+  // Вкладка, на которой открыть настройки (по умолчанию «Основные»; "billing" —
+  // при приходе с «Оформить» лендинга, см. эффект intended-plan ниже).
+  const [settingsTab, setSettingsTab] = useState("general");
+  const openSettingsOn = (tab: string) => {
+    setSettingsTab(tab);
+    openSettings();
+  };
   const pathname = usePathname();
   const router = useRouter();
   const { setColorScheme } = useMantineColorScheme();
@@ -99,7 +90,9 @@ export default function AppShellLayout({
   useEffect(() => setMounted(true), []);
   const user = useAppSelector((s) => s.auth.user);
   const authReady = useAppSelector((s) => s.auth.ready);
-  const plan = useAppSelector((s) => s.settings.plan);
+  // Доступ к чату (срок/квота) — чтобы при блокировке не дублировать окно тарифов:
+  // у заблокированного юзера тарифы показывает модалка «Подписка закончилась».
+  const access = useChatAccess();
   const conversations = useAppSelector((s) => s.chat.conversations);
   const activeId = useAppSelector((s) => s.chat.activeId);
   const chatHydratedFlag = useAppSelector((s) => s.chat.hydrated);
@@ -129,57 +122,51 @@ export default function AppShellLayout({
     void (async () => {
       await migrateLocalConversations();
       const res = await apiListConversations();
-      if (res.ok) dispatch(hydrate({ conversations: res.data }));
-      else dispatch(resetChat()); // ошибка сети — пустой список, но без залипания
+      if (res.ok) {
+        dispatch(hydrate({ conversations: res.data }));
+        // Авто-открываем последний активный проект (если он ещё существует).
+        const last = readLastProject(user.id);
+        if (last && res.data.some((c) => c.id === last)) {
+          dispatch(setActiveConversation(last));
+        }
+      } else {
+        dispatch(resetChat()); // ошибка сети — пустой список, но без залипания
+      }
     })();
   }, [authReady, user?.id, dispatch]);
 
-  // Обязательный гейт: залогинен, но бриф не пройден → открываем модалку брифа
-  // принудительно (поверх чата, не закрыть, пока не заполнит). На лендинге/auth
-  // не трогаем. Закрываем при выходе из аккаунта. НЕ автозакрываем по факту
-  // прохождения — после теста показываем экран результата, его закрывает юзер.
-  //
-  // Перед открытием модалки пробуем подхватить анонимный бриф из localStorage —
-  // его мог заполнить пользователь на /brief по QR ещё до регистрации. Если он
-  // есть, молча отправляем на бэкенд: briefCompleted станет true и модалка не
-  // откроется (повторно проходить не нужно). Пробуем один раз на сессию входа.
-  // /admin — собственный layout/shell (см. app/admin); /legal/* — правовые
-  // страницы со своим layout. Чат-обвязку на них не навешиваем.
-  const onBareRoute =
-    BARE_ROUTES.includes(pathname) ||
-    pathname.startsWith("/admin") ||
-    pathname.startsWith("/legal");
-  const bridgeTried = useRef(false);
+  // Запоминаем активный проект в localStorage (для авто-открытия в след. заход).
   useEffect(() => {
-    if (onBareRoute) return;
-    if (!authReady) return;
-    if (!user) {
-      closeBrief();
-      bridgeTried.current = false;
-      return;
+    if (user?.id && activeId) writeLastProject(user.id, activeId);
+  }, [user?.id, activeId]);
+
+  // Намерение оформить тариф с лендинга («Оформить» → /chat): один раз открываем
+  // настройки на вкладке «Биллинг» и чистим флаг (повторно не всплывёт). Ждём
+  // залогиненного юзера (гость уходит на /login и вернётся уже авторизованным).
+  // Зависим и от pathname: AppShell живёт в layout и НЕ размонтируется при
+  // переходе лендинг → /chat, поэтому ловим флаг на смене маршрута (а не только
+  // на смене юзера). Гость уходит на /login и вернётся уже авторизованным.
+  const intendedPlanChecked = useRef(false);
+  useEffect(() => {
+    if (intendedPlanChecked.current || !user) return;
+    // Ждём, пока известно состояние доступа (срок/квота) — иначе не отличим
+    // заблокированного юзера от активного.
+    if (!access.ready) return;
+    if (readIntendedPlan()) {
+      intendedPlanChecked.current = true;
+      clearIntendedPlan();
+      // Заблокирован (нет активной подписки) → тарифы покажет модалка «Подписка
+      // закончилась» (chat/page), второе окно не открываем. Активному — биллинг.
+      if (!access.locked) openSettingsOn("billing");
     }
-    if (user.briefCompleted) {
-      closeBrief();
-      return;
-    }
-    if (!bridgeTried.current) {
-      bridgeTried.current = true;
-      const anon = readAnonBrief();
-      if (anon) {
-        void (async () => {
-          const res = await apiSaveBrief(anon);
-          if (res.ok) {
-            dispatch(authenticated(res.data.user));
-            clearAnonBrief();
-          } else {
-            openBrief();
-          }
-        })();
-        return;
-      }
-    }
-    openBrief();
-  }, [authReady, user, onBareRoute, openBrief, closeBrief, dispatch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, pathname, access.ready, access.locked]);
+
+  // Бриф теперь крепится к ПРОЕКТУ (создаётся при «Новый проект», см. chat/page),
+  // обязательной модалки брифа при входе больше нет. Чат-обвязку (сайдбар/шапка)
+  // навешиваем ТОЛЬКО на /chat — всё остальное (лендинг, auth, /admin, /legal,
+  // /brief, /payment, а также 404/500) рендерится «голым», своим layout.
+  const onBareRoute = !(pathname === "/chat" || pathname.startsWith("/chat/"));
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
@@ -191,9 +178,16 @@ export default function AppShellLayout({
     router.push("/");
   };
 
-  const handleNewChat = () => {
-    // Не создаём диалог сразу — только переводим в пустое состояние.
-    dispatch(startNewChat());
+  // Лимит проектов по тарифу: больше слотов создать нельзя, пока не удалишь проект.
+  const projectsLimit = access.projectsLimit;
+  const atProjectLimit =
+    projectsLimit != null && projectsLimit >= 0 && conversations.length >= projectsLimit;
+
+  const handleNewProject = () => {
+    if (atProjectLimit) return;
+    // Проект создаётся после прохождения брифа (см. chat/page) — входим в режим брифа.
+    dispatch(startBriefing());
+    if (pathname !== "/chat") router.push("/chat");
     close();
   };
 
@@ -217,15 +211,7 @@ export default function AppShellLayout({
       <SettingsModal
         opened={settingsOpened}
         onClose={closeSettings}
-        onRetakeBrief={() => {
-          closeSettings();
-          openBrief();
-        }}
-      />
-      <BriefModal
-        opened={briefOpened}
-        onClose={closeBrief}
-        mandatory={!user?.briefCompleted}
+        initialTab={settingsTab}
       />
       <AppShell
         header={{ height: 60 }}
@@ -239,28 +225,38 @@ export default function AppShellLayout({
           <Group h="100%" px="md" justify="space-between">
             <Group gap="sm">
               <Burger opened={opened} onClick={toggle} hiddenFrom="lg" size="sm" />
-              <Logo markHref="/" textHref="/chat" />
+              <Logo href="/" />
             </Group>
+            {/* Кружок остатка квоты запросов (как в Claude Code). */}
+            <RequestsRing />
           </Group>
         </AppShell.Header>
 
         <AppShell.Navbar p="sm">
           <AppShell.Section>
-            {/* На десктопе «Новый чат» сверху; на мобиле его прячем и показываем
-                крупной CTA внизу дравера (см. нижнюю секцию). */}
-            <Button
-              fullWidth
-              radius="md"
-              color="brand"
-              leftSection={<IconPlus size={18} />}
-              onClick={handleNewChat}
-              mb="sm"
-              visibleFrom="lg"
+            {/* На десктопе «Новый проект» сверху; на мобиле — крупной CTA внизу
+                дравера (см. нижнюю секцию). Блокируем при достижении лимита тарифа. */}
+            <Tooltip
+              label={`Лимит проектов на тарифе: ${projectsLimit}. Удалите проект, чтобы создать новый.`}
+              disabled={!atProjectLimit}
+              multiline
+              w={240}
             >
-              Новый чат
-            </Button>
+              <Button
+                fullWidth
+                radius="md"
+                color="brand"
+                leftSection={<IconPlus size={18} />}
+                onClick={handleNewProject}
+                disabled={atProjectLimit}
+                mb="sm"
+                visibleFrom="lg"
+              >
+                Новый проект
+              </Button>
+            </Tooltip>
             <Text size="xs" c="dimmed" px={4} mb={4}>
-              История диалогов
+              Мои проекты
             </Text>
           </AppShell.Section>
 
@@ -274,7 +270,7 @@ export default function AppShellLayout({
                 ))}
               {chatHydratedFlag && sorted.length === 0 && (
                 <Text size="xs" c="dimmed" ta="center" py="md">
-                  Пока нет диалогов
+                  Пока нет проектов
                 </Text>
               )}
               {chatHydratedFlag &&
@@ -311,23 +307,8 @@ export default function AppShellLayout({
                       >
                         {conv.title}
                       </Text>
-                      <Tooltip label="Удалить" openDelay={400}>
-                        <ActionIcon
-                          component="div"
-                          role="button"
-                          variant="subtle"
-                          color="red"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            dispatch(deleteConversation(conv.id));
-                            void apiDeleteConversation(conv.id);
-                          }}
-                          style={{ flexShrink: 0 }}
-                        >
-                          <IconTrash size={14} />
-                        </ActionIcon>
-                      </Tooltip>
+                      {/* Удаление/переименование проекта — в шапке самого проекта
+                          (chat/page), не в списке. */}
                     </Group>
                   </UnstyledButton>
                 );
@@ -336,18 +317,19 @@ export default function AppShellLayout({
           </AppShell.Section>
 
           <AppShell.Section>
-            {/* Мобильная CTA: крупная кнопка «Новый чат» внизу дравера. */}
+            {/* Мобильная CTA: крупная кнопка «Новый проект» внизу дравера. */}
             <Button
               fullWidth
               size="lg"
               radius="md"
               color="brand"
               leftSection={<IconPlus size={20} />}
-              onClick={handleNewChat}
+              onClick={handleNewProject}
+              disabled={atProjectLimit}
               mb="sm"
               hiddenFrom="lg"
             >
-              Новый чат
+              Новый проект
             </Button>
 
             <Divider mb="sm" />
@@ -402,17 +384,9 @@ export default function AppShellLayout({
                   </UnstyledButton>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  <Menu.Label>
-                    <Group justify="space-between">
-                      <span>Тариф</span>
-                      <Badge color="brand" variant="light" size="sm" radius="sm">
-                        {PLAN_LABEL[plan]}
-                      </Badge>
-                    </Group>
-                  </Menu.Label>
                   <Menu.Item
                     leftSection={<IconSettings size={16} />}
-                    onClick={openSettings}
+                    onClick={() => openSettingsOn("general")}
                   >
                     Настройки
                   </Menu.Item>
@@ -456,19 +430,7 @@ export default function AppShellLayout({
             h="100%"
             style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
           >
-            {/* Пока бриф не пройден — НЕ рендерим чат под модалкой (иначе его видно,
-                если снести оверлей через devtools). Сервер всё равно блокирует
-                /api/chat без брифа, это лишь чтобы не светить интерфейс. */}
-            {authReady && user && !user.briefCompleted ? (
-              <Box ta="center" py={80}>
-                <Text c="dimmed">
-                  Заполни короткое знакомство — и откроется чат. Окно уже открыто
-                  поверх страницы.
-                </Text>
-              </Box>
-            ) : (
-              children
-            )}
+            {children}
           </Box>
         </AppShell.Main>
       </AppShell>

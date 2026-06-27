@@ -1,7 +1,7 @@
 "use client";
 
-import { Paper, Stack, Group, Text, ThemeIcon, Box } from "@mantine/core";
-import { IconBrain } from "@tabler/icons-react";
+import { Paper, Stack, Group, Text, Box } from "@mantine/core";
+import LogoMark from "@/components/Brand/LogoMark";
 
 export type MockMessage = { role: "user" | "assistant"; content: string };
 
@@ -52,14 +52,7 @@ export default function ChatMockup({
         style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
       >
         <Group gap="xs">
-          <ThemeIcon
-            size="md"
-            radius="md"
-            variant="gradient"
-            gradient={{ from: "brand.5", to: "brand.7", deg: 135 }}
-          >
-            <IconBrain size={16} />
-          </ThemeIcon>
+          <LogoMark box="md" glyph={20} />
           <Text fw={600} size="sm">
             VELIZHANIN AI
           </Text>

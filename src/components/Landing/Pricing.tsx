@@ -19,6 +19,7 @@ import Section from "./Section";
 import SectionHeading from "./SectionHeading";
 import Reveal from "./Reveal";
 import { formatPrice, type PublicPlan } from "@/lib/plans";
+import { writeIntendedPlan } from "@/lib/intended-plan";
 
 /* ── FAQ (статичный) ──────────────────────────────────────────────────── */
 const FAQ = [
@@ -123,6 +124,10 @@ export default function Pricing({ plans }: { plans: PublicPlan[] }) {
                     variant={p.highlighted ? "filled" : "default"}
                     mt="auto"
                     fullWidth
+                    // «Оформить» (платный тариф) → запоминаем намерение, чтобы в чате
+                    // сразу открыть окно тарифов (Настройки → Биллинг). Для бесплатного
+                    // («Попробовать») просто заходим в чат, без всплытия биллинга.
+                    onClick={isFree ? undefined : () => writeIntendedPlan(p.id)}
                   >
                     {isFree ? "Попробовать бесплатно" : "Оформить"}
                   </Button>

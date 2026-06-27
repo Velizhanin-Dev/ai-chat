@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Textarea, ActionIcon, Group, Box } from "@mantine/core";
-import { IconSend } from "@tabler/icons-react";
+import { Textarea, ActionIcon, Group, Box, Paper, Text, Button, ThemeIcon } from "@mantine/core";
+import { IconSend, IconLock } from "@tabler/icons-react";
+import type { ChatAccessReason } from "@/hooks/useChatAccess";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   addMessage,
-  createConversation,
-  renameConversation,
   setLoading,
   setStreamingContent,
   appendStreamingContent,
@@ -15,8 +14,8 @@ import {
   setError,
 } from "@/store/chatSlice";
 import type { ChatMessage } from "@/store/chatSlice";
+import { bumpRequestsUsed } from "@/store/authSlice";
 import { ymGoal } from "@/lib/metrika";
-import { apiRenameConversation } from "@/lib/chat-client";
 import { v4 as uuidv4 } from "uuid";
 
 const EMPTY: ChatMessage[] = [];
@@ -56,29 +55,17 @@ function clearChatDraft() {
   }
 }
 
-// Контекстный заголовок диалога от нейронки (как слева в ChatGPT/Claude).
-// Тихо: при ошибке оставляем заголовок из первого сообщения (фолбэк уже в addMessage).
-async function generateTitle(message: string, convId: string, dispatch: ReturnType<typeof useAppDispatch>) {
-  try {
-    const res = await fetch("/api/title", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, conversationId: convId }),
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as { title?: string };
-    if (data.title) {
-      dispatch(renameConversation({ id: convId, title: data.title }));
-      // Сохраняем контекстный заголовок в БД (диалог уже создан сервером в
-      // /api/chat). Fire-and-forget; при гонке 404 → останется фолбэк-заголовок.
-      void apiRenameConversation(convId, data.title);
-    }
-  } catch {
-    // молча — фолбэк-заголовок уже стоит
-  }
-}
-
-export default function ChatInput() {
+export default function ChatInput({
+  locked = false,
+  lockReason = "ok",
+  onUpgrade,
+}: {
+  // Доступ исчерпан (тариф истёк / кончились запросы) — писать нельзя, показываем
+  // CTA на оформление тарифа. Серверный гейт /api/chat дублирует это (источник правды).
+  locked?: boolean;
+  lockReason?: ChatAccessReason;
+  onUpgrade?: () => void;
+} = {}) {
   const [input, setInput] = useState("");
   const dispatch = useAppDispatch();
   const isLoading = useAppSelector((s) => s.chat.isLoading);
@@ -88,7 +75,6 @@ export default function ChatInput() {
   );
   const messages = active?.messages ?? EMPTY;
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
-  const brief = useAppSelector((s) => s.auth.user?.brief ?? null);
   const userId = useAppSelector((s) => s.auth.user?.id ?? null);
   const inputFocusSignal = useAppSelector((s) => s.chat.inputFocusSignal);
 
@@ -142,6 +128,16 @@ export default function ChatInput() {
   const handleSend = useCallback(async () => {
     const question = input.trim();
     if (!question || isLoading) return;
+    // Доступ исчерпан — не отправляем, зовём оформить тариф (на сервере тоже 403).
+    if (locked) {
+      onUpgrade?.();
+      return;
+    }
+
+    // Чат идёт ВНУТРИ проекта — без активного проекта не отправляем (UI это и не
+    // показывает: при отсутствии проекта рендерится бриф/пустой экран).
+    if (!activeId) return;
+    const convId = activeId;
 
     setInput("");
     // Черновик отправлен — гасим отложенную запись и чистим localStorage.
@@ -149,15 +145,7 @@ export default function ChatInput() {
     clearChatDraft();
     dispatch(setError(null));
 
-    // Первое сообщение диалога? (нет активного ИЛИ активный пуст) — тогда после
-    // отправки попросим у нейронки контекстный заголовок.
-    const isFirstMessage = !activeId || messages.length === 0;
-    ymGoal("chat_message", { first: isFirstMessage });
-    // Диалог создаётся ЛЕНИВО — ровно здесь, при первом сообщении.
-    let convId = activeId;
-    if (!convId) {
-      convId = dispatch(createConversation()).payload.id;
-    }
+    ymGoal("chat_message", { first: messages.length === 0 });
 
     const userMessage = {
       id: uuidv4(),
@@ -169,10 +157,6 @@ export default function ChatInput() {
     dispatch(setLoading(true));
     dispatch(setStreamingContent(""));
 
-    if (isFirstMessage && convId) {
-      void generateTitle(question, convId, dispatch);
-    }
-
     const history = [...messages, userMessage].map((m) => ({
       role: m.role,
       content: m.content,
@@ -182,20 +166,29 @@ export default function ChatInput() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, aboutYou, brief, conversationId: convId }),
+        body: JSON.stringify({ messages: history, aboutYou, conversationId: convId }),
       });
 
       if (!response.ok) {
         // Тело ошибки может быть НЕ JSON: в dev при пересборке сервера приходит
         // HTML-страница Next (отсюда «Unexpected token '<'»). Парсим безопасно.
         let msg = `Ошибка сервера (${response.status})`;
+        let code: string | undefined;
         try {
           const err = await response.json();
           if (err?.error) msg = err.error;
+          code = err?.code;
         } catch {
           if (response.status === 500 || response.status === 503) {
             msg = "Сервер перезапускается, попробуй отправить ещё раз";
           }
+        }
+        // Подписка кончилась / квота исчерпана прямо во время чата — не пугаем
+        // красной ошибкой про биллинг, а открываем модалку «Подписка закончилась».
+        if (code === "PLAN_EXPIRED" || code === "QUOTA_EXCEEDED") {
+          dispatch(finalizeStreaming());
+          onUpgrade?.();
+          return; // setLoading(false) сделает finally
         }
         throw new Error(msg);
       }
@@ -245,6 +238,9 @@ export default function ChatInput() {
           createdAt: new Date().toISOString(),
         })
       );
+      // Списали 1 запрос на сервере (квота) — отражаем оптимистично на клиенте,
+      // чтобы остаток в биллинге не отставал. Серверу это не доверяем (там — истина).
+      dispatch(bumpRequestsUsed());
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Произошла ошибка";
@@ -253,7 +249,7 @@ export default function ChatInput() {
     } finally {
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, messages, activeId, aboutYou, brief, dispatch]);
+  }, [input, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -268,6 +264,27 @@ export default function ChatInput() {
     // Textarea — unstyled, сливается с поверхностью; фокус показываем кольцом
     // на самой поверхности (:focus-within), чтобы не терять видимость фокуса.
     <Box px={{ base: 4, sm: "md" }} pb="md" pt="xs" style={{ flexShrink: 0 }}>
+      {locked ? (
+        // Доступ исчерпан — вместо поля ввода CTA на оформление тарифа. История
+        // чатов остаётся доступной (скролл выше), писать нельзя.
+        <Paper withBorder radius="lg" p="md">
+          <Group justify="space-between" gap="md" wrap="wrap">
+            <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+              <ThemeIcon color="brand" variant="light" radius="xl" size="lg">
+                <IconLock size={18} />
+              </ThemeIcon>
+              <Text size="sm" c="dimmed" style={{ minWidth: 0 }}>
+                {lockReason === "quota"
+                  ? "Запросы на тарифе закончились — оформите тариф, чтобы продолжить."
+                  : "Подписка закончилась — оформите тариф, чтобы продолжить."}
+              </Text>
+            </Group>
+            <Button color="brand" radius="md" onClick={onUpgrade} style={{ flexShrink: 0 }}>
+              Выбрать тариф
+            </Button>
+          </Group>
+        </Paper>
+      ) : (
       <Group
         align="flex-end"
         gap="xs"
@@ -306,6 +323,7 @@ export default function ChatInput() {
           <IconSend size={20} />
         </ActionIcon>
       </Group>
+      )}
     </Box>
   );
 }

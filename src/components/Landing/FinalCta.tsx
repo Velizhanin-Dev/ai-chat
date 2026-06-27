@@ -9,12 +9,12 @@ import {
   Text,
   Title,
   Button,
-  ThemeIcon,
   SimpleGrid,
   Anchor,
 } from "@mantine/core";
-import { IconBrain, IconArrowRight } from "@tabler/icons-react";
+import { IconArrowRight } from "@tabler/icons-react";
 import Reveal from "./Reveal";
+import LogoMark from "@/components/Brand/LogoMark";
 import { LEGAL } from "@/lib/legal";
 
 type FooterCol = {
@@ -39,7 +39,6 @@ const FOOTER_COLS: FooterCol[] = [
     links: [
       { label: "100+ форматов", href: "#features" },
       { label: "Для кого", href: "#audiences" },
-      { label: "Открыть чат", href: "/chat" },
     ],
   },
   {
@@ -47,8 +46,8 @@ const FOOTER_COLS: FooterCol[] = [
     titleHref: "https://velizhanin.com",
     titleExternal: true,
     links: [
-      { label: "content-могущество", href: "https://velizhanin.com", external: true },
       { label: "velizhanin.com", href: "https://velizhanin.com", external: true },
+      { label: "Контент могущество. Клуб", href: "https://t.me/content_mogushestvo_bot?start=utm_ai", external: true },
     ],
   },
 ];
@@ -125,20 +124,13 @@ export default function FinalCta({
           <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="xl">
             <Stack gap="xs">
               <Group gap="xs">
-                <ThemeIcon
-                  size="lg"
-                  radius="md"
-                  variant="gradient"
-                  gradient={{ from: "brand.5", to: "brand.7", deg: 135 }}
-                >
-                  <IconBrain size={22} />
-                </ThemeIcon>
+                <LogoMark box="lg" glyph={24} />
                 <Text fw={600} style={{ letterSpacing: "-0.02em" }}>
                   VELIZHANIN AI
                 </Text>
               </Group>
               <Text size="sm" c="dimmed" maw={240}>
-                AI-продюсер по методике Николая Велижанина.
+                AI-продюсер по методике Николая Велижанина
               </Text>
             </Stack>
 
@@ -180,7 +172,7 @@ export default function FinalCta({
 
           <Group justify="space-between" mt="xl" gap="md">
             <Text size="xs" c="dimmed">
-              © 2026 VELIZHANIN AI · студия «content-могущество»
+              © 2026 VELIZHANIN AI · студия VELIZHANIN
             </Text>
             <Group gap="md">
               <Anchor component={Link} href="/legal/terms" c="dimmed" size="xs" underline="never">

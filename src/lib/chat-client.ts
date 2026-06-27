@@ -1,6 +1,7 @@
 import type { ConversationMeta } from "@/app/api/conversations/route";
 import type { ApiMessage } from "@/app/api/conversations/[id]/route";
-import type { ChatMessage, Conversation } from "@/store/chatSlice";
+import { newProjectId, type ChatMessage, type Conversation } from "@/store/chatSlice";
+import type { Brief } from "@/lib/brief";
 
 // ── Клиентская обёртка над /api/conversations/* ───────────────────────────
 // История чата живёт в БД (кросс-девайсно). Список — метаданными, сообщения —
@@ -29,6 +30,47 @@ export async function apiListConversations(): Promise<Result<Conversation[]>> {
     if (!res.ok) return { ok: false, error: "Не удалось загрузить историю" };
     const data = (await res.json()) as { conversations: ConversationMeta[] };
     return { ok: true, data: data.conversations.map(metaToConversation) };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Создать проект (после прохождения брифа). Клиент генерит id (nanoid) и шлёт его
+// + бриф; сервер вешает бриф на диалог, заголовок = название канала, проверяет
+// лимит проектов тарифа. code="PROJECT_LIMIT" — слоты заняты (удалить проект).
+export type CreateProjectResult =
+  | { ok: true; data: Conversation }
+  | { ok: false; error: string; code?: string };
+
+export async function apiCreateProject(brief: Brief): Promise<CreateProjectResult> {
+  try {
+    const id = newProjectId();
+    const res = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, brief }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      conversation?: ConversationMeta;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.conversation) {
+      return { ok: false, error: data.error || "Не удалось создать проект", code: data.code };
+    }
+    const m = data.conversation;
+    // Новый проект пуст → messagesLoaded=true (грузить нечего).
+    return {
+      ok: true,
+      data: {
+        id: m.id,
+        title: m.title,
+        messages: [],
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        messagesLoaded: true,
+      },
+    };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }

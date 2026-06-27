@@ -63,8 +63,10 @@ export async function createPayment(user: User, planId: string): Promise<CreateP
     customerKey: user.id,
     recurrent: true,
     notificationURL: `${appUrl}/api/payments/webhook`,
-    successURL: `${appUrl}/chat?payment=success&order=${payment.id}`,
-    failURL: `${appUrl}/chat?payment=fail`,
+    // Отдельная страница результата платежа (не /chat) — иначе уведомление
+    // перекрывается модалкой блокировки/тарифов. См. src/app/payment/page.tsx.
+    successURL: `${appUrl}/payment?order=${payment.id}`,
+    failURL: `${appUrl}/payment?status=fail&order=${payment.id}`,
     receipt: buildReceipt(plan, user.email, amount),
   });
 
@@ -97,6 +99,8 @@ async function markPaid(paymentId: string, rebillId?: string): Promise<void> {
       data: {
         plan: payment.planId,
         planExpiresAt: expires,
+        // Новый оплаченный период — сбрасываем счётчик израсходованных запросов.
+        requestsUsed: 0,
         ...(rebillId ? { rebillId } : {}),
       },
     }),

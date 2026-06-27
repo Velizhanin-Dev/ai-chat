@@ -3,11 +3,11 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError } from "@/lib/http";
-import { sanitizeBrief, isBriefComplete, type Brief, type DiscType } from "@/lib/brief";
+import { getPlans } from "@/lib/plans";
 
 // Список зарегистрированных для админки: пагинация + поиск по имени/почте. Бриф
-// отдаём сразу (нормализованным) — чтобы Drawer с деталями не делал второй запрос.
-// Только для админа; не-админу — 404 (как и вся зона /admin).
+// теперь у проектов (см. /api/admin/users/[id]/projects), здесь его нет — в строке
+// только сводка (число проектов + квота запросов). Только для админа; иначе 404.
 
 export interface AdminUserRow {
   id: string;
@@ -16,13 +16,15 @@ export interface AdminUserRow {
   plan: string;
   role: string;
   emailVerified: boolean;
-  briefCompleted: boolean;
-  disc: DiscType | null;
-  brief: Brief | null;
   // Способ входа: "email" (есть пароль) и/или подключённые соцсети ("vk"/"yandex").
   authMethods: string[];
-  // Платная подписка активна до (ISO) или null.
+  // Подписка активна до (ISO) или null (пробный — +1ч, платный — +30д).
   planExpiresAt: string | null;
+  // Квота запросов: израсходовано + лимит тарифа (-1 = без лимита, null = тариф не найден).
+  requestsUsed: number;
+  requestsLimit: number | null;
+  // Сколько проектов (диалогов) у пользователя.
+  projectCount: number;
   // Последний визит (ISO) или null, если ни разу после введения поля.
   lastSeenAt: string | null;
   createdAt: string;
@@ -47,7 +49,7 @@ export async function GET(req: Request) {
       }
     : {};
 
-  const [total, rows] = await Promise.all([
+  const [total, rows, plans] = await Promise.all([
     prisma.user.count({ where }),
     prisma.user.findMany({
       where,
@@ -56,10 +58,19 @@ export async function GET(req: Request) {
       take: PAGE_SIZE,
       include: { oauthAccounts: { select: { provider: true } } },
     }),
+    getPlans(),
   ]);
 
+  // Число проектов на каждого юзера страницы — одним groupBy.
+  const counts = await prisma.conversation.groupBy({
+    by: ["userId"],
+    where: { userId: { in: rows.map((u) => u.id) } },
+    _count: { _all: true },
+  });
+  const countByUser = new Map(counts.map((c) => [c.userId, c._count._all]));
+  const requestsLimitByPlan = new Map(plans.map((p) => [p.id, p.limits.requests]));
+
   const users: AdminUserRow[] = rows.map((u) => {
-    const brief: Brief | null = u.brief ? sanitizeBrief(u.brief) : null;
     const authMethods = [
       ...(u.passwordHash ? ["email"] : []),
       ...u.oauthAccounts.map((a) => a.provider),
@@ -71,11 +82,11 @@ export async function GET(req: Request) {
       plan: u.plan,
       role: u.role,
       emailVerified: Boolean(u.emailVerified),
-      briefCompleted: Boolean(u.briefCompletedAt) && isBriefComplete(brief),
-      disc: brief?.disc ?? null,
-      brief,
       authMethods,
       planExpiresAt: u.planExpiresAt ? u.planExpiresAt.toISOString() : null,
+      requestsUsed: u.requestsUsed,
+      requestsLimit: requestsLimitByPlan.has(u.plan) ? requestsLimitByPlan.get(u.plan)! : null,
+      projectCount: countByUser.get(u.id) ?? 0,
       lastSeenAt: u.lastSeenAt ? u.lastSeenAt.toISOString() : null,
       createdAt: u.createdAt.toISOString(),
     };

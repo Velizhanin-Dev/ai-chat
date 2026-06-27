@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import type { User } from "@prisma/client";
 import { prisma } from "./prisma";
+import { trialExpiresAt } from "./quota";
 
 // ── OAuth-вход (VK ID / Яндекс) ─────────────────────────────────────────────
 // Authorization Code flow. VK ID — с PKCE (S256). Сессию после колбэка ставим
@@ -226,11 +227,13 @@ export async function findOrCreateOAuthUser(
   }
 
   // 3. Новый пользователь (без пароля). Если email нет — синтетический плейсхолдер.
+  // Как и при обычной регистрации — пробный тариф на 1 час (см. trialExpiresAt).
   return prisma.user.create({
     data: {
       email: email ?? `${provider}_${profile.providerAccountId}@oauth.local`,
       name: profile.name,
       emailVerified: email ? new Date() : null,
+      planExpiresAt: trialExpiresAt(),
       oauthAccounts: {
         create: { provider, providerAccountId: profile.providerAccountId },
       },

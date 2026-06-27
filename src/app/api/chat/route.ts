@@ -13,22 +13,14 @@ import { sanitizeBrief, buildBriefBlock, isBriefComplete, type Brief } from "@/l
 import { getSessionUser } from "@/lib/auth";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
+import { getQuotaState } from "@/lib/quota";
 import { prisma } from "@/lib/prisma";
 
 const HISTORY_LIMIT = 20;
-const CONV_TITLE_MAX = 40;
-
-// Фолбэк-заголовок диалога из первого сообщения (как на клиенте в chatSlice).
-// Контекстный заголовок от нейронки приедет позже отдельным PATCH.
-function fallbackTitle(text: string): string {
-  const clean = text.trim().replace(/\s+/g, " ");
-  if (!clean) return "Новый чат";
-  return clean.length > CONV_TITLE_MAX ? clean.slice(0, CONV_TITLE_MAX).trimEnd() + "…" : clean;
-}
 
 type ClientMessage = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_CORE = `Ты — Николай Велижанин, продюсер студии «content-могущество», автор методики КМК / системы кубиков. К тебе обращаются за помощью с YouTube-контентом, и ты помогаешь так, как помогаю я сам — своим голосом, из своего опыта, как в моих TG-каналах и книге.
+const SYSTEM_CORE = `Ты — Николай Велижанин, основатель крупнейшей в СНГ студии по продвижению бизнеса в YouTube "студия VELIZHANIN", автор методики КМК / системы кубиков. К тебе обращаются за помощью с YouTube-контентом, и ты помогаешь так, как помогаю я сам — своим голосом, из своего опыта, как в моих TG-каналах и книге.
 
 # ЖЕЛЕЗНОЕ ПРАВИЛО РОЛИ (важнее всего остального)
 
@@ -185,16 +177,9 @@ export async function POST(request: NextRequest) {
     const rawMessages: unknown = body?.messages;
     const aboutYou =
       typeof body?.aboutYou === "string" ? body.aboutYou.trim().slice(0, 2000) : "";
-    // Бриф приходит структурой; нормализуем и берём только если он осмысленно полон.
-    const briefRaw = body?.brief ? sanitizeBrief(body.brief) : null;
-    const brief: Brief | null = isBriefComplete(briefRaw) ? briefRaw : null;
 
     // Имя — из серверной сессии (источник правды), а не с клиента.
     const sessionUser = await getSessionUser();
-
-    // Чат — только для авторизованных с пройденным брифом. Энфорсим на СЕРВЕРЕ:
-    // клиентскую модалку брифа можно снести через devtools, поэтому единственная
-    // надёжная проверка — здесь (источник правды — briefCompletedAt + полнота брифа).
     if (!sessionUser) {
       return new Response(JSON.stringify({ error: "Войдите, чтобы общаться" }), {
         status: 401,
@@ -216,17 +201,6 @@ export async function POST(request: NextRequest) {
         { status: 403, headers: { "Content-Type": "application/json" } }
       );
     }
-
-    const briefDone =
-      Boolean(sessionUser.briefCompletedAt) && isBriefComplete(sanitizeBrief(sessionUser.brief));
-    if (!briefDone) {
-      return new Response(
-        JSON.stringify({ error: "Сначала пройдите короткое знакомство (бриф)", code: "BRIEF_REQUIRED" }),
-        { status: 403, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const userName = sessionUser.name?.trim().slice(0, 100) ?? "";
 
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       return new Response(
@@ -253,38 +227,72 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── История чата (кросс-девайсная) ─────────────────────────────────────
-    // id диалога генерит клиент (nanoid) и шлёт сюда. Создаём диалог ДО стрима
-    // (с фолбэк-заголовком), чтобы он существовал к моменту PATCH-заголовка от
-    // /api/title. Пару «вопрос+ответ» допишем после успешного стрима ниже.
     const lastUserContent = messages[messages.length - 1].content;
+
+    // ── Проект (1 проект = 1 диалог) ───────────────────────────────────────
+    // Чат идёт ВНУТРИ существующего проекта: клиент шлёт его id. Бриф крепится к
+    // проекту (Conversation.brief) — это источник правды для промпта и гейта
+    // (раньше бриф был на User). Чужой/несуществующий проект — 404; без брифа —
+    // 403 (создаётся он только через POST /api/conversations с пройденным брифом).
     const conversationId =
       typeof body?.conversationId === "string" && body.conversationId.length <= 64
         ? body.conversationId
         : null;
-    // persistId непустой → пишем историю; null → диалог чужой/битый, не пишем.
-    let persistId: string | null = null;
-    let createdConvNow = false;
-    if (conversationId) {
-      try {
-        const existing = await prisma.conversation.findUnique({
-          where: { id: conversationId },
-          select: { userId: true },
-        });
-        if (existing) {
-          if (existing.userId === sessionUser.id) persistId = conversationId;
-          // чужой id — молча не пишем (persistId остаётся null)
-        } else {
-          await prisma.conversation.create({
-            data: { id: conversationId, userId: sessionUser.id, title: fallbackTitle(lastUserContent) },
-          });
-          persistId = conversationId;
-          createdConvNow = true;
-        }
-      } catch (err) {
-        console.error("[chat] conversation ensure error:", err);
+    if (!conversationId) {
+      return new Response(
+        JSON.stringify({ error: "Проект не выбран", code: "NO_PROJECT" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    const conv = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { userId: true, brief: true },
+    });
+    if (!conv || conv.userId !== sessionUser.id) {
+      return new Response(JSON.stringify({ error: "Проект не найден" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const brief: Brief | null = isBriefComplete(sanitizeBrief(conv.brief))
+      ? sanitizeBrief(conv.brief)
+      : null;
+    if (!brief) {
+      return new Response(
+        JSON.stringify({ error: "Сначала пройдите бриф проекта", code: "BRIEF_REQUIRED" }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    const persistId = conversationId;
+
+    // Квоты тарифа: срок (пробный — 1 час, платный — 30 дней) + лимит запросов
+    // (Plan.limits.requests, -1 = без лимита; правится в админке). Один ответ
+    // ассистента = 1 единица. Источник правды — сервер. Админам не лимитируем.
+    if (!isAdmin(sessionUser)) {
+      const quota = await getQuotaState(sessionUser);
+      if (quota.reason === "expired") {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Срок тарифа истёк. Подключите тариф «Базовый» или «Максимальный» в настройках → Биллинг.",
+            code: "PLAN_EXPIRED",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (quota.reason === "quota") {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Запросы на тарифе закончились. Подключите тариф повыше в настройках → Биллинг.",
+            code: "QUOTA_EXCEEDED",
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
       }
     }
+
+    const userName = sessionUser.name?.trim().slice(0, 100) ?? "";
 
     // Провайдер модели — ГЛОБАЛЬНЫЙ, из настроек админки (не из тела запроса).
     // Пользователь движок не выбирает.
@@ -325,6 +333,18 @@ export async function POST(request: NextRequest) {
             );
           }
 
+          // Успешный ответ — списываем 1 единицу квоты (kind=chat = 1 запрос).
+          // Атомарный increment; админам не списываем (гейт их и не проверяет).
+          // Fire-and-forget: сбой счётчика не должен ронять уже отданный ответ.
+          if (assistantText.trim() && !isAdmin(sessionUser)) {
+            prisma.user
+              .update({
+                where: { id: sessionUser.id },
+                data: { requestsUsed: { increment: 1 } },
+              })
+              .catch((err) => console.error("[chat] requestsUsed increment error:", err));
+          }
+
           // Успешный ответ — дописываем пару «вопрос+ответ» в историю. Вложенный
           // create обновляет диалог (триггерит @updatedAt → свежие сверху).
           // Ошибку записи глотаем: ответ уже у пользователя, история вторична.
@@ -348,13 +368,7 @@ export async function POST(request: NextRequest) {
           controller.close();
         } catch (err) {
           console.error("Stream error:", err);
-          // Стрим упал — если диалог только что создали под этот запрос, он пуст;
-          // подчищаем, чтобы в истории не оставалось пустышек.
-          if (createdConvNow && persistId) {
-            prisma.conversation
-              .delete({ where: { id: persistId } })
-              .catch((e) => console.error("[chat] cleanup empty conversation error:", e));
-          }
+          // Проект существует независимо от ответа (его создал бриф) — чистить нечего.
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({ error: "Ошибка генерации ответа" })}\n\n`

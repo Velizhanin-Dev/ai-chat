@@ -8,84 +8,56 @@ import {
   TextInput,
   Stack,
   Text,
-  Group,
-  Paper,
-  Button,
-  Badge,
   List,
-  ThemeIcon,
   SimpleGrid,
   SegmentedControl,
   Box,
   Divider,
   Loader,
-  Tooltip,
-  Alert,
 } from "@mantine/core";
 import {
   IconUser,
   IconCreditCard,
   IconLanguage,
   IconCheck,
-  IconMailCheck,
-  IconMailExclamation,
-  IconClipboardText,
-  IconSparkles,
-  IconInfoCircle,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setLanguage } from "@/store/settingsSlice";
 import { authenticated } from "@/store/authSlice";
-import { apiUpdateProfile, apiResendVerification, apiCreatePayment } from "@/lib/auth-client";
-import { DISC_PROFILES } from "@/lib/brief";
-import { formatPrice, type PublicPlan } from "@/lib/plans";
-import { ymGoal } from "@/lib/metrika";
+import { apiUpdateProfile } from "@/lib/auth-client";
+import PlanCards from "@/components/Billing/PlanCards";
 
 export default function SettingsModal({
   opened,
   onClose,
-  onRetakeBrief,
+  initialTab = "general",
 }: {
   opened: boolean;
   onClose: () => void;
-  onRetakeBrief: () => void;
+  // На какой вкладке открыть (например, "billing" — приход с «Оформить» лендинга).
+  initialTab?: string;
 }) {
   const dispatch = useAppDispatch();
   const user = useAppSelector((s) => s.auth.user);
+  // Активная вкладка (контролируемая) — сбрасывается на initialTab при открытии.
+  const [tab, setTab] = useState<string | null>(initialTab);
+  useEffect(() => {
+    if (opened) setTab(initialTab);
+  }, [opened, initialTab]);
   const aboutYou = useAppSelector((s) => s.settings.aboutYou);
   const language = useAppSelector((s) => s.settings.language);
-  // Текущий тариф — из аккаунта (источник правды, обновляется оплатой/синком),
-  // а не из settings.plan (клиентский дефолт, не синхронизируется с биллингом).
-  const currentPlan = user?.plan;
-  // Оплата тарифа: какой план сейчас оформляется (лоадер на кнопке) и ошибка.
-  const [payingId, setPayingId] = useState<string | null>(null);
-  const [payError, setPayError] = useState<string | null>(null);
-  // Тарифы из БД (редактируются в админке). Тянем при открытии настроек.
-  const [plans, setPlans] = useState<PublicPlan[]>([]);
-  // Профиль типа харизмы по сохранённому брифу (если пройден).
-  const briefProfile = user?.brief?.disc ? DISC_PROFILES[user.brief.disc] : null;
 
   // ── Аккаунт: имя («как обращаться») и подтверждение почты ───────────────
   const [name, setName] = useState(user?.name ?? "");
   const [savingName, setSavingName] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
-  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Подхватываем имя из стора (после гидратации /me или смены аккаунта).
   useEffect(() => {
     setName(user?.name ?? "");
   }, [user?.name]);
-
-  // Тарифы для биллинга — из публичного эндпоинта, при открытии модалки.
-  useEffect(() => {
-    if (!opened) return;
-    fetch("/api/plans", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d: { plans: PublicPlan[] }) => setPlans(d.plans))
-      .catch(() => {});
-  }, [opened]);
 
   // Чистим таймер дебаунса при размонтировании.
   useEffect(() => () => {
@@ -117,28 +89,7 @@ export default function SettingsModal({
     saveTimer.current = setTimeout(() => saveName(trimmed), 700);
   };
 
-  const resendVerification = async () => {
-    setResendState("sending");
-    await apiResendVerification();
-    setResendState("sent");
-  };
 
-  const handleChoosePlan = async (id: string) => {
-    setPayError(null);
-    setPayingId(id);
-    const res = await apiCreatePayment(id);
-    if (res.ok) {
-      ymGoal("payment_start", { plan: id });
-      // Уходим на платёжную страницу ТБанк (лоадер не снимаем — навигация).
-      window.location.href = res.data.url;
-      return;
-    }
-    setPayError(res.error);
-    setPayingId(null);
-  };
-
-  // «Тариф активен до …» — для платных тарифов со сроком (после оплаты).
-  const planExpiry = user?.planExpiresAt ? new Date(user.planExpiresAt) : null;
 
   return (
     <Modal
@@ -149,7 +100,7 @@ export default function SettingsModal({
       radius="lg"
       centered
     >
-      <Tabs defaultValue="general" variant="pills" color="brand">
+      <Tabs value={tab} onChange={setTab} variant="pills" color="brand">
         <Tabs.List mb="md">
           <Tabs.Tab value="general" leftSection={<IconUser size={16} />}>
             Основные
@@ -184,44 +135,14 @@ export default function SettingsModal({
                       ) : null
                     }
                   />
+                  {/* Подтверждение почты убрали — показываем просто адрес. */}
                   <TextInput
                     label="Почта"
                     value={user.email}
                     readOnly
                     styles={{ input: { cursor: "default" } }}
-                    rightSection={
-                      <Tooltip
-                        label={user.emailVerified ? "Почта подтверждена" : "Почта не подтверждена"}
-                        withArrow
-                      >
-                        {user.emailVerified ? (
-                          <IconMailCheck size={16} color="var(--mantine-color-teal-6)" />
-                        ) : (
-                          <IconMailExclamation size={16} color="var(--mantine-color-orange-6)" />
-                        )}
-                      </Tooltip>
-                    }
                   />
                 </SimpleGrid>
-
-                {!user.emailVerified && (
-                  <Group gap="sm" align="center">
-                    <Text size="xs" c="dimmed">
-                      Почта не подтверждена.
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="light"
-                      color="brand"
-                      radius="xl"
-                      onClick={resendVerification}
-                      loading={resendState === "sending"}
-                      disabled={resendState === "sent"}
-                    >
-                      {resendState === "sent" ? "Письмо отправлено" : "Отправить заново"}
-                    </Button>
-                  </Group>
-                )}
               </>
             ) : (
               <Text size="sm" c="dimmed">
@@ -248,120 +169,14 @@ export default function SettingsModal({
               ответы будут учитывать твою нишу и контекст. Сохраняется само.
             </Text>
           </Stack>
-
-          <Divider my="md" />
-
-          {/* Бриф клиента + тип харизмы (DISC) */}
-          <Stack gap="xs">
-            <Group justify="space-between" wrap="nowrap">
-              <Text fw={500}>Бриф и тип харизмы</Text>
-              {briefProfile && (
-                <Badge color="brand" variant="light" radius="sm" leftSection={<IconSparkles size={11} />}>
-                  {briefProfile.nick}
-                </Badge>
-              )}
-            </Group>
-            <Text size="xs" c="dimmed">
-              {briefProfile
-                ? "По брифу и тесту DISC я подбираю форматы и подачу под тебя. Можно пройти заново — например, если сменилась ниша или проект."
-                : "Бриф ещё не пройден — пройди его, чтобы я понимал твой проект и тип харизмы."}
-            </Text>
-            <Group>
-              <Button
-                variant="light"
-                color="brand"
-                radius="md"
-                size="xs"
-                leftSection={<IconClipboardText size={14} />}
-                onClick={onRetakeBrief}
-              >
-                {briefProfile ? "Пройти бриф заново" : "Пройти бриф"}
-              </Button>
-            </Group>
-          </Stack>
+          {/* Бриф теперь у каждого проекта свой (создаётся при «Новый проект»),
+              отдельной кнопки «пройти бриф» в настройках больше нет. */}
         </Tabs.Panel>
 
         {/* ── Биллинг ───────────────────────────────────────────────── */}
         <Tabs.Panel value="billing">
-          <Stack gap="md">
-            {planExpiry && (
-              <Text size="sm" c="dimmed">
-                Тариф активен до{" "}
-                <Text span fw={500} c="brand">
-                  {planExpiry.toLocaleDateString("ru-RU")}
-                </Text>
-              </Text>
-            )}
-            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
-              {plans.map((p) => {
-                const active = p.id === currentPlan;
-                return (
-                  <Paper
-                    key={p.id}
-                    radius="md"
-                    p="md"
-                    withBorder
-                    style={{
-                      borderColor: active ? "var(--color-accent)" : undefined,
-                      borderWidth: active ? 2 : 1,
-                    }}
-                  >
-                    <Stack gap="xs" h="100%">
-                      <Text fw={600}>{p.label}</Text>
-                      <div>
-                        <Text fw={600} fz="xl" style={{ letterSpacing: "-0.02em" }}>
-                          {formatPrice(p.priceRub)}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          {p.period}
-                        </Text>
-                      </div>
-                      <List
-                        spacing={4}
-                        size="xs"
-                        icon={
-                          <ThemeIcon color="brand" size={16} radius="xl" variant="light">
-                            <IconCheck size={10} />
-                          </ThemeIcon>
-                        }
-                      >
-                        {p.features.map((f) => (
-                          <List.Item key={f}>{f}</List.Item>
-                        ))}
-                      </List>
-                      <Button
-                        mt="auto"
-                        radius="xl"
-                        size="xs"
-                        fullWidth
-                        variant={active ? "light" : "filled"}
-                        color="brand"
-                        disabled={active}
-                        loading={payingId === p.id}
-                        onClick={() => handleChoosePlan(p.id)}
-                      >
-                        {active ? "Подключён" : "Перейти"}
-                      </Button>
-                    </Stack>
-                  </Paper>
-                );
-              })}
-            </SimpleGrid>
-
-            {payError && (
-              <Alert
-                color="red"
-                variant="light"
-                radius="md"
-                icon={<IconInfoCircle size={18} />}
-                withCloseButton
-                onClose={() => setPayError(null)}
-                title="Не удалось перейти к оплате"
-              >
-                {payError}. Если ошибка повторяется — напишите нам, исправим.
-              </Alert>
-            )}
-          </Stack>
+          {/* Карточки тарифов + оплата — общий блок (см. components/Billing). */}
+          <PlanCards showStatus />
         </Tabs.Panel>
 
         {/* ── Язык ──────────────────────────────────────────────────── */}

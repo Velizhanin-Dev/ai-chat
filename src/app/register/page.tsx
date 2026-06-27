@@ -30,8 +30,7 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Уже авторизован → уводим внутрь. Только на маунте: иначе сработает после
-  // самой регистрации (она логинит) и перебьёт переход на /verify-email.
+  // Уже авторизован → уводим внутрь (только на маунте).
   useEffect(() => {
     if (authedOnMount) router.replace("/chat");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -69,11 +68,10 @@ export default function RegisterPage() {
       setError(res.error);
       return;
     }
-    // Регистрация сразу логинит (verify-gate off). Письмо подтверждения уже
-    // ушло — напомним об этом на /verify-email, но вход уже работает.
+    // Регистрация сразу логинит и ведёт прямо в чат (подтверждение почты убрали).
     dispatch(authenticated(res.data.user));
     ymGoal("signup");
-    router.push("/verify-email");
+    router.push("/chat");
   };
 
   // Авторизованного не держим на форме регистрации (редирект запущен на маунте).

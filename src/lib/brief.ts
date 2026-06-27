@@ -112,7 +112,7 @@ export interface DiscQuestion {
 
 export const DISC_QUESTIONS: DiscQuestion[] = [
   {
-    q: "Камера включилась — как ты в кадре?",
+    q: "Камера включилась — как ты ведешь себя в кадре?",
     options: [
       { axis: "D", label: "Сразу беру быка за рога, говорю жёстко и по делу" },
       { axis: "I", label: "Жгу, шучу, импровизирую — мне в кайф внимание" },

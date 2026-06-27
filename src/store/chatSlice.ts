@@ -22,6 +22,9 @@ export interface Conversation {
 interface ChatState {
   conversations: Conversation[];
   activeId: string | null;
+  // Идёт заполнение брифа нового проекта (1 проект = 1 диалог). Пока true —
+  // вместо окна чата справа показываем визард брифа (см. chat/page).
+  drafting: boolean;
   // Стрим/ошибка относятся к активному диалогу (одновременно генерируется один).
   isLoading: boolean;
   streamingContent: string;
@@ -36,34 +39,18 @@ interface ChatState {
   hydrated: boolean;
 }
 
-const DEFAULT_TITLE = "Новый чат";
-const TITLE_MAX = 40;
+const DEFAULT_TITLE = "Новый проект";
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
-function titleFromText(text: string): string {
-  const clean = text.trim().replace(/\s+/g, " ");
-  if (!clean) return DEFAULT_TITLE;
-  return clean.length > TITLE_MAX ? clean.slice(0, TITLE_MAX).trimEnd() + "…" : clean;
-}
-
-export function makeConversation(): Conversation {
-  const ts = nowIso();
-  return {
-    id: nanoid(),
-    title: DEFAULT_TITLE,
-    messages: [],
-    createdAt: ts,
-    updatedAt: ts,
-    messagesLoaded: true, // новый диалог пуст и целиком в памяти
-  };
+// Новый клиентский id проекта (диалога) — генерит клиент, отправляет на сервер
+// при создании проекта (POST /api/conversations) и в /api/chat.
+export function newProjectId(): string {
+  return nanoid();
 }
 
 const initialState: ChatState = {
   conversations: [],
   activeId: null,
+  drafting: false,
   isLoading: false,
   streamingContent: "",
   error: null,
@@ -76,37 +63,41 @@ const chatSlice = createSlice({
   name: "chat",
   initialState,
   reducers: {
-    createConversation: {
-      reducer(state, action: PayloadAction<Conversation>) {
-        state.conversations.unshift(action.payload);
-        state.activeId = action.payload.id;
-        state.streamingContent = "";
-        state.error = null;
-      },
-      prepare() {
-        return { payload: makeConversation() };
-      },
+    // Создан проект (после прохождения брифа, см. POST /api/conversations). Кладём
+    // в список и делаем активным; drafting НЕ сбрасываем — визард ещё покажет
+    // экран результата (тип харизмы), после «Поехали» вызовется finishBriefing.
+    addProject(state, action: PayloadAction<Conversation>) {
+      state.conversations.unshift(action.payload);
+      state.activeId = action.payload.id;
+      state.streamingContent = "";
+      state.error = null;
     },
     setActiveConversation(state, action: PayloadAction<string>) {
       if (state.conversations.some((c) => c.id === action.payload)) {
         state.activeId = action.payload;
+        state.drafting = false;
         state.streamingContent = "";
         state.error = null;
       }
     },
-    // Пустое состояние «новый чат»: сам диалог создаётся только при первом
-    // сообщении (см. ChatInput) — как в ChatGPT/Claude и т.п.
-    startNewChat(state) {
+    // «Новый проект»: входим в режим брифа (диалог создастся после его прохождения).
+    startBriefing(state) {
       state.activeId = null;
+      state.drafting = true;
       state.streamingContent = "";
       state.error = null;
+    },
+    // Бриф пройден и подтверждён («Поехали в чат») → выходим из режима брифа к чату.
+    finishBriefing(state) {
+      state.drafting = false;
       state.inputFocusSignal += 1;
     },
     deleteConversation(state, action: PayloadAction<string>) {
       state.conversations = state.conversations.filter((c) => c.id !== action.payload);
       if (state.activeId === action.payload) {
-        // Уходим в пустое «новое» состояние, а не в соседний диалог.
+        // Уходим в пустое состояние, а не в соседний проект.
         state.activeId = null;
+        state.drafting = false;
         state.streamingContent = "";
         state.error = null;
       }
@@ -123,13 +114,8 @@ const chatSlice = createSlice({
       if (!conv) return;
       conv.messages.push(action.payload);
       conv.updatedAt = action.payload.createdAt;
-      // Заголовок диалога = первое сообщение пользователя.
-      if (
-        action.payload.role === "user" &&
-        (conv.title === DEFAULT_TITLE || !conv.title)
-      ) {
-        conv.title = titleFromText(action.payload.content);
-      }
+      // Заголовок проекта берётся из брифа (название канала) при создании, по
+      // первому сообщению его больше НЕ переопределяем (ушли от summary-заголовков).
     },
     setLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
@@ -167,6 +153,7 @@ const chatSlice = createSlice({
     hydrate(state, action: PayloadAction<{ conversations: Conversation[] }>) {
       state.conversations = action.payload.conversations;
       state.activeId = null;
+      state.drafting = false;
       state.hydrated = true;
     },
     // Помечаем загрузку завершённой, даже если список пуст / гость (hydrate тогда
@@ -183,9 +170,10 @@ const chatSlice = createSlice({
 });
 
 export const {
-  createConversation,
+  addProject,
   setActiveConversation,
-  startNewChat,
+  startBriefing,
+  finishBriefing,
   deleteConversation,
   renameConversation,
   addMessage,

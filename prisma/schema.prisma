@@ -43,6 +43,10 @@ model Conversation {
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String    @default("Новый чат")
+  // Бриф проекта (1 проект = 1 диалог). Структура — тип Brief (src/lib/brief.ts).
+  // Заполняется при создании проекта; источник правды для system-промпта в чате
+  // (раньше бриф был привязан к User — теперь к конкретному проекту/диалогу).
+  brief     Json?
   messages  Message[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -88,6 +92,11 @@ model User {
   // автосписаний (регистрируем при первом платеже, Recurrent=Y).
   planExpiresAt DateTime?
   rebillId      String?
+  // Сколько запросов к ассистенту израсходовано в ТЕКУЩЕМ периоде тарифа. Один
+  // ответ нейронки (kind=chat, без классификации) = 1 единица. Лимит на период —
+  // Plan.limits.requests (-1 = без лимита), редактируется в админке. Сбрасывается
+  // в 0 при выдаче/смене тарифа (регистрация-триал, оплата, правка из админки).
+  requestsUsed  Int                 @default(0)
   // Последний визит — обновляется при входе и (с троттлингом) на любом
   // авторизованном запросе через getSessionUser. null = ни разу после введения поля.
   lastSeenAt    DateTime?

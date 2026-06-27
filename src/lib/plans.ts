@@ -6,11 +6,10 @@ import { Prisma } from "@prisma/client";
 // отсюда. Серверный модуль (Prisma) — не импортировать в клиентские компоненты;
 // клиенту отдаём через серверный проп (лендинг) или GET /api/plans (настройки).
 
+// Лимиты тарифа (-1 = без лимита, 0 = не применимо). Правятся в админке.
 export interface PlanLimits {
-  requests: number; // запросов (для пробного), -1 = без лимита
-  contentPlans: number; // контент-планы
-  scenarios: number; // сценарии
-  shorts: number; // шортсы
+  requests: number; // запросов (1 ответ нейронки = 1 запрос)
+  projects: number; // проектов (что такое «проект» — определим позже)
 }
 
 export interface PublicPlan {
@@ -25,7 +24,7 @@ export interface PublicPlan {
   active: boolean;
 }
 
-const EMPTY_LIMITS: PlanLimits = { requests: 0, contentPlans: 0, scenarios: 0, shorts: 0 };
+const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0 };
 
 // Дефолты = текущие захардкоженные тарифы (start/blogger/studio). Используются для
 // первичного посева таблицы (idempotent) — дальше правятся из админки.
@@ -34,9 +33,9 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     id: "start",
     label: "Пробный",
     priceRub: 0,
-    period: "1 день · без карты",
+    period: "1 час · без карты",
     features: ["18 запросов на пробу", "Голос и методика Николая", "Без оплаты и привязки карты"],
-    limits: { ...EMPTY_LIMITS, requests: 18 },
+    limits: { ...EMPTY_LIMITS, requests: 18, projects: 1 },
     order: 0,
     highlighted: false,
     active: true,
@@ -47,7 +46,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 4000,
     period: "в месяц",
     features: ["3 контент-плана", "30 сценариев", "90 шортсов", "Все 100+ форматов и длинные видео"],
-    limits: { requests: -1, contentPlans: 3, scenarios: 30, shorts: 90 },
+    limits: { requests: -1, projects: 5 },
     order: 1,
     highlighted: true,
     active: true,
@@ -58,7 +57,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 10000,
     period: "в месяц",
     features: ["Контент-планы без лимита", "Сценарии без лимита", "Шортсы без лимита", "Приоритетная поддержка"],
-    limits: { requests: -1, contentPlans: -1, scenarios: -1, shorts: -1 },
+    limits: { requests: -1, projects: -1 },
     order: 2,
     highlighted: false,
     active: true,
@@ -68,12 +67,9 @@ export const DEFAULT_PLANS: PublicPlan[] = [
 function normalizeLimits(v: unknown): PlanLimits {
   const o = (v ?? {}) as Record<string, unknown>;
   const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? Math.trunc(x) : 0);
-  return {
-    requests: num(o.requests),
-    contentPlans: num(o.contentPlans),
-    scenarios: num(o.scenarios),
-    shorts: num(o.shorts),
-  };
+  // Старые ключи (contentPlans/scenarios/shorts) в JSON игнорируем. Отсутствующий
+  // projects → 0 (старые строки в БД сохранят его при следующем редактировании).
+  return { requests: num(o.requests), projects: num(o.projects) };
 }
 
 type PlanRow = Prisma.PlanGetPayload<object>;

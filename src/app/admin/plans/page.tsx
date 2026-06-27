@@ -23,13 +23,6 @@ import { formatPrice, type PublicPlan } from "@/lib/plans";
 
 type Editable = PublicPlan & { _featuresText: string };
 
-const LIMIT_FIELDS: { key: keyof PublicPlan["limits"]; label: string }[] = [
-  { key: "requests", label: "Запросы" },
-  { key: "contentPlans", label: "Контент-планы" },
-  { key: "scenarios", label: "Сценарии" },
-  { key: "shorts", label: "Шортсы" },
-];
-
 export default function AdminPlansPage() {
   const [plans, setPlans] = useState<Editable[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -182,17 +175,21 @@ export default function AdminPlansPage() {
             />
 
             <Divider label="Лимиты" labelPosition="left" mb="sm" />
-            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm" mb="md">
-              {LIMIT_FIELDS.map((f) => (
-                <NumberInput
-                  key={f.key}
-                  label={f.label}
-                  value={p.limits[f.key]}
-                  onChange={(v) => updateLimit(p.id, f.key, typeof v === "number" ? v : 0)}
-                  min={-1}
-                  description={p.limits[f.key] === -1 ? "без лимита" : undefined}
-                />
-              ))}
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mb="md">
+              <NumberInput
+                label="Запросы"
+                value={p.limits.requests}
+                onChange={(v) => updateLimit(p.id, "requests", typeof v === "number" ? v : 0)}
+                min={-1}
+                description={p.limits.requests === -1 ? "без лимита" : undefined}
+              />
+              <NumberInput
+                label="Проекты"
+                value={p.limits.projects}
+                onChange={(v) => updateLimit(p.id, "projects", typeof v === "number" ? v : 0)}
+                min={-1}
+                description={p.limits.projects === -1 ? "без лимита" : undefined}
+              />
             </SimpleGrid>
 
             <Group justify="flex-end" gap="sm">

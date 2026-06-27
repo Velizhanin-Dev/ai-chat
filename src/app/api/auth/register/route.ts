@@ -4,13 +4,12 @@ import {
   hashPassword,
   signSession,
   setSessionCookie,
-  createToken,
   publicUser,
 } from "@/lib/auth";
-import { sendVerificationEmail } from "@/lib/mail";
 import { apiError, readJson, EMAIL_RE } from "@/lib/http";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
+import { trialExpiresAt } from "@/lib/quota";
 
 export async function POST(req: Request) {
   const body = await readJson(req);
@@ -27,8 +26,16 @@ export async function POST(req: Request) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return apiError("Аккаунт с такой почтой уже зарегистрирован", 409);
 
+  // Выдаём пробный тариф ВСЕГО на 1 час (срок). Число запросов в этот час —
+  // из Plan.limits.requests тарифа "start" (правится в админке). После окончания
+  // пробного — только переход на платный тариф, заново триал не выдаётся.
   const user = await prisma.user.create({
-    data: { name, email, passwordHash: await hashPassword(password) },
+    data: {
+      name,
+      email,
+      passwordHash: await hashPassword(password),
+      planExpiresAt: trialExpiresAt(),
+    },
   });
 
   // Режим «до запуска»: аккаунт создаём (ранняя регистрация), но внутрь не пускаем
@@ -38,10 +45,8 @@ export async function POST(req: Request) {
     return apiError("Доступ к ассистенту откроется после запуска", 403);
   }
 
-  // Письмо для подтверждения отправляем, но вход не блокируем (verify-gate off).
-  const token = await createToken(user.id, "email_verify");
-  await sendVerificationEmail(email, token);
-
+  // Подтверждение почты убрали (verify-gate off, страница /verify-email удалена) —
+  // письмо не шлём, сразу логиним и пускаем в чат.
   setSessionCookie(await signSession(user.id));
   return NextResponse.json({ user: publicUser(user) });
 }

@@ -184,6 +184,15 @@ function draftHasProgress(
   );
 }
 
+// Бриф уже в процессе? (для страницы по QR: если да — пропускаем стартовую
+// заставку «Узнай свою харизму» и сразу возвращаем юзера в визард на то место,
+// где он остановился). Только клиент — читает localStorage.
+export function hasBriefDraftProgress(key: string, scope: string): boolean {
+  const d = loadBriefDraft(key, scope);
+  if (!d) return false;
+  return draftHasProgress(d.form, d.answers, d.step, d.sub);
+}
+
 export interface BriefFlowProps {
   // Стартовые значения формы (например, уже сохранённый бриф в режиме «пройти
   // заново»). Черновик из localStorage, если есть, имеет приоритет.
@@ -195,8 +204,9 @@ export interface BriefFlowProps {
   onSubmit: (brief: Brief) => Promise<{ ok: boolean; error?: string }>;
   // Текст-пояснение на экране результата (под карточкой типажа).
   resultNote?: React.ReactNode;
-  // Кнопки на экране результата. restart — снова с первого шага.
-  resultActions: (ctx: { restart: () => void }) => React.ReactNode;
+  // Кнопки на экране результата. restart — снова с первого шага. Необязательно:
+  // если не передать — на финале просто карточка типажа без кнопок.
+  resultActions?: (ctx: { restart: () => void }) => React.ReactNode;
   // Сообщает родителю, стоим ли мы на самом первом вопросе (step 0 / вопрос 1).
   // Страница по QR прячет по нему свой заголовок после первого вопроса.
   onAtStartChange?: (atStart: boolean) => void;
@@ -547,8 +557,8 @@ export default function BriefFlow({
         <Stack gap="lg">
           {sub === 0 && (
             <Text size="sm" c="dimmed">
-              Теперь — пара вопросов про тебя: как ты в кадре, что заводит, что
-              бесит. Отвечай по первому ощущению, правильных ответов нет.
+              Теперь — пара вопросов про тебя: как ты ведешь себя в кадре, что заводит, 
+              что бесит. Отвечай по первому ощущению, правильных ответов нет.
             </Text>
           )}
 
@@ -663,7 +673,9 @@ export default function BriefFlow({
             </List>
           </Paper>
           {resultNote}
-          <Group justify="flex-end">{resultActions({ restart })}</Group>
+          {resultActions && (
+            <Group justify="flex-end">{resultActions({ restart })}</Group>
+          )}
         </Stack>
       )}
     </div>

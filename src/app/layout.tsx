@@ -36,9 +36,13 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
-      { url: "/logo.png", type: "image/png" },
+      // Тёмная вкладка браузера → белое лого, светлая → чёрное (media-варианты).
+      { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32", media: "(prefers-color-scheme: light)" },
+      { url: "/favicon-16x16.png", type: "image/png", sizes: "16x16", media: "(prefers-color-scheme: light)" },
+      { url: "/favicon-32x32-white.png", type: "image/png", sizes: "32x32", media: "(prefers-color-scheme: dark)" },
+      { url: "/favicon-16x16-white.png", type: "image/png", sizes: "16x16", media: "(prefers-color-scheme: dark)" },
     ],
-    apple: "/logo.png",
+    apple: "/apple-touch-icon.png",
   },
 };
 

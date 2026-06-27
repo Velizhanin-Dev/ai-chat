@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
-// Единый формат ошибки API: { error: string } + http-статус.
-export function apiError(error: string, status = 400) {
-  return NextResponse.json({ error }, { status });
+// Единый формат ошибки API: { error: string } (+ опц. машинный code) + http-статус.
+export function apiError(error: string, status = 400, code?: string) {
+  return NextResponse.json(code ? { error, code } : { error }, { status });
 }
 
 // Безопасно достаём JSON-тело запроса (null, если тело пустое/битое).

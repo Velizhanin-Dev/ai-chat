@@ -29,8 +29,11 @@ export interface AuthUser {
   plan: PlanId;
   // Роль из БД: "user" | "admin". Используется, чтобы показать вход в админку.
   role: string;
-  // До какого момента активен платный тариф (ISO) или null. Заполняется оплатой.
+  // До какого момента активен тариф (ISO) или null. Пробный — +1 час от
+  // регистрации, платный — +30 дней от оплаты.
   planExpiresAt: string | null;
+  // Сколько запросов израсходовано в текущем периоде тарифа (для остатка квоты).
+  requestsUsed: number;
   emailVerified: boolean;
   // Бриф клиента + тип харизмы (DISC). null = не проходил бриф.
   brief: Brief | null;
@@ -63,6 +66,11 @@ const authSlice = createSlice({
     setPlan(state, action: PayloadAction<PlanId>) {
       if (state.user) state.user.plan = action.payload;
     },
+    // Оптимистично списываем 1 запрос на клиенте после успешного ответа — чтобы
+    // остаток квоты в биллинге не отставал до следующей гидратации с сервера.
+    bumpRequestsUsed(state) {
+      if (state.user) state.user.requestsUsed += 1;
+    },
     loggedOut(state) {
       state.user = null;
       state.ready = true;
@@ -70,5 +78,6 @@ const authSlice = createSlice({
   },
 });
 
-export const { authenticated, authHydrated, setPlan, loggedOut } = authSlice.actions;
+export const { authenticated, authHydrated, setPlan, bumpRequestsUsed, loggedOut } =
+  authSlice.actions;
 export default authSlice.reducer;

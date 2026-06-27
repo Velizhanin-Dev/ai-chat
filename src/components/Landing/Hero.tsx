@@ -1,7 +1,9 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- одна hero-фотка обычным <img>:
+   не тащим next/image-оптимизатор (sharp) в standalone-сборку ради одного фото. */
+
 import Link from "next/link";
-import Image from "next/image";
 import {
   Box,
   Container,
@@ -122,7 +124,7 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
 
           <Text size="xl" c="dimmed" maw={620} style={{ lineHeight: 1.5 }}>
             Контент-план, сценарии, шаблоны, сценарии длинных видео и рилсов от
-            Николая Велижанина.
+            Николая Велижанина
           </Text>
 
           {/* Pre-launch: вместо обычного оффера показываем анимированный отсчёт. */}
@@ -166,12 +168,11 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
         {/* Десктоп: ряд [фото | регалии] стоит на чате; чат перекрывает низ фото. */}
         <Box visibleFrom="md" maw={1060} mx="auto" mt={56}>
           <Flex align="flex-end" gap={36} pos="relative" style={{ zIndex: 0 }}>
-            <Image
+            <img
               src="/images/photo-alpha.png"
               alt="Николай Велижанин"
               width={300}
               height={401}
-              priority
               style={{
                 display: "block",
                 flexShrink: 0,
@@ -199,7 +200,7 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
             регалии — карточкой под чатом. */}
         <Box hiddenFrom="md" mt={48}>
           <Box ta="center">
-            <Image
+            <img
               src="/images/photo-alpha.png"
               alt="Николай Велижанин"
               width={208}

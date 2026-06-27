@@ -14,8 +14,6 @@ import {
   Drawer,
   Paper,
   Image,
-  ThemeIcon,
-  List,
   Alert,
   Accordion,
   Select,
@@ -25,8 +23,6 @@ import {
 import {
   IconSearch,
   IconAlertCircle,
-  IconSparkles,
-  IconCheck,
   IconMail,
   IconMailOff,
   IconTrash,
@@ -37,6 +33,14 @@ import { PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
 import { formatPrice } from "@/lib/plans";
 import type { AdminUserRow } from "@/app/api/admin/users/route";
 import type { AdminPaymentRow } from "@/app/api/admin/payments/route";
+import type { AdminProjectRow } from "@/app/api/admin/users/[id]/projects/route";
+
+// Квота запросов: "12 / 30" или "12 / ∞" (без лимита) или "12" (тариф не найден).
+function quotaLabel(used: number, limit: number | null): string {
+  if (limit == null) return String(used);
+  if (limit < 0) return `${used} / ∞`;
+  return `${used} / ${limit}`;
+}
 
 // Статус платежа → цвет/подпись бейджа.
 function paymentBadge(status: string): { color: string; label: string } {
@@ -111,6 +115,8 @@ export default function AdminUsersPage() {
   const [selected, setSelected] = useState<AdminUserRow | null>(null);
   // История платежей выбранного юзера (грузим при открытии карточки).
   const [payments, setPayments] = useState<AdminPaymentRow[] | null>(null);
+  // Проекты выбранного юзера с их брифами (бриф теперь у проекта, не у юзера).
+  const [projects, setProjects] = useState<AdminProjectRow[] | null>(null);
   // Версия списка — бампаем после правок/удаления, чтобы перезагрузить таблицу.
   const [version, setVersion] = useState(0);
 
@@ -168,6 +174,29 @@ export default function AdminUsersPage() {
     }
   }
 
+  // Обнулить счётчик израсходованных запросов (дать свежую квоту в этом же тарифе).
+  async function handleResetRequests() {
+    if (!selected) return;
+    setSaving(true);
+    setSaveErr(null);
+    setSaved(false);
+    try {
+      const res = await fetch(`/api/admin/users/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetRequests: true }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.error || "Не удалось сбросить");
+      setSelected(d.user);
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : "Не удалось сбросить");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDelete() {
     if (!selected) return;
     setDeleting(true);
@@ -189,14 +218,21 @@ export default function AdminUsersPage() {
   useEffect(() => {
     if (!selected) {
       setPayments(null);
+      setProjects(null);
       return;
     }
     let alive = true;
     setPayments(null);
-    fetch(`/api/admin/payments?userId=${encodeURIComponent(selected.id)}`, { cache: "no-store" })
+    setProjects(null);
+    const uid = encodeURIComponent(selected.id);
+    fetch(`/api/admin/payments?userId=${uid}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d: { payments: AdminPaymentRow[] }) => alive && setPayments(d.payments))
       .catch(() => alive && setPayments([]));
+    fetch(`/api/admin/users/${uid}/projects`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { projects: AdminProjectRow[] }) => alive && setProjects(d.projects))
+      .catch(() => alive && setProjects([]));
     return () => {
       alive = false;
     };
@@ -232,7 +268,6 @@ export default function AdminUsersPage() {
   }, [q, page, version]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const profile = selected?.disc ? DISC_PROFILES[selected.disc] : null;
 
   return (
     <Stack gap="lg">
@@ -275,14 +310,13 @@ export default function AdminUsersPage() {
               <Table.Tr>
                 <Table.Th>Пользователь</Table.Th>
                 <Table.Th>Тариф</Table.Th>
-                <Table.Th>Типаж</Table.Th>
-                <Table.Th>Бриф</Table.Th>
+                <Table.Th>Проекты</Table.Th>
+                <Table.Th>Запросы</Table.Th>
                 <Table.Th>Регистрация</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {data?.users.map((u) => {
-                const p = u.disc ? DISC_PROFILES[u.disc] : null;
                 return (
                   <Table.Tr
                     key={u.id}
@@ -290,7 +324,7 @@ export default function AdminUsersPage() {
                     onClick={() => setSelected(u)}
                   >
                     <Table.Td>
-                      <Text size="sm" fw={500}>
+                      <Text size="sm" fw={500} component="div">
                         {u.name}
                         {u.role === "admin" && (
                           <Badge ml="xs" size="xs" color="brand" variant="light" radius="sm">
@@ -315,29 +349,10 @@ export default function AdminUsersPage() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {p ? (
-                        <Text size="sm">
-                          «{p.nick}»{" "}
-                          <Text span c="dimmed" size="xs">
-                            ({p.code})
-                          </Text>
-                        </Text>
-                      ) : (
-                        <Text size="sm" c="dimmed">
-                          —
-                        </Text>
-                      )}
+                      <Text size="sm">{u.projectCount}</Text>
                     </Table.Td>
                     <Table.Td>
-                      {u.briefCompleted ? (
-                        <Badge color="teal" variant="light" radius="sm" leftSection={<IconCheck size={12} />}>
-                          пройден
-                        </Badge>
-                      ) : (
-                        <Badge color="gray" variant="light" radius="sm">
-                          нет
-                        </Badge>
-                      )}
+                      <Text size="sm">{quotaLabel(u.requestsUsed, u.requestsLimit)}</Text>
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm" c="dimmed">
@@ -434,17 +449,31 @@ export default function AdminUsersPage() {
                 </div>
                 <div>
                   <Text size="xs" c="dimmed">
+                    Запросы (израсходовано / лимит)
+                  </Text>
+                  <Text size="sm">
+                    {quotaLabel(selected.requestsUsed, selected.requestsLimit)}
+                    {selected.requestsLimit != null && selected.requestsLimit >= 0 && (
+                      <Text span c="dimmed" size="xs">
+                        {"  ·  осталось "}
+                        {Math.max(0, selected.requestsLimit - selected.requestsUsed)}
+                      </Text>
+                    )}
+                  </Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
+                    Проектов
+                  </Text>
+                  <Text size="sm">{selected.projectCount}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
                     Роль
                   </Text>
                   <Text size="sm">
                     {selected.role === "admin" ? "Администратор" : "Пользователь"}
                   </Text>
-                </div>
-                <div>
-                  <Text size="xs" c="dimmed">
-                    Бриф
-                  </Text>
-                  <Text size="sm">{selected.briefCompleted ? "пройден" : "не пройден"}</Text>
                 </div>
                 <div>
                   <Text size="xs" c="dimmed">
@@ -517,15 +546,26 @@ export default function AdminUsersPage() {
                 )}
 
                 <Group justify="space-between" mt="xs">
-                  <Button
-                    color="brand"
-                    leftSection={<IconDeviceFloppy size={16} />}
-                    loading={saving}
-                    disabled={!dirty}
-                    onClick={handleSave}
-                  >
-                    {saved && !dirty ? "Сохранено" : "Сохранить"}
-                  </Button>
+                  <Group gap="xs">
+                    <Button
+                      color="brand"
+                      leftSection={<IconDeviceFloppy size={16} />}
+                      loading={saving}
+                      disabled={!dirty}
+                      onClick={handleSave}
+                    >
+                      {saved && !dirty ? "Сохранено" : "Сохранить"}
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      loading={saving}
+                      onClick={handleResetRequests}
+                      title="Обнулить израсходованные запросы (свежая квота)"
+                    >
+                      Сбросить запросы
+                    </Button>
+                  </Group>
 
                   {confirmDelete ? (
                     <Group gap="xs">
@@ -569,99 +609,90 @@ export default function AdminUsersPage() {
               chevronPosition="right"
               multiple
             >
-              {profile && (
-                <Accordion.Item value="disc">
-                  <Accordion.Control>
-                    <Text fw={600} size="sm">
-                      Тип личности — «{profile.nick}»
-                    </Text>
-                  </Accordion.Control>
-                  <Accordion.Panel>
-                    <Image
-                      src={`/images/disc/${profile.code}.webp`}
-                      alt={`Типаж «${profile.nick}»`}
-                      fit="contain"
-                      w="auto"
-                      maw="100%"
-                      mah={180}
-                      mx="auto"
-                      radius="md"
-                      mb="md"
-                    />
-                    <Group gap="xs" mb="xs">
-                      <ThemeIcon color="brand" variant="light" radius="xl" size="md">
-                        <IconSparkles size={16} />
-                      </ThemeIcon>
-                      <Title order={5}>
-                        «{profile.nick}»{" "}
-                        <Text span c="dimmed" fz="sm">
-                          ({profile.code})
-                        </Text>
-                      </Title>
-                    </Group>
-                    <Text size="sm" mb="sm">
-                      {profile.character}
-                    </Text>
-                    <List size="sm" spacing={4}>
-                      <List.Item>
-                        <Text span fw={500}>
-                          Форматы:
-                        </Text>{" "}
-                        {profile.formats}
-                      </List.Item>
-                      <List.Item>
-                        <Text span fw={500}>
-                          Заводит:
-                        </Text>{" "}
-                        {profile.works}
-                      </List.Item>
-                      <List.Item>
-                        <Text span fw={500}>
-                          Убивает:
-                        </Text>{" "}
-                        {profile.kills}
-                      </List.Item>
-                    </List>
-                  </Accordion.Panel>
-                </Accordion.Item>
-              )}
-
-              <Accordion.Item value="brief">
+              {/* Проекты пользователя + бриф каждого (бриф теперь у проекта). */}
+              <Accordion.Item value="projects">
                 <Accordion.Control>
                   <Text fw={600} size="sm">
-                    Бриф о проекте
+                    Проекты и брифы
+                    {projects && projects.length > 0 ? ` (${projects.length})` : ""}
                   </Text>
                 </Accordion.Control>
                 <Accordion.Panel>
-                  {selected.brief &&
-                  (BRIEF_FIELDS.some((f) => selected.brief?.[f.key]) ||
-                    selected.brief.cameraExp) ? (
-                    <Stack gap="sm">
-                      {BRIEF_FIELDS.map((f) => {
-                        const v = selected.brief?.[f.key];
-                        if (!v) return null;
+                  {projects === null ? (
+                    <Group justify="center" py="sm">
+                      <Loader size="sm" color="brand" />
+                    </Group>
+                  ) : projects.length === 0 ? (
+                    <Text size="sm" c="dimmed">
+                      Проектов пока нет.
+                    </Text>
+                  ) : (
+                    <Stack gap="md">
+                      {projects.map((pr) => {
+                        const prof = pr.brief?.disc ? DISC_PROFILES[pr.brief.disc] : null;
+                        const hasFields =
+                          pr.brief &&
+                          (BRIEF_FIELDS.some((f) => pr.brief?.[f.key]) || pr.brief.cameraExp);
                         return (
-                          <div key={f.key}>
-                            <Text size="xs" c="dimmed">
-                              {f.label}
-                            </Text>
-                            <Text size="sm">{String(v)}</Text>
-                          </div>
+                          <Paper key={pr.id} withBorder radius="md" p="sm">
+                            <Group justify="space-between" wrap="nowrap" mb="xs" gap="xs">
+                              <Text fw={600} size="sm" truncate>
+                                {pr.title}
+                              </Text>
+                              <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                                {pr.messageCount} сообщ.
+                              </Text>
+                            </Group>
+                            {prof && (
+                              <Group gap="xs" mb="xs" wrap="nowrap">
+                                <Image
+                                  src={`/images/disc/${prof.code}.webp`}
+                                  alt={`Типаж «${prof.nick}»`}
+                                  fit="contain"
+                                  w={44}
+                                  h={44}
+                                  radius="sm"
+                                />
+                                <Text size="sm">
+                                  Тип: «{prof.nick}»{" "}
+                                  <Text span c="dimmed" size="xs">
+                                    ({prof.code})
+                                  </Text>
+                                </Text>
+                              </Group>
+                            )}
+                            {hasFields ? (
+                              <Stack gap={6}>
+                                {BRIEF_FIELDS.map((f) => {
+                                  const v = pr.brief?.[f.key];
+                                  if (!v) return null;
+                                  return (
+                                    <div key={f.key}>
+                                      <Text size="xs" c="dimmed">
+                                        {f.label}
+                                      </Text>
+                                      <Text size="sm">{String(v)}</Text>
+                                    </div>
+                                  );
+                                })}
+                                {pr.brief?.cameraExp && (
+                                  <div>
+                                    <Text size="xs" c="dimmed">
+                                      Опыт на камере
+                                    </Text>
+                                    <Text size="sm">{cameraLabel(pr.brief.cameraExp)}</Text>
+                                  </div>
+                                )}
+                              </Stack>
+                            ) : (
+                              <Text size="xs" c="dimmed">
+                                Поля «о проекте» не заполнены.
+                              </Text>
+                            )}
+                          </Paper>
                         );
                       })}
-                      {selected.brief.cameraExp && (
-                        <div>
-                          <Text size="xs" c="dimmed">
-                            Опыт на камере
-                          </Text>
-                          <Text size="sm">{cameraLabel(selected.brief.cameraExp)}</Text>
-                        </div>
-                      )}
                     </Stack>
-                  ) : (
-                    <Text size="sm" c="dimmed">
-                      Поля «о проекте» не заполнены (можно пропускать — обязателен только тест).
-                    </Text>
                   )}
                 </Accordion.Panel>
               </Accordion.Item>
