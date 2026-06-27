@@ -10,6 +10,10 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# NEXT_PUBLIC_* инлайнятся на этапе `next build`, поэтому переменную надо протащить
+# в build-стадию как ARG (из build.args в docker-compose), а не только в рантайм.
+ARG NEXT_PUBLIC_YM_ID
+ENV NEXT_PUBLIC_YM_ID=$NEXT_PUBLIC_YM_ID
 RUN npx prisma generate
 RUN npm run build
 

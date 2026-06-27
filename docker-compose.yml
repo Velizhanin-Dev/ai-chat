@@ -36,6 +36,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runner
+      # NEXT_PUBLIC_* должны быть в окружении build-стадии (инлайнятся при next build).
+      args:
+        NEXT_PUBLIC_YM_ID: ${NEXT_PUBLIC_YM_ID}
     restart: unless-stopped
     # наружу порт не публикуем — трафик идёт через Caddy по внутренней сети.
     expose:
