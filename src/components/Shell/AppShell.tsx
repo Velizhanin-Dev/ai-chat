@@ -121,7 +121,14 @@ export default function AppShellLayout({
     loadedForUser.current = user.id;
     void (async () => {
       await migrateLocalConversations();
-      const res = await apiListConversations();
+      // Ретрай на транзиентный сбой (таймаут/обрыв сети), чтобы не показать пустой
+      // список там, где проекты есть. apiListConversations теперь с таймаутом —
+      // зависнуть не может, поэтому цикл конечен.
+      let res = await apiListConversations();
+      for (let attempt = 0; !res.ok && attempt < 2; attempt++) {
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+        res = await apiListConversations();
+      }
       if (res.ok) {
         dispatch(hydrate({ conversations: res.data }));
         // Авто-открываем последний активный проект (если он ещё существует).
@@ -130,7 +137,10 @@ export default function AppShellLayout({
           dispatch(setActiveConversation(last));
         }
       } else {
-        dispatch(resetChat()); // ошибка сети — пустой список, но без залипания
+        // Не достучались даже с ретраями — снимаем скелетон (не вечный лоадер) и
+        // разрешаем повторную загрузку при следующем триггере эффекта (смена юзера).
+        dispatch(resetChat());
+        loadedForUser.current = null;
       }
     })();
   }, [authReady, user?.id, dispatch]);

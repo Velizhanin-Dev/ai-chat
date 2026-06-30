@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Box, Group, Stack, Paper, Text, Loader } from "@mantine/core";
+import { Box, Group, Stack, Paper, Text, Loader, Button } from "@mantine/core";
+import { IconArrowRight } from "@tabler/icons-react";
 import LogoMark from "@/components/Brand/LogoMark";
 import BriefFlow, { hasBriefDraftProgress } from "@/components/Brief/BriefFlow";
 import BriefIntro from "@/components/Brief/BriefIntro";
@@ -89,12 +90,32 @@ export default function BriefStandaloneClient() {
         >
           <Stack gap="lg" w="100%" maw={520}>
             <Paper withBorder radius="lg" p={{ base: "md", sm: "xl" }}>
-              {/* На финале — просто карточка типажа как есть: без кнопок
-                  «Пройти заново»/«Попробовать AI» и без AI-пояснения. */}
+              {/* На финале — карточка типажа + CTA в нейронку. Анон-бриф уже
+                  лежит в localStorage (writeAnonBrief): на /chat middleware уведёт
+                  на вход/регистрацию, а после AppShell подхватит бриф и создаст
+                  проект — повторно проходить не нужно. */}
               <BriefFlow
                 draftKey={DRAFT_KEY}
                 draftScope="anon"
                 onSubmit={handleSubmit}
+                resultNote={
+                  <Stack gap="sm" mt="xs" align="center">
+                    <Text fw={600} fz="lg" ta="center">
+                      Создай контент под свою харизму
+                    </Text>
+                    <Button
+                      component={Link}
+                      href="/chat"
+                      color="brand"
+                      size="md"
+                      radius="md"
+                      fullWidth
+                      rightSection={<IconArrowRight size={18} />}
+                    >
+                      Перейти в нейронку
+                    </Button>
+                  </Stack>
+                }
               />
             </Paper>
           </Stack>

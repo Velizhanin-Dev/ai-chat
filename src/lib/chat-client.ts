@@ -11,6 +11,26 @@ type Ok<T> = { ok: true; data: T };
 type Err = { ok: false; error: string };
 export type Result<T> = Ok<T> | Err;
 
+// fetch с таймаутом: если сервер принял соединение, но не отвечает, обычный fetch
+// висит вечно (в браузере — до ~5 мин). Из-за этого список диалогов мог залипать
+// «вечным лоадером». AbortController обрывает запрос → вызов получает ошибку, а не
+// зависание. 15с — с запасом для холодного старта, но не «навсегда».
+const REQUEST_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo,
+  init?: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Метаданные с сервера → объект Conversation для стора (messages пустые, грузятся
 // лениво при открытии). messagesLoaded=false помечает «сообщения ещё не тянули».
 export function metaToConversation(m: ConversationMeta): Conversation {
@@ -26,7 +46,7 @@ export function metaToConversation(m: ConversationMeta): Conversation {
 
 export async function apiListConversations(): Promise<Result<Conversation[]>> {
   try {
-    const res = await fetch("/api/conversations", { cache: "no-store" });
+    const res = await fetchWithTimeout("/api/conversations", { cache: "no-store" });
     if (!res.ok) return { ok: false, error: "Не удалось загрузить историю" };
     const data = (await res.json()) as { conversations: ConversationMeta[] };
     return { ok: true, data: data.conversations.map(metaToConversation) };
@@ -78,7 +98,7 @@ export async function apiCreateProject(brief: Brief): Promise<CreateProjectResul
 
 export async function apiGetMessages(id: string): Promise<Result<ChatMessage[]>> {
   try {
-    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    const res = await fetchWithTimeout(`/api/conversations/${encodeURIComponent(id)}`, {
       cache: "no-store",
     });
     if (!res.ok) return { ok: false, error: "Не удалось загрузить диалог" };
@@ -127,7 +147,7 @@ export async function migrateLocalConversations(): Promise<void> {
   }
 
   try {
-    const res = await fetch("/api/conversations/import", {
+    const res = await fetchWithTimeout("/api/conversations/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversations }),

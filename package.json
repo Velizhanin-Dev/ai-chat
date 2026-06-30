@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postinstall": "patch-package",
     "start": "next start",
     "lint": "next lint",
     "prisma:generate": "prisma generate",
@@ -40,6 +41,7 @@
     "@types/uuid": "^10.0.0",
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.0",
+    "patch-package": "^8.0.1",
     "postcss": "^8.4.0",
     "postcss-preset-mantine": "^1.17.0",
     "postcss-simple-vars": "^7.0.0",

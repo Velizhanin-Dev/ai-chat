@@ -1,0 +1,19 @@
+diff --git a/node_modules/mdast-util-gfm-autolink-literal/lib/index.js b/node_modules/mdast-util-gfm-autolink-literal/lib/index.js
+index c5ca771..da86559 100644
+--- a/node_modules/mdast-util-gfm-autolink-literal/lib/index.js
++++ b/node_modules/mdast-util-gfm-autolink-literal/lib/index.js
+@@ -132,7 +132,13 @@ function transformGfmAutolinkLiterals(tree) {
+     tree,
+     [
+       [/(https?:\/\/|www(?=\.))([-.\w]+)([^ \t\r\n]*)/gi, findUrl],
+-      [/(?<=^|\s|\p{P}|\p{S})([-.\w+]+)@([-\w]+(?:\.[-\w]+)+)/gu, findEmail]
++      // PATCH (Safari < 16.4 совместимость): убран lookbehind `(?<=...)`, который
++      // кидал «SyntaxError: invalid group specifier name» и ронял весь чанк markdown
++      // в чате (→ ChunkLoadError → не грузился UI). Граница перед адресом и так
++      // перепроверяется в findEmail через previous(match, true) по match.index
++      // (lookbehind нулевой ширины — match.index не меняется), так что поведение
++      // сохраняется. См. patches/mdast-util-gfm-autolink-literal+2.0.1.patch.
++      [/([-.\w+]+)@([-\w]+(?:\.[-\w]+)+)/gu, findEmail]
+     ],
+     {ignore: ['link', 'linkReference']}
+   )

@@ -4,6 +4,10 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package.json package-lock.json* ./
+# patches/ нужны ДО установки: postinstall запускает patch-package, который без
+# папки patches тихо ничего не пропатчит (напр. фикс lookbehind в
+# mdast-util-gfm-autolink-literal для Safari < 16.4).
+COPY patches ./patches
 RUN npm ci || npm install
 
 FROM base AS builder

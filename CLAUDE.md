@@ -140,6 +140,26 @@ AI-ассистент Велижанина (методика КМК) в форм
 - 🟢 **Брендовые 404 и 500** — `src/app/not-found.tsx` (404) и `src/app/error.tsx` (500,
   client, с `reset`). Логотип + крупный код в бренд-акценте + кнопки «На главную» (`/`) и
   «В чат» (`/chat`); у 500 ещё «Попробовать снова» (`reset`). Рендерятся «голыми» (не /chat).
+- 🟢 **Фикс «белого экрана» в Safari < 16.4 (lookbehind в remark-gfm).** У части
+  пользователей чат не грузился: в консоли `SyntaxError: Invalid regular expression:
+  invalid group specifier name` + `ChunkLoadError` + Minified React error #423, и как
+  следствие — сайдбар «Мои проекты» висел вечным лоадером (JS чанка не исполнялся, эффект
+  загрузки в `AppShell` не отрабатывал). Причина НЕ в кэше/деплое/Caddy: `remark-gfm@4`
+  (рендер markdown в `components/Chat/Markdown.tsx`, на каждом кадре стрима) тянет
+  `mdast-util-gfm-autolink-literal@2.0.1`, где regex автолинка email использует
+  **lookbehind** `(?<=^|\s|\p{P}|\p{S})`. Safari добавил lookbehind только в 16.4 — на
+  старых iOS/macOS Safari regex-литерал кидает SyntaxError при разборе модуля → весь чанк
+  markdown падает → рушится React-дерево → не грузится UI.
+  - **Решение — `patch-package`** (`patches/mdast-util-gfm-autolink-literal+2.0.1.patch`):
+    убираем lookbehind, regex становится `/([-.\w+]+)@([-\w]+(?:\.[-\w]+)+)/gu`. Поведение
+    сохраняется: граница перед адресом и так перепроверяется в `findEmail` через
+    `previous(match, true)` по `match.index` (lookbehind нулевой ширины — `match.index` не
+    меняется). Проверено сравнением старого/нового regex на наборе строк (включая
+    символ/эмодзи перед адресом) — наборы принятых адресов идентичны.
+  - **Применение патча:** скрипт `postinstall: patch-package` в `package.json`
+    (devDep `patch-package`). В Dockerfile deps-стадия копирует `patches/` ДО `npm ci`
+    (иначе postinstall тихо ничего не пропатчит). Это единственный клиентский lookbehind в
+    бандле (проверено grep'ом по node_modules) — других Safari-несовместимых regex нет.
 - 🟢 **Бриф клиента + карта харизмы (DISC)** — мастер «Знакомство перед стартом» в 2 шага
   (верхний степпер «О проекте» → «О себе»), вопросы идут **по одному за экран**
   (Typeform-style): крупный вопрос + одно поле + прогресс «n / N» под степпером.
@@ -197,9 +217,12 @@ AI-ассистент Велижанина (методика КМК) в форм
     незаполненном вопросе); фаза `checking` (лоадер) до чтения localStorage — без вспышки
     заставки при resume. `onSubmit` = `writeAnonBrief` (localStorage,
     `src/lib/anon-brief.ts`, ключ `creative-chat:anon-brief-v1`, хранит только завершённый
-    бриф). Финал: **просто карточка архетипа как есть** — без кнопок и без AI-пояснения
-    (`resultActions`/`resultNote` не передаём; `resultActions` в `BriefFlow` сделан
-    необязательным — нет → на финале только карточка типажа). AI на этой странице не светим.
+    бриф). Финал: **карточка архетипа + CTA в нейронку** — через `resultNote` отдаём
+    текст «Создай контент под свою харизму» + кнопку «Перейти в нейронку →» (Link на
+    `/chat`). Анон-бриф уже в localStorage (`writeAnonBrief`), поэтому на `/chat`
+    middleware уведёт на вход/регистрацию, а после AppShell подхватит бриф и создаст
+    проект — повторно проходить не нужно. (`resultActions` не передаём — restart на этой
+    странице не нужен; в `BriefFlow` он необязателен.)
     `/brief` добавлен в `BARE_ROUTES` (без шапки/сайдбара/гейта), middleware его не гейтит.
   - **Черновик в localStorage:** прогресс (поля + ответы теста + текущий шаг/вопрос)
     пишется на каждое изменение; ключ + scope приходят от родителя (`BriefFlow`): модалка —
