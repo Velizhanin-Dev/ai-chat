@@ -75,7 +75,7 @@ export async function GET(
     const next =
       saved.next && saved.next.startsWith("/") && !saved.next.startsWith("//")
         ? saved.next
-        : "/chat";
+        : "/app";
 
     const res = NextResponse.redirect(new URL(next, base));
     res.cookies.set(sessionCookie(token));

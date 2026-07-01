@@ -24,7 +24,7 @@ import { authenticated } from "@/store/authSlice";
 import { apiLogin } from "@/lib/auth-client";
 import { ymGoal } from "@/lib/metrika";
 
-const APP_HOME = "/chat";
+const APP_HOME = "/app";
 
 // Безопасный внутренний путь возврата из ?next (иначе APP_HOME).
 function safeNext(): string {

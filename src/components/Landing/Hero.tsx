@@ -140,7 +140,7 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
             {!launchTarget && (
               <Button
                 component={Link}
-                href="/chat"
+                href="/app"
                 size="lg"
                 radius="xl"
                 color="brand"

@@ -105,7 +105,7 @@ export default function BriefStandaloneClient() {
                     </Text>
                     <Button
                       component={Link}
-                      href="/chat"
+                      href="/app"
                       color="brand"
                       size="md"
                       radius="md"

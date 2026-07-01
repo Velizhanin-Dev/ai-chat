@@ -32,7 +32,7 @@ export default function RegisterPage() {
 
   // Уже авторизован → уводим внутрь (только на маунте).
   useEffect(() => {
-    if (authedOnMount) router.replace("/chat");
+    if (authedOnMount) router.replace("/app");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,10 +68,11 @@ export default function RegisterPage() {
       setError(res.error);
       return;
     }
-    // Регистрация сразу логинит и ведёт прямо в чат (подтверждение почты убрали).
+    // Регистрация сразу логинит и ведёт в приложение (экран выбора/создания
+    // проекта); подтверждение почты убрали.
     dispatch(authenticated(res.data.user));
     ymGoal("signup");
-    router.push("/chat");
+    router.push("/app");
   };
 
   // Авторизованного не держим на форме регистрации (редирект запущен на маунте).

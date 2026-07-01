@@ -27,7 +27,7 @@ export async function GET(
   const next =
     nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
       ? nextParam
-      : "/chat";
+      : "/app";
 
   let verifier: string | undefined;
   let challenge: string | undefined;

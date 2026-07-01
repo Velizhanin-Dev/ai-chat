@@ -117,7 +117,7 @@ export default function Pricing({ plans }: { plans: PublicPlan[] }) {
 
                   <Button
                     component={Link}
-                    href="/chat"
+                    href="/app"
                     radius="xl"
                     size="md"
                     color="brand"

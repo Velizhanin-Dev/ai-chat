@@ -74,12 +74,12 @@ export default function Error({
             </Button>
             <Button
               component={Link}
-              href="/chat"
+              href="/app"
               variant="default"
               radius="md"
               leftSection={<IconMessageCircle size={16} />}
             >
-              В чат
+              В приложение
             </Button>
           </Group>
         </Stack>

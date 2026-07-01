@@ -493,3 +493,17 @@ section[id] {
     animation: none !important;
   }
 }
+
+/* Мобильное верхнее меню (TopNav) внутри колонки контента: тянем «в край»,
+   гася горизонтальный padding обёртки контента (base xs, sm+ md), чтобы меню и
+   его выпадашка были во всю ширину экрана. Только < lg (где меню и рендерится). */
+.topnav-bleed {
+  margin-left: calc(var(--mantine-spacing-xs) * -1);
+  margin-right: calc(var(--mantine-spacing-xs) * -1);
+}
+@media (min-width: 48em) {
+  .topnav-bleed {
+    margin-left: calc(var(--mantine-spacing-md) * -1);
+    margin-right: calc(var(--mantine-spacing-md) * -1);
+  }
+}

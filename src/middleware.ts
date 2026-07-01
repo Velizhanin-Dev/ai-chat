@@ -33,6 +33,10 @@ async function hasValidSession(req: NextRequest): Promise<boolean> {
 }
 
 export async function middleware(req: NextRequest) {
+  // /api сами отвечают гостю (401/403 JSON) — не редиректим их в HTML /login.
+  // (matcher `/:projectId/chat` иначе поймал бы /api/chat.)
+  if (req.nextUrl.pathname.startsWith("/api/")) return NextResponse.next();
+
   if (await hasValidSession(req)) return NextResponse.next();
 
   const url = req.nextUrl.clone();
@@ -42,7 +46,22 @@ export async function middleware(req: NextRequest) {
   return NextResponse.redirect(url);
 }
 
-// Защищаем только приложение чата. Лендинг и auth-страницы остаются открытыми.
+// Гейтим приложение: экран без проекта (/app) и разделы проекта
+// (/{projectId}/chat|channel|creatives|reviews|settings). Гость → /login.
+// Не-админа на закрытых разделах дополнительно отсекает серверный гвард
+// route-group (locked) (404). Лендинг и auth-страницы остаются открытыми.
 export const config = {
-  matcher: ["/chat", "/chat/:path*"],
+  matcher: [
+    "/app",
+    "/:projectId/chat",
+    "/:projectId/chat/:path*",
+    "/:projectId/channel",
+    "/:projectId/channel/:path*",
+    "/:projectId/creatives",
+    "/:projectId/creatives/:path*",
+    "/:projectId/reviews",
+    "/:projectId/reviews/:path*",
+    "/:projectId/settings",
+    "/:projectId/settings/:path*",
+  ],
 };

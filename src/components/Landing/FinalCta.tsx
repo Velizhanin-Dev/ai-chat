@@ -95,7 +95,7 @@ export default function FinalCta({
                 </Text>
                 <Button
                   component={Link}
-                  href="/chat"
+                  href="/app"
                   size="lg"
                   radius="xl"
                   variant="white"

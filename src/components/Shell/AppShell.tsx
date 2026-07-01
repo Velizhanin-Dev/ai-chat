@@ -36,14 +36,8 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { loggedOut } from "@/store/authSlice";
 import { apiLogout } from "@/lib/auth-client";
 import { readIntendedPlan, clearIntendedPlan } from "@/lib/intended-plan";
-import { readLastProject, writeLastProject } from "@/lib/last-project";
 import { useChatAccess } from "@/hooks/useChatAccess";
-import {
-  startBriefing,
-  setActiveConversation,
-  hydrate,
-  resetChat,
-} from "@/store/chatSlice";
+import { startBriefing, hydrate, resetChat } from "@/store/chatSlice";
 import {
   apiListConversations,
   migrateLocalConversations,
@@ -51,6 +45,13 @@ import {
 import Logo from "@/components/Brand/Logo";
 import RequestsRing from "@/components/Chat/RequestsRing";
 import SettingsModal from "@/components/Settings/SettingsModal";
+import TopNav from "@/components/Shell/TopNav";
+
+// Обвязка приложения показывается на экране без проекта (/app) и на страницах
+// проекта (/{projectId}/chat|channel|creatives|reviews|settings). Всё остальное
+// (лендинг, auth, /admin, /legal, /brief, /payment, 404/500) — «голое».
+const PROJECT_TAB_RE =
+  /^\/[^/]+\/(chat|channel|creatives|reviews|settings)(\/|$)/;
 
 function initials(name: string) {
   return name
@@ -131,11 +132,6 @@ export default function AppShellLayout({
       }
       if (res.ok) {
         dispatch(hydrate({ conversations: res.data }));
-        // Авто-открываем последний активный проект (если он ещё существует).
-        const last = readLastProject(user.id);
-        if (last && res.data.some((c) => c.id === last)) {
-          dispatch(setActiveConversation(last));
-        }
       } else {
         // Не достучались даже с ретраями — снимаем скелетон (не вечный лоадер) и
         // разрешаем повторную загрузку при следующем триггере эффекта (смена юзера).
@@ -145,17 +141,10 @@ export default function AppShellLayout({
     })();
   }, [authReady, user?.id, dispatch]);
 
-  // Запоминаем активный проект в localStorage (для авто-открытия в след. заход).
-  useEffect(() => {
-    if (user?.id && activeId) writeLastProject(user.id, activeId);
-  }, [user?.id, activeId]);
-
-  // Намерение оформить тариф с лендинга («Оформить» → /chat): один раз открываем
-  // настройки на вкладке «Биллинг» и чистим флаг (повторно не всплывёт). Ждём
-  // залогиненного юзера (гость уходит на /login и вернётся уже авторизованным).
+  // Намерение оформить тариф с лендинга («Оформить» → приложение): один раз
+  // открываем настройки на вкладке «Биллинг» и чистим флаг (повторно не всплывёт).
   // Зависим и от pathname: AppShell живёт в layout и НЕ размонтируется при
-  // переходе лендинг → /chat, поэтому ловим флаг на смене маршрута (а не только
-  // на смене юзера). Гость уходит на /login и вернётся уже авторизованным.
+  // переходе лендинг → приложение, поэтому ловим флаг на смене маршрута.
   const intendedPlanChecked = useRef(false);
   useEffect(() => {
     if (intendedPlanChecked.current || !user) return;
@@ -166,17 +155,15 @@ export default function AppShellLayout({
       intendedPlanChecked.current = true;
       clearIntendedPlan();
       // Заблокирован (нет активной подписки) → тарифы покажет модалка «Подписка
-      // закончилась» (chat/page), второе окно не открываем. Активному — биллинг.
+      // закончилась» (chat-страница), второе окно не открываем. Активному — биллинг.
       if (!access.locked) openSettingsOn("billing");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, pathname, access.ready, access.locked]);
 
-  // Бриф теперь крепится к ПРОЕКТУ (создаётся при «Новый проект», см. chat/page),
-  // обязательной модалки брифа при входе больше нет. Чат-обвязку (сайдбар/шапка)
-  // навешиваем ТОЛЬКО на /chat — всё остальное (лендинг, auth, /admin, /legal,
-  // /brief, /payment, а также 404/500) рендерится «голым», своим layout.
-  const onBareRoute = !(pathname === "/chat" || pathname.startsWith("/chat/"));
+  // Обвязку (шапка/сайдбар/TopNav) навешиваем на /app и страницы проекта; всё
+  // остальное рендерится «голым», своим layout.
+  const onBareRoute = !(pathname === "/app" || PROJECT_TAB_RE.test(pathname));
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
@@ -195,18 +182,19 @@ export default function AppShellLayout({
 
   const handleNewProject = () => {
     if (atProjectLimit) return;
-    // Проект создаётся после прохождения брифа (см. chat/page) — входим в режим брифа.
+    // Проект создаётся после прохождения брифа на /app — входим в режим брифа.
     dispatch(startBriefing());
-    if (pathname !== "/chat") router.push("/chat");
+    router.push("/app");
     close();
   };
 
   const handleSelect = (id: string) => {
-    dispatch(setActiveConversation(id));
+    // Открываем проект сменой URL; activeId синхронит ProjectLayout.
+    router.push(`/${id}/chat`);
     close();
   };
 
-  // Лендинг, auth-страницы и админка рендерятся без чат-сайдбара/шапки.
+  // Лендинг, auth-страницы и админка рендерятся без обвязки приложения.
   if (onBareRoute) {
     return <>{children}</>;
   }
@@ -229,7 +217,9 @@ export default function AppShellLayout({
         // сайдбар появляется только на десктопе (≥ lg = 1200px). На планшетах
         // и телефонах — бургер. Все hiddenFrom/visibleFrom ниже синхронны с lg.
         navbar={{ width: 280, breakpoint: "lg", collapsed: { mobile: !opened } }}
-        padding={{ base: "xs", sm: "md" }}
+        // padding=0: отступы контента задаём вручную во внутренней обёртке, чтобы
+        // TopNav был полосой во всю ширину области (edge-to-edge), а не в колонке.
+        padding={0}
       >
         <AppShell.Header>
           <Group h="100%" px="md" justify="space-between">
@@ -272,8 +262,7 @@ export default function AppShellLayout({
 
           <AppShell.Section grow component={ScrollArea} type="hover">
             <Stack gap={2}>
-              {/* До гидратации из localStorage показываем скелетоны, а не
-                  ложное «Пока нет диалогов». */}
+              {/* До гидратации из БД показываем скелетоны, а не ложное «пусто». */}
               {!chatHydratedFlag &&
                 Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} height={34} radius="sm" mb={2} />
@@ -285,44 +274,45 @@ export default function AppShellLayout({
               )}
               {chatHydratedFlag &&
                 sorted.map((conv) => {
-                const active = conv.id === activeId;
-                return (
-                  <UnstyledButton
-                    key={conv.id}
-                    onClick={() => handleSelect(conv.id)}
-                    p="xs"
-                    style={{
-                      borderRadius: 8,
-                      background: active
-                        ? "var(--mantine-color-brand-light)"
-                        : "transparent",
-                    }}
-                  >
-                    <Group gap="xs" wrap="nowrap">
-                      <IconMessageCircle
-                        size={16}
-                        style={{
-                          flexShrink: 0,
-                          color: active
-                            ? "var(--mantine-color-brand-filled)"
-                            : "var(--mantine-color-dimmed)",
-                        }}
-                      />
-                      <Text
-                        size="sm"
-                        truncate
-                        style={{ flex: 1 }}
-                        c={active ? undefined : "dimmed"}
-                        fw={active ? 500 : 400}
-                      >
-                        {conv.title}
-                      </Text>
-                      {/* Удаление/переименование проекта — в шапке самого проекта
-                          (chat/page), не в списке. */}
-                    </Group>
-                  </UnstyledButton>
-                );
-              })}
+                  const active = conv.id === activeId;
+                  return (
+                    <UnstyledButton
+                      key={conv.id}
+                      onClick={() => handleSelect(conv.id)}
+                      // Крупнее на мобиле/iPad (дравер, < lg), компактно на десктопе.
+                      p={{ base: "sm", lg: "xs" }}
+                      style={{
+                        borderRadius: 8,
+                        background: active
+                          ? "var(--mantine-color-brand-light)"
+                          : "transparent",
+                      }}
+                    >
+                      <Group gap="xs" wrap="nowrap">
+                        <IconMessageCircle
+                          size={16}
+                          style={{
+                            flexShrink: 0,
+                            color: active
+                              ? "var(--mantine-color-brand-filled)"
+                              : "var(--mantine-color-dimmed)",
+                          }}
+                        />
+                        <Text
+                          fz={{ base: "md", lg: "sm" }}
+                          truncate
+                          style={{ flex: 1 }}
+                          c={active ? undefined : "dimmed"}
+                          fw={active ? 500 : 400}
+                        >
+                          {conv.title}
+                        </Text>
+                        {/* Удаление/переименование проекта — в шапке самого
+                            проекта (chat-страница), не в списке. */}
+                      </Group>
+                    </UnstyledButton>
+                  );
+                })}
             </Stack>
           </AppShell.Section>
 
@@ -368,8 +358,7 @@ export default function AppShellLayout({
             </Group>
 
             {/* Меню профиля раскрывается ВВЕРХ (top-start) и шириной с триггер —
-                не уезжает за правый край узкого дравера на мобиле (right-end
-                вылезал за экран и дёргал страницу). */}
+                не уезжает за правый край узкого дравера на мобиле. */}
             {user ? (
               <Menu position="top-start" withArrow shadow="md" width="target">
                 <Menu.Target>
@@ -430,17 +419,40 @@ export default function AppShellLayout({
 
         {/* Main фиксируем по высоте вьюпорта (100dvh — учитывает адресную строку
             и сжатие под клавиатуру на мобиле, см. viewport.interactiveWidget).
-            Внутри — flex-колонка: титл/алерты сверху, окно сообщений тянется и
-            скроллится само, поле ввода прижато снизу. Так страница целиком НЕ
-            скроллится (титл не уезжает), а при клавиатуре виден верх. */}
-        <AppShell.Main style={{ height: "100dvh", minHeight: 0 }}>
+            Внутри — flex-колонка: TopNav сверху, затем контент страницы. */}
+        <AppShell.Main
+          style={{
+            height: "100dvh",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Десктоп (≥ lg): меню — полоса во всю ширину области сверху. */}
+          <Box visibleFrom="lg">
+            <TopNav />
+          </Box>
+          {/* Отступы контента (бывший padding AppShell) — здесь. Внутри —
+              центрированная колонка maw 900. */}
           <Box
-            maw={900}
-            mx="auto"
-            h="100%"
-            style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+            p={{ base: "xs", sm: "md" }}
+            style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
           >
-            {children}
+            <Box
+              maw={900}
+              mx="auto"
+              w="100%"
+              style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+            >
+              {/* Мобайл/iPad (< lg): меню внутри колонки — сосед заголовка, тянем
+                  «в край» (topnav-bleed). Заголовок проекта на чат-странице
+                  поднимается НАД меню через flex order (см. chat-страницу). На /app
+                  TopNav вернёт null. */}
+              <Box hiddenFrom="lg" className="topnav-bleed">
+                <TopNav />
+              </Box>
+              {children}
+            </Box>
           </Box>
         </AppShell.Main>
       </AppShell>

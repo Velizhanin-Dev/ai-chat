@@ -133,7 +133,7 @@ export default function PaymentResultPage() {
                 {phase === "fail" && (
                   <Button
                     component={Link}
-                    href="/chat"
+                    href="/app"
                     variant="default"
                     radius="md"
                     // Открыть окно тарифов в чате (тот же механизм, что «Оформить»).
@@ -144,7 +144,7 @@ export default function PaymentResultPage() {
                 )}
                 <Button
                   component={Link}
-                  href="/chat"
+                  href="/app"
                   color="brand"
                   radius="md"
                   rightSection={<IconArrowRight size={16} />}

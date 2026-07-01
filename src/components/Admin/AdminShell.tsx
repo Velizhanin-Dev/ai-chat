@@ -71,7 +71,7 @@ export default function AdminShell({
           </Group>
           <Button
             component={Link}
-            href="/chat"
+            href="/app"
             variant="subtle"
             color="gray"
             size="sm"

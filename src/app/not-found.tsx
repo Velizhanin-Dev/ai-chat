@@ -53,12 +53,12 @@ export default function NotFound() {
             </Button>
             <Button
               component={Link}
-              href="/chat"
+              href="/app"
               color="brand"
               radius="md"
               leftSection={<IconMessageCircle size={16} />}
             >
-              В чат
+              В приложение
             </Button>
           </Group>
         </Stack>
