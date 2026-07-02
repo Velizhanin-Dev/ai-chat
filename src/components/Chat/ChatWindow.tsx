@@ -50,7 +50,6 @@ export default function ChatWindow() {
       style={{ flex: 1, minHeight: 0 }}
       viewportRef={viewport}
       onScrollPositionChange={handleScroll}
-      offsetScrollbars
     >
       <Stack gap="md" px={{ base: 4, sm: "md" }} py="md">
         {/* Ленивая загрузка сообщений открытого из истории диалога. */}
@@ -88,12 +87,15 @@ export default function ChatWindow() {
                 alignItems: "flex-start",
               }}
             >
+              {/* Аватар — только на десктопе (≥ sm). На мобиле прячем, чтобы баббл
+                  занимал всю ширину и текст не жался. */}
               <ThemeIcon
                 size="lg"
                 radius="xl"
                 variant="light"
                 color={isUser ? "gray" : "brand"}
                 mt={4}
+                visibleFrom="sm"
                 style={{ flexShrink: 0 }}
               >
                 {isUser ? <IconUser size={18} /> : <IconRobot size={18} />}
@@ -102,7 +104,9 @@ export default function ChatWindow() {
                 shadow="xs"
                 p="sm"
                 radius="md"
-                maw="78%"
+                // Мобайл: во всю ширину (аватар скрыт) — текст не жмётся.
+                // Десктоп — прежние 78%.
+                maw={{ base: "100%", sm: "78%" }}
                 className={isUser ? "bubble-user" : "bubble-assistant"}
                 style={{ width: "fit-content" }}
               >
@@ -133,6 +137,7 @@ export default function ChatWindow() {
               variant="light"
               color="brand"
               mt={4}
+              visibleFrom="sm"
               style={{ flexShrink: 0 }}
             >
               <IconRobot size={18} />
@@ -141,7 +146,7 @@ export default function ChatWindow() {
               shadow="xs"
               p="sm"
               radius="md"
-              maw="78%"
+              maw={{ base: "100%", sm: "78%" }}
               className="bubble-assistant"
               style={{ width: "fit-content" }}
             >

@@ -12,7 +12,7 @@ import { HAIKU_MODEL, haikuCost } from "./llm/claude";
 import { GLM_MODEL, glmComplete, glmCost } from "./llm/glm";
 import type { LlmProvider } from "./llm/types";
 
-export type QueryCategory = "chat" | "short" | "long" | "method";
+export type QueryCategory = "chat" | "short" | "long" | "method" | "content_plan";
 
 type RouterMeta = { userId?: string | null; conversationId?: string | null };
 
@@ -24,6 +24,8 @@ export interface RouteDecision {
   tgOpen: boolean;
   /** Нужен ли поиск по книге (динамические куски). */
   book: boolean;
+  /** Подключить эталон контент-плана (месячная сетка роликов). */
+  contentPlan: boolean;
   /** Запрос для поиска по книге/форматам — расширен ключевыми словами от роутера. */
   searchQuery: string;
 }
@@ -38,6 +40,7 @@ const ROUTER_SYSTEM = `Ты — классификатор запросов к �
 - chat — приветствие, болтовня, благодарность, мета-вопрос о тебе, короткое уточнение без новой темы.
 - short — просьба придумать/написать сценарий, хук, идею, превью или название для КОРОТКОГО видео (рилс, reels, шортс, shorts, tiktok, тикток, клип, ВИСП).
 - long — просьба про сценарий/структуру/хук/удержание ДЛИННОГО видео (YouTube 5+ минут, ролик, лонг, выпуск).
+- content_plan — просьба собрать КОНТЕНТ-ПЛАН / контент план / сетку роликов / план на месяц / список тем роликов с раскруткой (несколько видео сразу, а не один сценарий).
 - method — вопрос по методике/теории без генерации артефакта (удержание, темы, превью, монтаж, SEO, продвижение, как работает YouTube).
 
 Формат ответа: «<категория> | <5–8 ключевых слов и синонимов для поиска, через пробел>».
@@ -52,7 +55,8 @@ const ROUTER_SYSTEM = `Ты — классификатор запросов к �
 Не добавляй термины не по теме — только релевантные запросу.
 Примеры:
 «long | удержание досматриваемость вовлечение зритель первые секунды хук крючок»,
-«short | рилс идея хук зацепка заход вирусность формат», «chat |».`;
+«short | рилс идея хук зацепка заход вирусность формат»,
+«content_plan | контент-план сетка ролики темы месяц названия превью лестница ханта боль ца», «chat |».`;
 
 function mapCategory(category: QueryCategory): RouteDecision {
   const base: RouteDecision = {
@@ -61,12 +65,17 @@ function mapCategory(category: QueryCategory): RouteDecision {
     tgClosed: false,
     tgOpen: false,
     book: false,
+    contentPlan: false,
     searchQuery: "",
   };
   switch (category) {
     case "short":
       // Короткие видео: подходящий формат + закрытый TG (ВИСП, рилсы, шортсы).
       return { ...base, formats: true, tgClosed: true };
+    case "content_plan":
+      // Контент-план: эталон месячной сетки + книга (темы/боли/удержание) +
+      // закрытый TG (ВИСП — движок кликбейт-названий и текста на превью).
+      return { ...base, contentPlan: true, book: true, tgClosed: true };
     case "long":
     case "method":
       // Длинные сценарии и методика: релевантные куски книги (поиск).
@@ -81,8 +90,10 @@ function mapCategory(category: QueryCategory): RouteDecision {
 /** Грубая keyword-эвристика на случай ошибки LLM-роутера. */
 function heuristicCategory(text: string): QueryCategory {
   const t = text.toLowerCase();
+  const isPlan = /(контент[\s-]?план|контентплан|сетк[аиу] ролик|план (?:роликов|на месяц|видео)|плана роликов)/.test(t);
   const isShort = /(рилс|reels|шортс|shorts|tiktok|тикток|висп|клип)/.test(t);
   const wantsGen = /(сценари|напиши|придума|сделай|хук|заход|идею|идей|сними|превью|назван)/.test(t);
+  if (isPlan) return "content_plan";
   if (isShort) return "short";
   if (wantsGen && /(ролик|видео|лонг|выпуск|youtube|ютуб|канал)/.test(t)) return "long";
   if (wantsGen) return "long";
@@ -90,10 +101,10 @@ function heuristicCategory(text: string): QueryCategory {
   return "chat";
 }
 
-const VALID: QueryCategory[] = ["chat", "short", "long", "method"];
+const VALID: QueryCategory[] = ["chat", "short", "long", "method", "content_plan"];
 
 const GEN_RE =
-  /(сценари|напиши|придума|сделай|хук|заход|идею|идей|превью|назван|рилс|шортс|reels|shorts|tiktok|тикток|клип|висп|ролик|видео|выпуск|лонг)/;
+  /(сценари|напиши|придума|сделай|хук|заход|идею|идей|превью|назван|рилс|шортс|reels|shorts|tiktok|тикток|клип|висп|ролик|видео|выпуск|лонг|контент[\s-]?план|сетк)/;
 const CHAT_RE =
   /(привет|здаров|здоров|хай|добрый день|доброе утро|добрый вечер|как дела|как сам|как ты|как жизнь|спасибо|спс|благодар|пока|до свидан|понятно|^ок$|окей|ясно|круто|класс|супер|хорошо|норм)/;
 

@@ -53,6 +53,13 @@ const GLM_LANGUAGE = `# Язык — живой русский без иност
 // Как только пошёл текст — обрыв уже НЕ прячем (нельзя переписать показанное).
 const GLM_MAX_RETRIES = Math.max(0, Number(process.env.GLM_MAX_RETRIES ?? 3));
 
+// Таймаут на одну попытку: сколько ждём ОТВЕТА (первого байта), а после открытия
+// стрима — сколько ждём КАЖДОГО следующего чанка (анти-залипание). Без него fetch на
+// зависшем соединении Z.ai висит бесконечно, и пользователь ждёт «вечный ретрай».
+// По истечении — AbortController рвёт запрос: до первого токена уходим в ретрай, после
+// — пробрасываем ошибку (показанный текст не переписать). Настраивается через env.
+const GLM_TIMEOUT_MS = Math.max(5000, Number(process.env.GLM_TIMEOUT_MS ?? 40000));
+
 function glmSleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -168,6 +175,20 @@ export const glmStrategy: LlmStrategy = {
     // (пользователю ещё ничего не отдано) — тогда ретрай невидим. attempt 0 —
     // первая попытка, далее до GLM_MAX_RETRIES повторов с нарастающей паузой.
     for (let attempt = 0; ; attempt++) {
+      // Таймер попытки: рвёт запрос, если ответ/следующий чанк не приходит вовремя.
+      // Взводим перед fetch (таймаут первого байта), сбрасываем на каждый чанк.
+      const ac = new AbortController();
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      const armStall = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => ac.abort(), GLM_TIMEOUT_MS);
+      };
+      const clearStall = () => {
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = null;
+      };
+      armStall();
+
       let resp: Response;
       try {
         resp = await fetch(`${GLM_BASE_URL}/chat/completions`, {
@@ -177,20 +198,26 @@ export const glmStrategy: LlmStrategy = {
             Authorization: `Bearer ${apiKey}`,
           },
           body: requestBody,
+          signal: ac.signal,
         });
       } catch (netErr) {
-        // Сетевой сбой до ответа — повторяем (токенов ещё не было гарантированно).
+        // Сетевой сбой ИЛИ таймаут до ответа — повторяем (токенов ещё не было).
+        clearStall();
+        const timedOut = ac.signal.aborted;
         if (attempt < GLM_MAX_RETRIES) {
           console.warn(
-            `[chat] provider=glm network error, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
+            `[chat] provider=glm ${timedOut ? `timeout (${GLM_TIMEOUT_MS}ms)` : "network error"}, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
           );
           await glmSleep(glmBackoffMs(attempt + 1));
           continue;
         }
-        throw netErr;
+        throw timedOut
+          ? new Error(`GLM timeout: нет ответа за ${GLM_TIMEOUT_MS}ms`)
+          : netErr;
       }
 
       if (!resp.ok || !resp.body) {
+        clearStall();
         if (glmRetryable(resp.status) && attempt < GLM_MAX_RETRIES) {
           // 429 = упёрлись в concurrency Z.ai; ждём слот (уважаем Retry-After).
           const ra = Number(resp.headers.get("retry-after"));
@@ -207,15 +234,20 @@ export const glmStrategy: LlmStrategy = {
         throw new Error(`GLM API ${resp.status}: ${errText.slice(0, 300)}`);
       }
 
-      // Стрим открыт — читаем. Обрыв ДО первого токена тоже ретраим; после
+      // Стрим открыт — читаем. Обрыв/залипание ДО первого токена тоже ретраим; после
       // первого токена — пробрасываем (показанный текст не переписать).
+      armStall(); // заголовки пришли — полное окно на первый чанк
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            clearStall();
+            break;
+          }
+          armStall(); // пришли байты — сбрасываем таймер залипания
           buffer += decoder.decode(value, { stream: true });
 
           // SSE: события разделены \n; держим неполную хвостовую строку в буфере.
@@ -250,15 +282,22 @@ export const glmStrategy: LlmStrategy = {
           }
         }
       } catch (readErr) {
+        clearStall();
+        const timedOut = ac.signal.aborted;
         if (firstTokenAt === 0 && attempt < GLM_MAX_RETRIES) {
           console.warn(
-            `[chat] provider=glm stream broke before first token, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
+            `[chat] provider=glm stream ${timedOut ? `stalled (${GLM_TIMEOUT_MS}ms)` : "broke"} before first token, retry ${attempt + 1}/${GLM_MAX_RETRIES}`
           );
           await glmSleep(glmBackoffMs(attempt + 1));
           continue;
         }
-        throw readErr;
+        // После первого токена (или исчерпав ретраи) — пробрасываем: показанное не
+        // переписать, а «залипший» стрим с частичным ответом лучше оборвать, чем висеть.
+        throw timedOut && firstTokenAt
+          ? new Error(`GLM stream stalled после ${GLM_TIMEOUT_MS}ms без новых токенов`)
+          : readErr;
       }
+      clearStall();
       break; // дочитали успешно — выходим из retry-цикла
     }
 
