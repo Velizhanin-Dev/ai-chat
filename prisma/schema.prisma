@@ -48,6 +48,8 @@ model Conversation {
   // (раньше бриф был привязан к User — теперь к конкретному проекту/диалогу).
   brief     Json?
   messages  Message[]
+  // Пер-проектная интеграция YouTube (см. модель YouTubeIntegration ниже).
+  youtube   YouTubeIntegration?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -107,6 +109,32 @@ model User {
   payments      Payment[]
   conversations Conversation[]
   stats         Stat[]
+}
+
+// Интеграция с YouTube (Google OAuth + YouTube Data API v3 / Analytics API).
+// ПЕР-ПРОЕКТНАЯ (1 проект = 1 диалог = 1 канал): у каждого проекта свой канал,
+// возможно на разных Google-аккаунтах или разные каналы одного аккаунта. Поэтому
+// привязка к Conversation (@unique conversationId), а не к User. Подключается в
+// настройках ПРОЕКТА («Интеграции»), ОТДЕЛЬНО от OAuth-входа (VK/Яндекс): юзер уже
+// залогинен, а мы получаем и храним токены доступа к каналу, чтобы дёргать API от
+// его имени. accessToken живёт ~1ч, обновляем по refreshToken (getValidAccessToken).
+// Снимок канала (title/thumbnail/customUrl) кэшируем для карточки «подключено» без
+// запроса к Google; живые данные тянет /api/integrations/youtube/data?projectId=.
+// ⚠️ Токены пока хранятся как есть — TODO зашифровать в проде (как rebillId).
+model YouTubeIntegration {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channelId      String
+  title          String
+  thumbnail      String?
+  customUrl      String?
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime
+  scope          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }
 
 // Телеметрия каждого вызова модели (снимаем то, что раньше уходило только в логи).

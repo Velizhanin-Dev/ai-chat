@@ -507,3 +507,38 @@ section[id] {
     margin-right: calc(var(--mantine-spacing-md) * -1);
   }
 }
+
+/* ── Дашборд «Канал» (YouTube): карточки видео ──────────────────────────────
+   Наведение — лёгкий подъём + плавный зум превью (движение на transform, без
+   рефлоу). Гасится при prefers-reduced-motion. */
+.yt-video-card {
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.yt-video-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--mantine-shadow-md);
+  border-color: var(--mantine-color-brand-4);
+}
+.yt-video-card:focus-visible {
+  outline: 2px solid var(--mantine-color-brand-6);
+  outline-offset: 2px;
+}
+.yt-thumb img {
+  transition: transform 220ms ease;
+}
+.yt-video-card:hover .yt-thumb img {
+  transform: scale(1.045);
+}
+@media (prefers-reduced-motion: reduce) {
+  .yt-video-card,
+  .yt-thumb img {
+    transition: none;
+  }
+  .yt-video-card:hover {
+    transform: none;
+  }
+  .yt-video-card:hover .yt-thumb img {
+    transform: none;
+  }
+}

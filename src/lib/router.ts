@@ -228,3 +228,18 @@ export async function routeQuery(
     return decision;
   }
 }
+
+// Режим «полный промпт»: без LLM-классификации и без BM25-роутинга — все слои on,
+// всю базу отдаём целиком (см. buildFullSystem). Категорию берём дешёвой эвристикой:
+// очевидная болтовня → "chat" (без OUTPUT_DISCIPLINE/thinking), иначе "long".
+export function fullModeRoute(lastUser: string): RouteDecision {
+  return {
+    category: isObviousChat(lastUser) ? "chat" : "long",
+    formats: true,
+    tgClosed: true,
+    tgOpen: true,
+    book: true,
+    contentPlan: true,
+    searchQuery: lastUser,
+  };
+}

@@ -217,6 +217,67 @@ AI-ассистент Велижанина (методика КМК) в форм
     не-админа на закрытых разделах дополнительно отсекает гвард `(locked)` (404).
   - **Точки входа ведут на `/app`** (а не на удалённый `/chat`): логин/регистрация,
     OAuth-колбэк, CTA лендинга (Hero/Pricing/FinalCta), payment, 404/500, `/brief`, robots.
+- 🟢 **Интеграция YouTube + дашборд «Канал» (ПЕР-ПРОЕКТНАЯ).** У каждого проекта свой
+  YouTube-канал — возможно на разных Google-аккаунтах или разные каналы одного аккаунта.
+  Поэтому интеграция привязана к ПРОЕКТУ (диалогу), а не к юзеру, и подключается в
+  **настройках проекта** («Интеграции», НЕ в аккаунтной модалке). Раздел **«Канал»**
+  показывает живую аналитику подключённого канала. Дизайн — data-dense dashboard в бренд-
+  токенах (KPI-карточки, график, сетка видео) по методичке `/ui-ux-pro-max`.
+  - **Google OAuth (отдельно от входа VK/Яндекс).** Тут юзер УЖЕ залогинен — получаем и
+    храним токены доступа к каналу проекта (не логиним). Свой модуль `src/lib/youtube.ts`
+    (конфиг `GOOGLE_CLIENT_ID/SECRET`, authorize-URL с `access_type=offline&prompt=consent`,
+    обмен/обновление токена `getValidAccessToken`, вызовы Data API v3 + Analytics API,
+    `revokeToken`, `assertOwnedProject` — сверка владения проектом). Чистые типы —
+    `src/lib/youtube-types.ts` (без prisma, общие клиент/сервер); клиентские обёртки +
+    форматтеры (`formatCount`/`formatDuration`/…) — `src/lib/youtube-client.ts` (все несут
+    `projectId`). Scopes: `youtube.readonly` + `yt-analytics.readonly`.
+  - **Модель `YouTubeIntegration`** (миграция `add_youtube_integration`, 1-к-1 с
+    `Conversation` по `@unique conversationId`, cascade при удалении проекта):
+    `channelId/title/thumbnail/customUrl` (снимок для карточки «подключено») +
+    `accessToken/refreshToken/tokenExpiresAt/scope`. Токен живёт ~1ч, обновляем по refresh
+    (Google отдаёт refresh только на первом consent — просим его всегда). ⚠️ токены хранятся
+    как есть — TODO шифровать в проде (как `rebillId`).
+  - **API `src/app/api/integrations/youtube/*`** (все требуют `?projectId=` и сверяют
+    владение через `assertOwnedProject`, иначе 404): `GET /` — статус (`configured/connected/
+    channel`); `DELETE /` — отключить (revoke + удалить запись); `GET /connect` — старт
+    OAuth (session required, `projectId`+state+`next` в httpOnly-cookie `yt_oauth_state`);
+    `GET /callback` — обмен кода, upsert интеграции ПРОЕКТУ из state-cookie, редирект на
+    `next?yt=<status>`; `GET /data` — живой дашборд (канал + последние ~12 видео + ряд
+    аналитики за 28 дней). `409 YT_REAUTH` при протухшем/отозванном токене → UI просит
+    переподключить; аналитика best-effort (`fetchDailyAnalytics` → null при ошибке, график
+    просто не рисуем).
+  - **UI.** Настройки ПРОЕКТА (`/{projectId}/settings`): вкладка «Интеграции»
+    (`components/Settings/YouTubeConnect.tsx`, проп `projectId`) — карточка подключения /
+    состояние «подключено» (аватар канала + отключить с инлайн-подтверждением) + тост по
+    `?yt=` из колбэка. Кнопка «Подключить» задизейблена без Google-ключей (`configured:false`).
+    Вкладка показывается ТОЛЬКО когда `SettingsContent` получил `projectId` — в аккаунтной
+    модалке (меню профиля, `SettingsModal` без projectId) её НЕТ. Раздел «Канал»:
+    `components/Channel/ChannelDashboard.tsx` (`projectId` из URL) — шапка канала
+    (баннер+аватар), 4 KPI-карточки (подписчики/просмотры/видео/просмотры за 28 дней),
+    area-график просмотров (`@mantine/charts`) и адаптивная сетка видео с превью,
+    длительностью и метриками (просмотры/лайки/комменты). Состояния: skeleton / «не
+    подключено» (CTA в настройки проекта `?tab=integrations`) / «переподключить» / ошибка+
+    ретрай. Ховер-микроанимации карточек видео — `.yt-video-card`/`.yt-thumb` в globals.css
+    (с `prefers-reduced-motion`). Настройки проекта читают `?tab=` (Suspense + `useSearchParams`).
+  - ⚠️ **Раздел «Канал» пока за админ-гвардом** `(locked)` (как и раньше — «в разработке,
+    только админам»). Открыть всем — вынести `channel/` из route-group `(locked)` и снять
+    `adminOnly` во вкладке `TopNav`. Подключение в настройках проекта — для всех залогиненных.
+  - 🟢 **Расширенная аналитика дашборда** (этапы 1–5, см.
+    [docs/channel-analytics-plan.md](docs/channel-analytics-plan.md)): переключатель периода
+    7/28/90/365 + KPI за период с дельтами роста; per-video удержание (ср. % досмотра баром
+    + **кривая удержания** в модалке по клику); источники трафика (donut); динамика
+    подписчиков (пришло/ушло по дням + видео-драйверы); **ИИ-разбор видео** — см. ниже.
+    Ограничение: CTR/показы превью публичный Analytics API не отдаёт. Осталось (🔴): вовлечённость,
+    аудитория/ЦА, топы/регулярность, доп. кнопки «действие ассистента».
+  - 🟢 **ИИ-разбор упаковки видео** (`POST /api/integrations/youtube/analyze`) — в модалке
+    видео кнопка «Разобрать с ИИ»: по названию/описанию/тегам/удержанию даёт summary
+    (сильное/слабое) + готовые варианты (3 названия по ВИСП, переписанное описание, теги)
+    с кнопками «Копировать». **Тратит 1 запрос квоты** (гейты auth/launch/бриф/квота как в
+    `/api/chat`, `recordStat`). Генерация — та же методика: `buildSystem` вынесен из
+    `api/chat/route.ts` в общий [src/lib/llm/system.ts](src/lib/llm/system.ts). Для скорости
+    промпт урезан под упаковку (book/formats off, TG-ВИСП on, category→chat = thinking off).
+    Ответ копится на сервере (не стрим) → латентность = латентность движка (Claude ~10–15с,
+    GLM зависит от нагрузки Z.ai).
 - 🟢 **Брендовые 404 и 500** — `src/app/not-found.tsx` (404) и `src/app/error.tsx` (500,
   client, с `reset`). Логотип + крупный код в бренд-акценте + кнопки «На главную» (`/`) и
   «В приложение» (`/app`); у 500 ещё «Попробовать снова» (`reset`). Рендерятся «голыми».
@@ -668,7 +729,7 @@ AI-ассистент Велижанина (методика КМК) в форм
 - Redux Toolkit + Mantine UI v7 (+ `@mantine/charts` для дашборда админки)
 - Docker Compose
 
-## Переключатель модели (Claude / GLM) — ГЛОБАЛЬНЫЙ, из админки
+## Переключатель модели (Claude / GLM / OpenRouter) — ГЛОБАЛЬНЫЙ, из админки
 - 🟢 **Стратегии провайдера** — `src/lib/llm/`: `types.ts` (интерфейс `LlmStrategy` +
   тип `LlmProvider`), `claude.ts` (Anthropic SDK: модель/effort/кэш/лог стоимости),
   `glm.ts` (fetch на OpenAI-совместимый `/chat/completions`, парсинг SSE, склейка
@@ -736,6 +797,19 @@ AI-ассистент Велижанина (методика КМК) в форм
   в `PATCH /api/admin/settings`). Применяется ко ВСЕМ юзерам: `POST /api/chat` берёт
   `settings.provider` (тело запроса больше не несёт `provider`); `store/settingsSlice` поле
   `provider`/`setProvider` удалены.
+- 🟢 **OpenRouter — третий провайдер + выбор модели + режим промпта.** `LlmProvider`
+  теперь `claude|glm|openrouter`. Стратегия `src/lib/llm/openrouter.ts` (OpenAI-совместимый
+  стрим с ретраями/таймаутом как у GLM; ключ `OPENROUTER_API_KEY`, модель из
+  `settings.openrouterModel`, приходит в `StreamArgs.model`; usage/cost из финального чанка).
+  В админке (`/admin/flags` → «Движок модели») при выборе **OpenRouter** появляются:
+  **селектор модели** (каталог тянется из `GET /api/admin/openrouter/models` → публичный
+  `openrouter.ai/api/v1/models`, ~340 моделей, searchable) и **режим промпта**
+  (`AppSettings.routing`): `smart` — наш BM25-роутинг знаний; `full` — отдаём ВСЮ базу
+  целиком (`buildFullSystem` в `src/lib/llm/system.ts`: книга+оба TG+форматы+контент-план,
+  ~207К токенов, одна кэш-точка на хвосте), БЕЗ вызова LLM-роутера (`fullModeRoute` в
+  `router.ts` — все флаги on, категория дешёвой эвристикой). Full-режим — под модели с
+  кэшированием контекста (DeepSeek): «дорогой» объём платится раз, дальше из кэша. Применяется
+  и к `/api/chat`, и к ИИ-разбору видео. Новые ключи `AppSetting`: `openrouter_model`, `routing`.
 - 🟢 **Заголовок проекта = название канала из брифа** (`brief.channel` || «Новый проект»),
   ставится при создании проекта. Summary-заголовок от нейронки УБРАН: `POST /api/title` и
   `src/lib/llm/title.ts` удалены, авто-заголовок по первому сообщению в `chatSlice.addMessage`
@@ -760,3 +834,15 @@ Claude работает как раньше. Тарифы GLM захардкож
 `GLM_MAX_RETRIES` (дефолт 3) — число невидимых ретраев до первого токена; `GLM_TIMEOUT_MS`
 (дефолт 40000) — таймаут ожидания ответа/следующего чанка на попытку (защита от зависшего
 соединения Z.ai).
+OpenRouter (третий движок): `OPENROUTER_API_KEY` — обязателен для выбора OpenRouter в админке.
+`OPENROUTER_MODEL` (дефолт `deepseek/deepseek-chat`) — модель по умолчанию, если в админке не
+выбрана. `OPENROUTER_BASE_URL` (дефолт `https://openrouter.ai/api/v1`), `OPENROUTER_MAX_RETRIES`
+(3), `OPENROUTER_TIMEOUT_MS` (60000). Модель и режим промпта (умный роутинг / полный промпт)
+правятся в `/admin/flags`. Каталог моделей `GET /api/admin/openrouter/models` работает и без
+ключа (публичный список), но сами запросы к модели — только с ключом.
+YouTube (интеграция канала): `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — OAuth-приложение
+из Google Cloud Console. Нужно включить **YouTube Data API v3** и **YouTube Analytics API**,
+на consent screen добавить scopes `youtube.readonly` + `yt-analytics.readonly`, а в OAuth
+client (тип Web) прописать Authorized redirect URI = `{NEXT_PUBLIC_APP_URL}/api/integrations/
+youtube/callback`. Без ключей кнопка «Подключить» в настройках неактивна («интеграция не
+настроена»), остальное приложение работает как обычно.

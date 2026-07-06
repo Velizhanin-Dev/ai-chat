@@ -15,6 +15,13 @@ export interface AppSettings {
   // глобально). Используется и для ответов в чате, и для генерации заголовка.
   // Пользователь движок не выбирает (раньше был тумблер в чате — убран).
   provider: LlmProvider;
+  // Модель OpenRouter (когда provider="openrouter"), напр. "deepseek/deepseek-chat".
+  // Каталог тянется из OpenRouter API в админке. Для claude/glm — не используется.
+  openrouterModel: string;
+  // Режим сборки промпта: "smart" — наш BM25-роутинг знаний (подгружаем релевантное),
+  // "full" — отдаём ВСЮ базу знаний целиком (для моделей с кэшированием контекста,
+  // напр. DeepSeek через OpenRouter). Выбирается в админке рядом с OpenRouter.
+  routing: "smart" | "full";
   // Режим «скоро запуск»: таймер в герое + скрытые тарифы на лендинге.
   launch: {
     countdownEnabled: boolean;
@@ -26,6 +33,8 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   briefPageEnabled: true,
   provider: "claude",
+  openrouterModel: "",
+  routing: "smart",
   launch: { countdownEnabled: false, targetAt: null },
 };
 
@@ -33,18 +42,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
 const KEY_BRIEF = "brief_page_enabled";
 const KEY_LAUNCH = "launch";
 const KEY_PROVIDER = "provider";
+const KEY_OR_MODEL = "openrouter_model";
+const KEY_ROUTING = "routing";
+
+function normalizeProviderValue(v: unknown): LlmProvider {
+  return v === "glm" || v === "openrouter" ? v : "claude";
+}
 
 // Нормализация «сырых» JSON-значений из БД к типу AppSettings (с дефолтами).
 function normalize(map: Map<string, unknown>): AppSettings {
   const brief = map.get(KEY_BRIEF);
   const provider = map.get(KEY_PROVIDER);
+  const orModel = map.get(KEY_OR_MODEL);
+  const routing = map.get(KEY_ROUTING);
   const launch = map.get(KEY_LAUNCH) as
     | { countdownEnabled?: unknown; targetAt?: unknown }
     | undefined;
   return {
     briefPageEnabled:
       typeof brief === "boolean" ? brief : DEFAULT_SETTINGS.briefPageEnabled,
-    provider: provider === "glm" ? "glm" : "claude",
+    provider: normalizeProviderValue(provider),
+    openrouterModel: typeof orModel === "string" ? orModel : "",
+    routing: routing === "full" ? "full" : "smart",
     launch: {
       countdownEnabled: Boolean(launch?.countdownEnabled),
       targetAt: typeof launch?.targetAt === "string" ? launch.targetAt : null,
@@ -94,6 +113,8 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
   const next: AppSettings = {
     briefPageEnabled: input.briefPageEnabled ?? cur.briefPageEnabled,
     provider: input.provider ?? cur.provider,
+    openrouterModel: input.openrouterModel ?? cur.openrouterModel,
+    routing: input.routing ?? cur.routing,
     launch: { ...cur.launch, ...(input.launch ?? {}) },
   };
   await prisma.$transaction([
@@ -106,6 +127,16 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_PROVIDER },
       create: { key: KEY_PROVIDER, value: next.provider },
       update: { value: next.provider },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_OR_MODEL },
+      create: { key: KEY_OR_MODEL, value: next.openrouterModel },
+      update: { value: next.openrouterModel },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_ROUTING },
+      create: { key: KEY_ROUTING, value: next.routing },
+      update: { value: next.routing },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_LAUNCH },

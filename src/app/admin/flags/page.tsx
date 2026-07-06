@@ -15,6 +15,7 @@ import {
   ThemeIcon,
   Badge,
   SegmentedControl,
+  Select,
 } from "@mantine/core";
 import {
   IconClipboardText,
@@ -41,6 +42,11 @@ export default function AdminFlagsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Каталог моделей OpenRouter — тянем только когда выбран этот провайдер.
+  const [orModels, setOrModels] = useState<{ id: string; name: string }[]>([]);
+  const [orModelsLoading, setOrModelsLoading] = useState(false);
+  const [orModelsError, setOrModelsError] = useState<string | null>(null);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -55,6 +61,28 @@ export default function AdminFlagsPage() {
       }
     })();
   }, []);
+
+  // Загружаем каталог моделей OpenRouter при выборе провайдера (один раз).
+  useEffect(() => {
+    if (settings?.provider !== "openrouter" || orModels.length || orModelsLoading) return;
+    setOrModelsLoading(true);
+    setOrModelsError(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/openrouter/models", { cache: "no-store" });
+        const data = (await res.json()) as {
+          models?: { id: string; name: string }[];
+          error?: string;
+        };
+        if (!res.ok || !data.models) throw new Error(data.error || "Ошибка");
+        setOrModels(data.models);
+      } catch (e) {
+        setOrModelsError(e instanceof Error ? e.message : "Не удалось загрузить модели");
+      } finally {
+        setOrModelsLoading(false);
+      }
+    })();
+  }, [settings?.provider, orModels.length, orModelsLoading]);
 
   const patch = (p: Partial<AppSettings>) => {
     setSettings((s) => (s ? { ...s, ...p } : s));
@@ -132,7 +160,7 @@ export default function AdminFlagsPage() {
 
           {/* Движок модели — глобально для всех пользователей */}
           <Paper withBorder radius="md" p="lg">
-            <Group justify="space-between" wrap="nowrap" align="flex-start">
+            <Group justify="space-between" wrap="nowrap" align="flex-start" mb={settings.provider === "openrouter" ? "md" : 0}>
               <Group gap="sm" wrap="nowrap" align="flex-start">
                 <ThemeIcon color="brand" variant="light" radius="md" size="lg">
                   <IconCpu size={18} />
@@ -153,9 +181,63 @@ export default function AdminFlagsPage() {
                 data={[
                   { label: "Claude", value: "claude" },
                   { label: "GLM", value: "glm" },
+                  { label: "OpenRouter", value: "openrouter" },
                 ]}
               />
             </Group>
+
+            {/* OpenRouter: выбор модели + режим промпта */}
+            {settings.provider === "openrouter" && (
+              <Stack gap="md" pl={{ base: 0, sm: 52 }}>
+                <Select
+                  label="Модель OpenRouter"
+                  description="Каталог из openrouter.ai. Для DeepSeek выбери его модель и режим «Полный промпт»."
+                  placeholder={orModelsLoading ? "Загружаю каталог…" : "Выбери модель"}
+                  searchable
+                  nothingFoundMessage="Ничего не найдено"
+                  disabled={orModelsLoading}
+                  error={orModelsError}
+                  value={settings.openrouterModel || null}
+                  onChange={(v) => patch({ openrouterModel: v ?? "" })}
+                  data={(() => {
+                    const opts = orModels.map((m) => ({ value: m.id, label: m.name }));
+                    // Текущая модель может отсутствовать в каталоге (или он ещё не загружен) —
+                    // добавим её, чтобы значение не «слетело».
+                    if (
+                      settings.openrouterModel &&
+                      !opts.some((o) => o.value === settings.openrouterModel)
+                    ) {
+                      opts.unshift({
+                        value: settings.openrouterModel,
+                        label: settings.openrouterModel,
+                      });
+                    }
+                    return opts;
+                  })()}
+                />
+
+                <div>
+                  <Text fw={500} size="sm" mb={4}>
+                    Режим промпта
+                  </Text>
+                  <SegmentedControl
+                    color="brand"
+                    radius="md"
+                    value={settings.routing}
+                    onChange={(v) => patch({ routing: v as AppSettings["routing"] })}
+                    data={[
+                      { label: "Умный роутинг", value: "smart" },
+                      { label: "Полный промпт", value: "full" },
+                    ]}
+                  />
+                  <Text size="xs" c="dimmed" mt={6}>
+                    <b>Умный роутинг</b> — подгружаем только релевантные куски базы (дешевле).{" "}
+                    <b>Полный промпт</b> — отдаём всю базу знаний целиком: для моделей с
+                    кэшированием контекста (DeepSeek), которым нужна вся информация сразу.
+                  </Text>
+                </div>
+              </Stack>
+            )}
           </Paper>
 
           {/* Режим «скоро запуск» */}

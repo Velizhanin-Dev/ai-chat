@@ -38,7 +38,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   long: "Длинные видео",
   method: "Методика",
 };
-const providerLabel = (p: string) => (p === "glm" ? "GLM" : p === "claude" ? "Claude" : p);
+const providerLabel = (p: string) =>
+  p === "glm" ? "GLM" : p === "claude" ? "Claude" : p === "openrouter" ? "OpenRouter" : p;
 // «YYYY-MM-DD» → «DD.MM» для оси времени.
 const shortDay = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
 

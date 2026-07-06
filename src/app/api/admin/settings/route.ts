@@ -24,8 +24,18 @@ export async function PATCH(req: Request) {
   if (typeof input.briefPageEnabled === "boolean") {
     patch.briefPageEnabled = input.briefPageEnabled;
   }
-  if (input.provider === "claude" || input.provider === "glm") {
+  if (
+    input.provider === "claude" ||
+    input.provider === "glm" ||
+    input.provider === "openrouter"
+  ) {
     patch.provider = input.provider;
+  }
+  if (typeof input.openrouterModel === "string") {
+    patch.openrouterModel = input.openrouterModel.trim().slice(0, 120);
+  }
+  if (input.routing === "smart" || input.routing === "full") {
+    patch.routing = input.routing;
   }
   if (input.launch && typeof input.launch === "object") {
     const { countdownEnabled, targetAt } = input.launch;

@@ -165,6 +165,10 @@ export default function AppShellLayout({
   // остальное рендерится «голым», своим layout.
   const onBareRoute = !(pathname === "/app" || PROJECT_TAB_RE.test(pathname));
 
+  // Раздел «Канал» — дашборд во всю ширину области (без центрированной колонки
+  // maw 900, которая нужна чату/настройкам для читаемости). Остальные — в колонке.
+  const wideRoute = /^\/[^/]+\/channel(?:\/|$)/.test(pathname);
+
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
   };
@@ -439,7 +443,7 @@ export default function AppShellLayout({
             style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
           >
             <Box
-              maw={900}
+              maw={wideRoute ? undefined : 900}
               mx="auto"
               w="100%"
               style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
