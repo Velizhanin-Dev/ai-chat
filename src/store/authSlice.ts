@@ -22,6 +22,14 @@ export const PLAN_LABEL: Record<PlanId, string> = {
 // (для заглушки перехода на план выше в биллинге).
 export const PLAN_ORDER: PlanId[] = ["start", "blogger", "studio"];
 
+// Цвет бейджа тарифа (Mantine-палитра) — чтобы тарифы визуально различались в
+// админке: пробный приглушённый, платные — по возрастанию «ценности».
+export const PLAN_BADGE_COLOR: Record<PlanId, string> = {
+  start: "gray",
+  blogger: "teal",
+  studio: "grape",
+};
+
 export interface AuthUser {
   id: string;
   name: string;

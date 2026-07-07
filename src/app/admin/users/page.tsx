@@ -30,6 +30,7 @@ import {
 } from "@tabler/icons-react";
 import { DISC_PROFILES, CAMERA_OPTIONS } from "@/lib/brief";
 import { PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
+import { PlanBadge, PaymentStatusBadge } from "@/components/Admin/Badges";
 import { formatPrice } from "@/lib/plans";
 import type { AdminUserRow } from "@/app/api/admin/users/route";
 import type { AdminPaymentRow } from "@/app/api/admin/payments/route";
@@ -40,16 +41,6 @@ function quotaLabel(used: number, limit: number | null): string {
   if (limit == null) return String(used);
   if (limit < 0) return `${used} / ∞`;
   return `${used} / ${limit}`;
-}
-
-// Статус платежа → цвет/подпись бейджа.
-function paymentBadge(status: string): { color: string; label: string } {
-  if (status === "CONFIRMED") return { color: "teal", label: "оплачено" };
-  if (["REJECTED", "CANCELED", "DEADLINE_EXPIRED", "AUTH_FAIL"].includes(status))
-    return { color: "red", label: "отклонён" };
-  if (["REFUNDED", "PARTIAL_REFUNDED"].includes(status))
-    return { color: "orange", label: "возврат" };
-  return { color: "gray", label: "ожидает" };
 }
 
 const cameraLabel = (v: string) =>
@@ -106,6 +97,8 @@ function toLocalInput(iso: string | null): string {
 
 export default function AdminUsersPage() {
   const [q, setQ] = useState("");
+  // Фильтр по тарифу ("" = все). id из PLAN_ORDER.
+  const [planFilter, setPlanFilter] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ users: AdminUserRow[]; total: number; pageSize: number } | null>(
     null
@@ -238,10 +231,10 @@ export default function AdminUsersPage() {
     };
   }, [selected]);
 
-  // Сброс на первую страницу при смене поискового запроса.
+  // Сброс на первую страницу при смене поиска или фильтра тарифа.
   useEffect(() => {
     setPage(1);
-  }, [q]);
+  }, [q, planFilter]);
 
   // Загрузка списка (дебаунс по поиску, чтобы не дёргать API на каждый символ).
   useEffect(() => {
@@ -250,6 +243,7 @@ export default function AdminUsersPage() {
     const t = setTimeout(() => {
       const params = new URLSearchParams({ page: String(page) });
       if (q.trim()) params.set("q", q.trim());
+      if (planFilter) params.set("plan", planFilter);
       fetch(`/api/admin/users?${params}`, { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : Promise.reject()))
         .then((d) => {
@@ -265,7 +259,7 @@ export default function AdminUsersPage() {
       alive = false;
       clearTimeout(t);
     };
-  }, [q, page, version]);
+  }, [q, planFilter, page, version]);
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
@@ -278,13 +272,25 @@ export default function AdminUsersPage() {
         </Text>
       </div>
 
-      <TextInput
-        placeholder="Поиск по имени или почте"
-        leftSection={<IconSearch size={16} />}
-        value={q}
-        onChange={(e) => setQ(e.currentTarget.value)}
-        maw={360}
-      />
+      <Group align="flex-end" gap="sm" wrap="wrap">
+        <TextInput
+          label="Поиск"
+          placeholder="Поиск по имени или почте"
+          leftSection={<IconSearch size={16} />}
+          value={q}
+          onChange={(e) => setQ(e.currentTarget.value)}
+          w={{ base: "100%", xs: 320 }}
+        />
+        <Select
+          label="Тариф"
+          value={planFilter || null}
+          onChange={(v) => setPlanFilter(v ?? "")}
+          placeholder="Все тарифы"
+          clearable
+          data={PLAN_ORDER.map((id) => ({ value: id, label: PLAN_LABEL[id] }))}
+          w={{ base: "100%", xs: 200 }}
+        />
+      </Group>
 
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />}>
@@ -309,7 +315,7 @@ export default function AdminUsersPage() {
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Пользователь</Table.Th>
-                <Table.Th>Тариф</Table.Th>
+                <Table.Th miw={120}>Тариф</Table.Th>
                 <Table.Th>Проекты</Table.Th>
                 <Table.Th>Запросы</Table.Th>
                 <Table.Th>Регистрация</Table.Th>
@@ -344,9 +350,7 @@ export default function AdminUsersPage() {
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Badge variant="default" radius="sm">
-                        {planLabel(u.plan)}
-                      </Badge>
+                      <PlanBadge plan={u.plan} />
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm">{u.projectCount}</Text>
@@ -716,25 +720,20 @@ export default function AdminUsersPage() {
                     </Text>
                   ) : (
                     <Stack gap="xs">
-                      {payments.map((pay) => {
-                        const b = paymentBadge(pay.status);
-                        return (
-                          <Group key={pay.id} justify="space-between" wrap="nowrap" gap="sm">
-                            <div style={{ minWidth: 0 }}>
-                              <Text size="sm" fw={500}>
-                                {formatPrice(pay.amount / 100)}
-                              </Text>
-                              <Text size="xs" c="dimmed">
-                                {pay.planLabel} ·{" "}
-                                {new Date(pay.paidAt ?? pay.createdAt).toLocaleString("ru-RU")}
-                              </Text>
-                            </div>
-                            <Badge color={b.color} variant="light" radius="sm" style={{ flexShrink: 0 }}>
-                              {b.label}
-                            </Badge>
-                          </Group>
-                        );
-                      })}
+                      {payments.map((pay) => (
+                        <Group key={pay.id} justify="space-between" wrap="nowrap" gap="sm">
+                          <div style={{ minWidth: 0 }}>
+                            <Text size="sm" fw={500}>
+                              {formatPrice(pay.amount / 100)}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {pay.planLabel} ·{" "}
+                              {new Date(pay.paidAt ?? pay.createdAt).toLocaleString("ru-RU")}
+                            </Text>
+                          </div>
+                          <PaymentStatusBadge status={pay.status} />
+                        </Group>
+                      ))}
                     </Stack>
                   )}
                 </Accordion.Panel>

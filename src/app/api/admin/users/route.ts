@@ -39,15 +39,20 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
   const q = (url.searchParams.get("q") || "").trim();
+  const plan = (url.searchParams.get("plan") || "").trim();
 
-  const where: Prisma.UserWhereInput = q
-    ? {
-        OR: [
-          { name: { contains: q, mode: "insensitive" } },
-          { email: { contains: q, mode: "insensitive" } },
-        ],
-      }
-    : {};
+  const where: Prisma.UserWhereInput = {
+    ...(q
+      ? {
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+    // Фильтр по тарифу (id из /api/plans). Пусто = все тарифы.
+    ...(plan ? { plan } : {}),
+  };
 
   const [total, rows, plans] = await Promise.all([
     prisma.user.count({ where }),

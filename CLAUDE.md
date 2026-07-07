@@ -488,18 +488,30 @@ AI-ассистент Велижанина (методика КМК) в форм
     `app/admin/page.tsx` — экран «Флаги»: свитчи + `datetime-local` для даты запуска,
     «Сохранить» с фидбеком. Без новых зависимостей (нативный date-input, Mantine).
   - **Список пользователей (Фаза 2).** `GET /api/admin/users` (пагинация по 20 + поиск
-    по имени/почте; в строке `authMethods`, `planExpiresAt`, `lastSeenAt`, **`requestsUsed`/
-    `requestsLimit`** (квота из тарифа) и **`projectCount`** (groupBy по conversations).
-    Бриф из строки убран — он теперь у проектов). `app/admin/users/page.tsx` — Mantine
-    `Table` (юзер, тариф, **проекты, запросы (used/limit)**, дата) + поиск (дебаунс 350мс) +
-    `Pagination`; клик по строке → `Drawer`.
+    по имени/почте + **фильтр по тарифу** `?plan=<id>`; в строке `authMethods`, `planExpiresAt`,
+    `lastSeenAt`, **`requestsUsed`/`requestsLimit`** (квота из тарифа) и **`projectCount`**
+    (groupBy по conversations). Бриф из строки убран — он теперь у проектов).
+    `app/admin/users/page.tsx` — Mantine `Table` (юзер, тариф, **проекты, запросы (used/limit)**,
+    дата) + поиск (дебаунс 350мс) + **`Select` фильтра по тарифу** + `Pagination`; клик по
+    строке → `Drawer`. **Бейджи тарифов цветные** (`PLAN_BADGE_COLOR` в `authSlice`: пробный
+    gray / базовый teal / максимальный grape) и **не обрезаются на мобиле** — общий компонент
+    `components/Admin/Badges.tsx` (`PlanBadge` с `minWidth:max-content` + `label overflow:visible`,
+    колонка «Тариф» `miw`; раньше был усечённый «ПРО…»). Там же `PaymentStatusBadge` +
+    `paymentBadgeMeta` (переиспользуются в карточке юзера и на странице платежей).
     - **Шапка деталей — `Paper`:** имя, почта, способ входа, тариф, срок подписки,
       **запросы (израсходовано/лимит + осталось)**, **проектов**, роль, регистрация,
       последний визит.
     - **Проекты и брифы, история платежей** — пункты `Accordion` (`multiple`): «Проекты и
       брифы» — `GET /api/admin/users/[id]/projects` (каждый проект: заголовок, число
-      сообщений, архетип DISC из брифа, поля «о проекте»); платежи —
+      сообщений, архетип DISC из брифа, поля «о проекте»); платежи юзера —
       `GET /api/admin/payments?userId=`.
+  - **Страница платежей (`/admin/payments`).** Глобальный список всех платежей (плательщик +
+    почта, тариф `PlanBadge`, сумма, статус `PaymentStatusBadge`, дата) — пагинация по 30 +
+    поиск по имени/почте плательщика + фильтр по статусу (оплачено/ожидают/отклонён/возврат).
+    Тот же `GET /api/admin/payments`, но **без `userId`** уходит в режим списка: `where` по
+    `user.OR` (имя/почта) + группировка raw-статусов ТБанк (`statusWhere`: `pending` =
+    `notIn` терминальных), `include user`, отдаёт `{ payments: AdminPaymentListRow[], total,
+    page, pageSize }`. Пункт «Платежи» добавлен в `NAV` (`AdminShell`).
     - **Управление юзером** (карточка «Управление»): `Select` роли (user/admin), `Select`
       тарифа (из `PLAN_ORDER`), `datetime-local` срока подписки (+«очистить» = снять платную),
       «Сохранить» (активна при изменениях) и «Удалить» (инлайн-подтверждение). Бэкенд —

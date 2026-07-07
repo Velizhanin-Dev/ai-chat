@@ -19,6 +19,7 @@ import {
   IconToggleRight,
   IconUsers,
   IconCurrencyRubel,
+  IconReceipt,
   IconArrowLeft,
   IconShieldLock,
 } from "@tabler/icons-react";
@@ -35,6 +36,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/admin", label: "Дашборд", icon: IconLayoutDashboard },
   { href: "/admin/users", label: "Пользователи", icon: IconUsers },
+  { href: "/admin/payments", label: "Платежи", icon: IconReceipt },
   { href: "/admin/plans", label: "Тарифы", icon: IconCurrencyRubel },
   { href: "/admin/flags", label: "Флаги и настройки", icon: IconToggleRight },
 ];
