@@ -19,10 +19,23 @@ export async function GET() {
     });
     if (!res.ok) return apiError("Не удалось получить список моделей OpenRouter", 502);
     const data = (await res.json()) as {
-      data?: Array<{ id: string; name?: string; context_length?: number }>;
+      data?: Array<{
+        id: string;
+        name?: string;
+        context_length?: number;
+        supported_parameters?: string[];
+      }>;
     };
     const models = (data.data ?? [])
-      .map((m) => ({ id: m.id, name: m.name || m.id, context: m.context_length ?? 0 }))
+      .map((m) => ({
+        id: m.id,
+        name: m.name || m.id,
+        context: m.context_length ?? 0,
+        // Какие параметры генерации модель поддерживает — по ним рисуем крутилки.
+        supportedParams: Array.isArray(m.supported_parameters)
+          ? m.supported_parameters.filter((p): p is string => typeof p === "string")
+          : [],
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
     return NextResponse.json({ models });
   } catch (err) {

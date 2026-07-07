@@ -34,6 +34,18 @@ export async function PATCH(req: Request) {
   if (typeof input.openrouterModel === "string") {
     patch.openrouterModel = input.openrouterModel.trim().slice(0, 120);
   }
+  if (input.openrouterParams && typeof input.openrouterParams === "object") {
+    // Нормализация (белый список ключей + зажим диапазонов) — внутри saveSettings.
+    patch.openrouterParams = input.openrouterParams;
+  }
+  if (typeof input.openrouterProvider === "string") {
+    // slug провайдера (или "" — авто-балансировка). Только slug-символы.
+    patch.openrouterProvider = input.openrouterProvider
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9/_-]/g, "")
+      .slice(0, 60);
+  }
   if (input.routing === "smart" || input.routing === "full") {
     patch.routing = input.routing;
   }

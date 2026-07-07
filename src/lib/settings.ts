@@ -1,6 +1,10 @@
 import { prisma } from "./prisma";
 import { Prisma } from "@prisma/client";
 import type { LlmProvider } from "./llm/types";
+import {
+  normalizeOpenRouterParams,
+  type OpenRouterParams,
+} from "./llm/openrouter-params";
 
 // ── Глобальные настройки / фичефлаги ────────────────────────────────────────
 // Источник правды — таблица AppSetting (key→JSON), правится из админки. Здесь —
@@ -22,6 +26,16 @@ export interface AppSettings {
   // "full" — отдаём ВСЮ базу знаний целиком (для моделей с кэшированием контекста,
   // напр. DeepSeek через OpenRouter). Выбирается в админке рядом с OpenRouter.
   routing: "smart" | "full";
+  // Параметры генерации OpenRouter (temperature/top_p/reasoning/…), заданные в
+  // админке под выбранную модель. Только заданные уходят в запрос. Для claude/glm
+  // не используются. См. src/lib/llm/openrouter-params.ts.
+  openrouterParams: OpenRouterParams;
+  // Пин провайдера OpenRouter (slug, напр. "deepseek"). OpenRouter по умолчанию
+  // балансирует запросы между провайдерами модели — из-за чего пер-провайдерный
+  // кэш DeepSeek не срабатывает (каждый запрос на другом провайдере = промах).
+  // Пин шлёт `provider: { order: [slug], allow_fallbacks: false }` — все запросы в
+  // одного провайдера, кэш греется. "" = авто-балансировка (без пина).
+  openrouterProvider: string;
   // Режим «скоро запуск»: таймер в герое + скрытые тарифы на лендинге.
   launch: {
     countdownEnabled: boolean;
@@ -35,6 +49,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   provider: "claude",
   openrouterModel: "",
   routing: "smart",
+  openrouterParams: {},
+  openrouterProvider: "",
   launch: { countdownEnabled: false, targetAt: null },
 };
 
@@ -43,6 +59,8 @@ const KEY_BRIEF = "brief_page_enabled";
 const KEY_LAUNCH = "launch";
 const KEY_PROVIDER = "provider";
 const KEY_OR_MODEL = "openrouter_model";
+const KEY_OR_PARAMS = "openrouter_params";
+const KEY_OR_PROVIDER = "openrouter_provider";
 const KEY_ROUTING = "routing";
 
 function normalizeProviderValue(v: unknown): LlmProvider {
@@ -54,6 +72,8 @@ function normalize(map: Map<string, unknown>): AppSettings {
   const brief = map.get(KEY_BRIEF);
   const provider = map.get(KEY_PROVIDER);
   const orModel = map.get(KEY_OR_MODEL);
+  const orParams = map.get(KEY_OR_PARAMS);
+  const orProvider = map.get(KEY_OR_PROVIDER);
   const routing = map.get(KEY_ROUTING);
   const launch = map.get(KEY_LAUNCH) as
     | { countdownEnabled?: unknown; targetAt?: unknown }
@@ -63,6 +83,8 @@ function normalize(map: Map<string, unknown>): AppSettings {
       typeof brief === "boolean" ? brief : DEFAULT_SETTINGS.briefPageEnabled,
     provider: normalizeProviderValue(provider),
     openrouterModel: typeof orModel === "string" ? orModel : "",
+    openrouterParams: normalizeOpenRouterParams(orParams),
+    openrouterProvider: typeof orProvider === "string" ? orProvider : "",
     routing: routing === "full" ? "full" : "smart",
     launch: {
       countdownEnabled: Boolean(launch?.countdownEnabled),
@@ -114,6 +136,10 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
     briefPageEnabled: input.briefPageEnabled ?? cur.briefPageEnabled,
     provider: input.provider ?? cur.provider,
     openrouterModel: input.openrouterModel ?? cur.openrouterModel,
+    openrouterParams: input.openrouterParams
+      ? normalizeOpenRouterParams(input.openrouterParams)
+      : cur.openrouterParams,
+    openrouterProvider: input.openrouterProvider ?? cur.openrouterProvider,
     routing: input.routing ?? cur.routing,
     launch: { ...cur.launch, ...(input.launch ?? {}) },
   };
@@ -132,6 +158,19 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_OR_MODEL },
       create: { key: KEY_OR_MODEL, value: next.openrouterModel },
       update: { value: next.openrouterModel },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_OR_PARAMS },
+      create: {
+        key: KEY_OR_PARAMS,
+        value: next.openrouterParams as unknown as Prisma.InputJsonValue,
+      },
+      update: { value: next.openrouterParams as unknown as Prisma.InputJsonValue },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_OR_PROVIDER },
+      create: { key: KEY_OR_PROVIDER, value: next.openrouterProvider },
+      update: { value: next.openrouterProvider },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_ROUTING },

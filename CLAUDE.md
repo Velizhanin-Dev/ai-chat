@@ -810,6 +810,35 @@ AI-ассистент Велижанина (методика КМК) в форм
   `router.ts` — все флаги on, категория дешёвой эвристикой). Full-режим — под модели с
   кэшированием контекста (DeepSeek): «дорогой» объём платится раз, дальше из кэша. Применяется
   и к `/api/chat`, и к ИИ-разбору видео. Новые ключи `AppSetting`: `openrouter_model`, `routing`.
+  - **Параметры генерации OpenRouter (`AppSettings.openrouterParams`).** Под выбранной
+    моделью в `/admin/flags` — блок «Параметры генерации»: крутилки temperature / top_p /
+    top_k / min_p / top_a / frequency·presence·repetition_penalty / max_tokens / seed +
+    селектор **Reasoning (thinking)** (low/medium/high, «выкл» = не передаём). Показываются
+    ТОЛЬКО те, что модель заявляет в `supported_parameters` (каталог `GET /api/admin/
+    openrouter/models` теперь отдаёт `supportedParams` на модель). Реестр параметров +
+    нормализация (белый список ключей, зажим диапазонов) + сборка тела запроса — чистый
+    модуль [src/lib/llm/openrouter-params.ts](src/lib/llm/openrouter-params.ts)
+    (`OpenRouterParams`, `OR_NUMERIC_PARAMS`, `normalizeOpenRouterParams`,
+    `buildOrRequestParams`; reasoning → `reasoning: { effort }`). Заданные значения хранятся
+    в `AppSetting` (`openrouter_params`), приходят в стратегию через `StreamArgs.orParams` и
+    подмешиваются в тело запроса (перекрывают дефолты, напр. `max_tokens`; незаданные не шлём,
+    неподдерживаемое OpenRouter игнорирует сам). Claude/GLM `orParams` игнорируют. **Thinking
+    у OpenRouter управляется ТОЛЬКО отсюда** (в отличие от Claude, где adaptive-thinking
+    зашит в стратегию по `route.category`) — по умолчанию reasoning выключен.
+  - **Пин провайдера (`AppSettings.openrouterProvider`) — ключ к кэшу.** OpenRouter по
+    умолчанию БАЛАНСИРУЕТ запросы между ~16 аптсрим-провайдерами модели (в логах видно:
+    SiliconFlow → Alibaba → GMICloud → …). Кэш DeepSeek **пер-провайдерный**, поэтому при
+    балансировке cache hit rate = 0% (каждый запрос на другом провайдере = промах), а цена
+    скачет (у каждого провайдера свой прайс). Настройка «Провайдер (пин для кэша)» в
+    `/admin/flags` шлёт `provider: { order: [slug], allow_fallbacks: false }` — все запросы в
+    одного провайдера, кэш греется. Список провайдеров модели тянется из `GET /api/admin/
+    openrouter/providers?model=` (проксирует `…/models/{author}/{slug}/endpoints`), показывает
+    цену входа/кэша + `supports_implicit_caching` (✓), сортирует кэш-провайдеров вверх. slug
+    для routing = префикс `tag` («deepinfra/fp4» → «deepinfra»). Для full-режима на DeepSeek
+    оптимален пин на официальный **deepseek** (cache read ~$0.0028/M против $0.14/M входа —
+    после первого запроса стабильный ~200К-префикс почти бесплатен). "" = авто-балансировка.
+    Прокидывается через `StreamArgs.orProvider`; Claude/GLM игнорируют. Ключ `AppSetting`:
+    `openrouter_provider`.
 - 🟢 **Заголовок проекта = название канала из брифа** (`brief.channel` || «Новый проект»),
   ставится при создании проекта. Summary-заголовок от нейронки УБРАН: `POST /api/title` и
   `src/lib/llm/title.ts` удалены, авто-заголовок по первому сообщению в `chatSlice.addMessage`

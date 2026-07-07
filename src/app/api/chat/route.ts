@@ -182,6 +182,8 @@ export async function POST(request: NextRequest) {
             route,
             routeMs,
             model: settings.openrouterModel,
+            orParams: settings.openrouterParams,
+            orProvider: settings.openrouterProvider,
             meta: { userId: sessionUser.id, conversationId },
           })) {
             assistantText += token;

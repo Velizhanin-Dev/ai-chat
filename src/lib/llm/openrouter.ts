@@ -1,5 +1,6 @@
 import { recordStat } from "../stats";
 import type { LlmStrategy, StreamArgs } from "./types";
+import { buildOrRequestParams } from "./openrouter-params";
 
 // OpenRouter — OpenAI-совместимый шлюз к сотням моделей (DeepSeek, Llama, Qwen, …).
 // Модель выбирается в админке (settings.openrouterModel) и приходит в StreamArgs.model.
@@ -35,7 +36,7 @@ interface OrUsage {
 
 export const openrouterStrategy: LlmStrategy = {
   provider: "openrouter",
-  async *stream({ system, messages, route, routeMs, meta, model }: StreamArgs) {
+  async *stream({ system, messages, route, routeMs, meta, model, orParams, orProvider }: StreamArgs) {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       throw new Error("OpenRouter не настроен: задай OPENROUTER_API_KEY");
@@ -53,6 +54,15 @@ export const openrouterStrategy: LlmStrategy = {
     ];
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    // Параметры генерации из админки (temperature/top_p/reasoning/…). Заданные
+    // ими значения перекрывают дефолты (напр. max_tokens); незаданные не шлём,
+    // неподдерживаемые моделью OpenRouter игнорирует сам.
+    const tuning = orParams ? buildOrRequestParams(orParams) : {};
+    // Пин провайдера: все запросы в одного провайдера, без фолбэков — иначе
+    // пер-провайдерный кэш DeepSeek не греется (см. настройку openrouterProvider).
+    const providerRouting = orProvider?.trim()
+      ? { provider: { order: [orProvider.trim()], allow_fallbacks: false } }
+      : {};
     const requestBody = JSON.stringify({
       model: useModel,
       messages: oaMessages,
@@ -60,6 +70,8 @@ export const openrouterStrategy: LlmStrategy = {
       max_tokens: OR_MAX_TOKENS,
       // Просим OpenRouter прислать usage (токены + cost) в финальном чанке.
       usage: { include: true },
+      ...tuning,
+      ...providerRouting,
     });
 
     const t0 = Date.now();

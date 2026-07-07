@@ -16,6 +16,8 @@ import {
   Badge,
   SegmentedControl,
   Select,
+  NumberInput,
+  SimpleGrid,
 } from "@mantine/core";
 import {
   IconClipboardText,
@@ -25,6 +27,30 @@ import {
   IconCpu,
 } from "@tabler/icons-react";
 import type { AppSettings } from "@/lib/settings";
+import {
+  OR_NUMERIC_PARAMS,
+  OR_REASONING_KEY,
+  OR_REASONING_EFFORTS,
+  type OpenRouterParams,
+} from "@/lib/llm/openrouter-params";
+
+type OrModel = {
+  id: string;
+  name: string;
+  context?: number;
+  supportedParams?: string[];
+};
+
+type OrProvider = {
+  slug: string;
+  name: string;
+  prompt: number;
+  cacheRead: number | null;
+  implicitCache: boolean;
+};
+
+// Цена за токен → строка «$X/M».
+const perM = (v: number) => `$${(v * 1_000_000).toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}/M`;
 
 // ISO (UTC) → значение для <input type="datetime-local"> (локальное время).
 function isoToLocalInput(iso: string | null): string {
@@ -43,9 +69,13 @@ export default function AdminFlagsPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Каталог моделей OpenRouter — тянем только когда выбран этот провайдер.
-  const [orModels, setOrModels] = useState<{ id: string; name: string }[]>([]);
+  const [orModels, setOrModels] = useState<OrModel[]>([]);
   const [orModelsLoading, setOrModelsLoading] = useState(false);
   const [orModelsError, setOrModelsError] = useState<string | null>(null);
+
+  // Провайдеры выбранной модели (для пина под кэш) — тянем при смене модели.
+  const [orProviders, setOrProviders] = useState<OrProvider[]>([]);
+  const [orProvidersLoading, setOrProvidersLoading] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -71,7 +101,7 @@ export default function AdminFlagsPage() {
       try {
         const res = await fetch("/api/admin/openrouter/models", { cache: "no-store" });
         const data = (await res.json()) as {
-          models?: { id: string; name: string }[];
+          models?: OrModel[];
           error?: string;
         };
         if (!res.ok || !data.models) throw new Error(data.error || "Ошибка");
@@ -84,6 +114,34 @@ export default function AdminFlagsPage() {
     })();
   }, [settings?.provider, orModels.length, orModelsLoading]);
 
+  // Провайдеры конкретной модели — перезагружаем при смене модели.
+  const orModel = settings?.provider === "openrouter" ? settings.openrouterModel : "";
+  useEffect(() => {
+    if (!orModel) {
+      setOrProviders([]);
+      return;
+    }
+    let cancelled = false;
+    setOrProvidersLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/openrouter/providers?model=${encodeURIComponent(orModel)}`,
+          { cache: "no-store" }
+        );
+        const data = (await res.json()) as { providers?: OrProvider[] };
+        if (!cancelled) setOrProviders(res.ok && data.providers ? data.providers : []);
+      } catch {
+        if (!cancelled) setOrProviders([]);
+      } finally {
+        if (!cancelled) setOrProvidersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orModel]);
+
   const patch = (p: Partial<AppSettings>) => {
     setSettings((s) => (s ? { ...s, ...p } : s));
     setSaved(false);
@@ -92,6 +150,24 @@ export default function AdminFlagsPage() {
     setSettings((s) => (s ? { ...s, launch: { ...s.launch, ...p } } : s));
     setSaved(false);
   };
+  // Правка одного параметра генерации OpenRouter. undefined = снять значение.
+  const patchParam = (key: keyof OpenRouterParams, value: number | string | undefined) => {
+    setSettings((s) => {
+      if (!s) return s;
+      const next = { ...s.openrouterParams };
+      if (value === undefined || value === "") delete next[key];
+      else (next as Record<string, unknown>)[key] = value;
+      return { ...s, openrouterParams: next };
+    });
+    setSaved(false);
+  };
+
+  // Что поддерживает выбранная модель (из каталога). Пока каталог не загружен —
+  // показываем все крутилки (не блокируем правку), а список параметров модели
+  // просто ещё не известен.
+  const selectedModel = orModels.find((m) => m.id === settings?.openrouterModel);
+  const supported = selectedModel?.supportedParams ?? null;
+  const isSupported = (key: string) => !supported || supported.includes(key);
 
   const save = async () => {
     if (!settings) return;
@@ -216,6 +292,38 @@ export default function AdminFlagsPage() {
                   })()}
                 />
 
+                {/* Пин провайдера — чтобы кэш DeepSeek грелся (иначе балансировка = 0% hit) */}
+                <Select
+                  label="Провайдер (пин для кэша)"
+                  description="OpenRouter балансирует запросы между провайдерами — из-за этого пер-провайдерный кэш не срабатывает. Пин шлёт все запросы в одного (без фолбэков). Для кэша выбирай провайдера с implicit-кэшем и дешёвым cache read."
+                  placeholder={orProvidersLoading ? "Загружаю…" : "Авто (балансировка)"}
+                  disabled={!settings.openrouterModel}
+                  clearable
+                  searchable
+                  value={settings.openrouterProvider || null}
+                  onChange={(v) => patch({ openrouterProvider: v ?? "" })}
+                  data={(() => {
+                    const opts = orProviders.map((p) => ({
+                      value: p.slug,
+                      label: `${p.name} — вход ${perM(p.prompt)}${
+                        p.cacheRead != null ? `, кэш ${perM(p.cacheRead)}` : ", без кэша"
+                      }${p.implicitCache ? " ✓" : ""}`,
+                    }));
+                    // Текущий пин мог не оказаться в списке (каталог не загружен) — не терять.
+                    if (
+                      settings.openrouterProvider &&
+                      !opts.some((o) => o.value === settings.openrouterProvider)
+                    ) {
+                      opts.unshift({
+                        value: settings.openrouterProvider,
+                        label: settings.openrouterProvider,
+                      });
+                    }
+                    return opts;
+                  })()}
+                  maw={480}
+                />
+
                 <div>
                   <Text fw={500} size="sm" mb={4}>
                     Режим промпта
@@ -235,6 +343,72 @@ export default function AdminFlagsPage() {
                     <b>Полный промпт</b> — отдаём всю базу знаний целиком: для моделей с
                     кэшированием контекста (DeepSeek), которым нужна вся информация сразу.
                   </Text>
+                </div>
+
+                {/* Параметры генерации выбранной модели (supported_parameters) */}
+                <div>
+                  <Text fw={500} size="sm" mb={2}>
+                    Параметры генерации
+                  </Text>
+                  <Text size="xs" c="dimmed" mb="sm">
+                    {settings.openrouterModel
+                      ? supported
+                        ? "Показаны только параметры, что поддерживает выбранная модель. Пустое поле — параметр не передаётся (значение по умолчанию модели)."
+                        : "Каталог ещё грузится — список параметров модели уточнится. Пустое поле не передаётся."
+                      : "Сначала выбери модель выше."}
+                  </Text>
+
+                  {settings.openrouterModel && (
+                    <Stack gap="sm">
+                      {/* Reasoning / thinking — если модель поддерживает */}
+                      {isSupported(OR_REASONING_KEY) && (
+                        <Select
+                          label="Reasoning (thinking)"
+                          description="Глубина рассуждений. «Выкл» — параметр не передаётся."
+                          value={settings.openrouterParams.reasoning ?? ""}
+                          onChange={(v) => patchParam("reasoning", v || undefined)}
+                          data={[
+                            { value: "", label: "Выкл (по умолчанию)" },
+                            ...OR_REASONING_EFFORTS.map((e) => ({ value: e, label: e })),
+                          ]}
+                          allowDeselect={false}
+                          maw={280}
+                        />
+                      )}
+
+                      <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="sm">
+                        {OR_NUMERIC_PARAMS.filter((spec) => isSupported(spec.key)).map(
+                          (spec) => (
+                            <NumberInput
+                              key={spec.key}
+                              label={spec.label}
+                              placeholder="—"
+                              min={spec.min}
+                              max={spec.max}
+                              step={spec.step}
+                              allowDecimal={!spec.int}
+                              clampBehavior="strict"
+                              value={settings.openrouterParams[spec.key] ?? ""}
+                              onChange={(v) =>
+                                patchParam(
+                                  spec.key,
+                                  v === "" || v === null ? undefined : Number(v)
+                                )
+                              }
+                            />
+                          )
+                        )}
+                      </SimpleGrid>
+
+                      {supported &&
+                        !isSupported(OR_REASONING_KEY) &&
+                        OR_NUMERIC_PARAMS.every((s) => !isSupported(s.key)) && (
+                          <Text size="xs" c="dimmed">
+                            Эта модель не заявляет управляемых параметров генерации.
+                          </Text>
+                        )}
+                    </Stack>
+                  )}
                 </div>
               </Stack>
             )}

@@ -184,6 +184,8 @@ ${retLine}
       route,
       routeMs,
       model: settings.openrouterModel,
+      orParams: settings.openrouterParams,
+      orProvider: settings.openrouterProvider,
       meta: { userId: user.id, conversationId: owned },
     })) {
       full += token;
