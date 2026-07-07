@@ -58,10 +58,13 @@ export const openrouterStrategy: LlmStrategy = {
     // ими значения перекрывают дефолты (напр. max_tokens); незаданные не шлём,
     // неподдерживаемые моделью OpenRouter игнорирует сам.
     const tuning = orParams ? buildOrRequestParams(orParams) : {};
-    // Пин провайдера: все запросы в одного провайдера, без фолбэков — иначе
-    // пер-провайдерный кэш DeepSeek не греется (см. настройку openrouterProvider).
+    // Пин провайдера: приоритетно бьём в выбранного провайдера (его пер-провайдерный
+    // кэш DeepSeek греется, см. настройку openrouterProvider), НО с фолбэками —
+    // если он недоступен/отключён политикой данных/перегружен, OpenRouter уходит на
+    // следующего вместо 404 "No endpoints found" / 429. Пока пиновый провайдер жив,
+    // кэш всё равно тёплый; фолбэк срабатывает только на сбое.
     const providerRouting = orProvider?.trim()
-      ? { provider: { order: [orProvider.trim()], allow_fallbacks: false } }
+      ? { provider: { order: [orProvider.trim()], allow_fallbacks: true } }
       : {};
     const requestBody = JSON.stringify({
       model: useModel,
