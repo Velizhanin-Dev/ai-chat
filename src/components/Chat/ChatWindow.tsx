@@ -6,6 +6,7 @@ import { IconUser, IconRobot } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
 import Markdown from "./Markdown";
+import ThinkingIndicator from "./ThinkingIndicator";
 
 const STICK_THRESHOLD = 80;
 const EMPTY: ChatMessage[] = [];
@@ -153,10 +154,7 @@ export default function ChatWindow() {
               {streamingContent ? (
                 <Markdown content={streamingContent} streaming />
               ) : (
-                <Text component="span" size="sm" c="dimmed" fs="italic">
-                  печатает
-                  <span style={{ animation: "blink 1s step-end infinite" }}>▊</span>
-                </Text>
+                <ThinkingIndicator />
               )}
             </Paper>
           </Box>

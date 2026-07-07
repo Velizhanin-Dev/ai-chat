@@ -51,6 +51,86 @@ section[id] {
   }
 }
 
+/* Индикатор «думает» (ThinkingIndicator) — маскируем долгий TTFT живой сменой
+   статусов. Фраза: приглушённый текст с бегущим бренд-бликом (background-clip:text,
+   ощущение «идёт работа»); при смене фразы — fade-in снизу. Точки — стаггер-пульс.
+   NB: класс называется thinking-* специально — префикс ti-* коллизит с Tabler
+   Icons (подмешивался левый глиф между текстом и точками). */
+.thinking-phrase {
+  display: inline-block;
+  background: linear-gradient(
+    90deg,
+    var(--mantine-color-dimmed) 0%,
+    var(--mantine-color-dimmed) 38%,
+    var(--mantine-color-brand-6, #ec582e) 50%,
+    var(--mantine-color-dimmed) 62%,
+    var(--mantine-color-dimmed) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation:
+    thinking-shimmer 2.6s linear infinite,
+    thinking-in 0.34s ease both;
+}
+@keyframes thinking-shimmer {
+  from {
+    background-position: 220% 0;
+  }
+  to {
+    background-position: -220% 0;
+  }
+}
+@keyframes thinking-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.thinking-dots {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--mantine-color-dimmed);
+}
+.thinking-dots span {
+  animation: thinking-dot 1.3s infinite ease-in-out both;
+}
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes thinking-dot {
+  0%,
+  70%,
+  100% {
+    opacity: 0.25;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+/* reduced-motion: без блика/пульса — просто приглушённый статичный текст. */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-phrase {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--mantine-color-dimmed);
+    color: var(--mantine-color-dimmed);
+  }
+  .thinking-dots span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
 /* Чат-бабблы — токен-ориентированная тема (ui-ux-pro-max: token-driven theming,
    контраст текста ≥4.5:1 и видимые бордеры в ОБЕИХ темах; не белый фон в тёмной).
    Свои — оранжевый тинт бренда (Mantine сам подбирает контрастный текст под тему);
