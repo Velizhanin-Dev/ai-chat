@@ -1,6 +1,7 @@
 import { recordStat } from "../stats";
 import type { LlmStrategy, StreamArgs } from "./types";
 import { buildOrRequestParams } from "./openrouter-params";
+import { MARKDOWN_FORMATTING } from "./formatting";
 
 // OpenRouter — OpenAI-совместимый шлюз к сотням моделей (DeepSeek, Llama, Qwen, …).
 // Модель выбирается в админке (settings.openrouterModel) и приходит в StreamArgs.model.
@@ -44,10 +45,15 @@ export const openrouterStrategy: LlmStrategy = {
     const useModel = (model && model.trim()) || OPENROUTER_DEFAULT_MODEL;
 
     // Блоки Anthropic (с кэш-точками) → один system-месседж OpenAI-формата.
-    const systemText = system
-      .map((b) => b.text)
-      .filter((t): t is string => typeof t === "string" && t.length > 0)
-      .join("\n\n");
+    // В конец — директива форматирования (markdown), как у GLM: DeepSeek/прочие
+    // OpenAI-совместимые модели без неё выдают «плоские» монолиты. Только на
+    // тематических/разборных запросах (не на болтовне `category === "chat"`).
+    const systemText = [
+      ...system
+        .map((b) => b.text)
+        .filter((t): t is string => typeof t === "string" && t.length > 0),
+      ...(route.category !== "chat" ? [MARKDOWN_FORMATTING] : []),
+    ].join("\n\n");
     const oaMessages = [
       ...(systemText ? [{ role: "system" as const, content: systemText }] : []),
       ...messages.map((m) => ({ role: m.role, content: m.content })),

@@ -209,6 +209,55 @@ section[id] {
 .md-body table {
   font-size: 0.85em;
 }
+/* Блок-цитаты (готовые к произнесению фразы: хук, реплика, текст на превью).
+   Mantine по умолчанию делает их крупными — сбавляем кегль до чуть меньше
+   основного текста, чтобы цитата не «кричала». position:relative — под кнопку
+   копирования в углу (см. .md-quote-copy). */
+.md-body blockquote.md-quote {
+  position: relative;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  padding-right: 2.2em;
+}
+.md-body blockquote.md-quote p {
+  font-size: inherit;
+}
+/* Кнопка «копировать» в правом верхнем углу цитаты — проявляется на hover/focus,
+   на тач-устройствах видна всегда (там hover нет). */
+.md-quote-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.md-quote:hover .md-quote-copy,
+.md-quote-copy:focus-visible {
+  opacity: 1;
+}
+.md-quote-copy:hover {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-brand-6, #ec582e);
+}
+@media (hover: none) {
+  .md-quote-copy {
+    opacity: 0.6;
+  }
+}
 /* Мигающая каретка, пока ответ «печатается» (только стриминговый баббл —
    класс md-streaming). Сидит инлайн в конце последнего блока через ::after. */
 .md-streaming > :last-child::after {
