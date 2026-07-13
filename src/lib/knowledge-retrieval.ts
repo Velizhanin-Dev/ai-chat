@@ -15,6 +15,7 @@ import { KNOWLEDGE_BASE } from "./knowledge-base";
 import { VIDEO_FORMATS } from "./knowledge-base-formats";
 import { TELEGRAM_KNOWLEDGE_CLOSED } from "./knowledge-base-tg-closed";
 import { TELEGRAM_KNOWLEDGE } from "./knowledge-base-tg-open";
+import { YOUTUBE_KNOWLEDGE } from "./knowledge-base-youtube";
 
 interface Chunk {
   chapter: string;
@@ -403,6 +404,47 @@ export function buildTgContextBlock(
     `Это мои реальные формулировки, кейсы и приёмы. Бери из них обороты, структуру и ` +
     `конкретику ДОСЛОВНО — копируй форму, не пересказывай. Чего тут нет — не выдумывай, ` +
     `скажи прямо.\n\n` +
+    body
+  );
+}
+
+// ── YouTube-транскрипты: ретрив релевантных разделов вместо всего дампа ───────────
+//
+// Тот же BM25/чанкинг, что у TG (секции по «## заголовку», крупные дробим). База
+// целиком крупная (~разборы 25 роликов), поэтому под запрос достаём только
+// релевантные разделы под бюджет. Слой самый широкий (воронка/ниши/названия/превью/
+// сценарий/харизма/шортсы/проявленность), поэтому подключается на все не-chat запросы.
+
+const YT_SEARCH = makeTgSearch(chunkTg(YOUTUBE_KNOWLEDGE));
+
+// Бюджет тот же, что у TG: ~30k символов ≈ ~10k токенов.
+const YT_BUDGET_CHARS = 30000;
+
+/**
+ * Собрать system-блок из релевантных разделов YouTube-транскриптов под бюджет.
+ * Обрамление «копируй дословно», как у книги/TG. Пусто — если ничего не нашли.
+ */
+export function buildYoutubeContextBlock(
+  query: string,
+  budgetChars = YT_BUDGET_CHARS
+): string {
+  const hits = YT_SEARCH(query, 60);
+  if (hits.length === 0) return "";
+  const picked: TgChunk[] = [];
+  let used = 0;
+  for (const h of hits) {
+    if (picked.length > 0 && used + h.chunk.text.length > budgetChars) break;
+    picked.push(h.chunk);
+    used += h.chunk.text.length;
+  }
+  const body = picked
+    .map((c) => (c.section ? `[${c.section}]\n${c.text}` : c.text))
+    .join("\n\n— — —\n\n");
+  return (
+    `# Разборы с моего YouTube-канала по теме запроса\n\n` +
+    `Это расшифровки моих роликов — я так реально говорю и разбираю продвижение. Бери ` +
+    `обороты, кейсы и конкретику ДОСЛОВНО — копируй форму, не пересказывай. Чего тут нет ` +
+    `— не выдумывай, скажи прямо.\n\n` +
     body
   );
 }

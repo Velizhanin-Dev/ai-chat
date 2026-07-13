@@ -24,6 +24,9 @@ export interface RouteDecision {
   tgOpen: boolean;
   /** Нужен ли поиск по книге (динамические куски). */
   book: boolean;
+  /** Ретрив по транскриптам моих YouTube-роликов (широкий слой: воронка/ниши/
+   *  названия/превью/сценарий/харизма/шортсы/проявленность). */
+  youtube: boolean;
   /** Подключить эталон контент-плана (месячная сетка роликов). */
   contentPlan: boolean;
   /** Запрос для поиска по книге/форматам — расширен ключевыми словами от роутера. */
@@ -65,21 +68,25 @@ function mapCategory(category: QueryCategory): RouteDecision {
     tgClosed: false,
     tgOpen: false,
     book: false,
+    youtube: false,
     contentPlan: false,
     searchQuery: "",
   };
+  // YouTube-транскрипты — широкий разговорный слой, релевантен любой генерации/
+  // методике (воронка, ниши, названия, превью, сценарий, харизма, шортсы). Включаем
+  // на все не-chat категории; болтовню (chat) им не раздуваем.
   switch (category) {
     case "short":
       // Короткие видео: подходящий формат + закрытый TG (ВИСП, рилсы, шортсы).
-      return { ...base, formats: true, tgClosed: true };
+      return { ...base, formats: true, tgClosed: true, youtube: true };
     case "content_plan":
       // Контент-план: эталон месячной сетки + книга (темы/боли/удержание) +
       // закрытый TG (ВИСП — движок кликбейт-названий и текста на превью).
-      return { ...base, contentPlan: true, book: true, tgClosed: true };
+      return { ...base, contentPlan: true, book: true, tgClosed: true, youtube: true };
     case "long":
     case "method":
       // Длинные сценарии и методика: релевантные куски книги (поиск).
-      return { ...base, book: true };
+      return { ...base, book: true, youtube: true };
     case "chat":
     default:
       // Болтовня: только хребет, ничего не подгружаем.
@@ -205,6 +212,7 @@ export async function routeQuery(
   if (isEditFollowup(lastUser, messages)) {
     const d = mapCategory("long");
     d.book = false;
+    d.youtube = false;
     d.searchQuery = lastUser;
     return d;
   }
@@ -239,6 +247,7 @@ export function fullModeRoute(lastUser: string): RouteDecision {
     tgClosed: true,
     tgOpen: true,
     book: true,
+    youtube: true,
     contentPlan: true,
     searchQuery: lastUser,
   };

@@ -4,6 +4,7 @@ import {
   buildBookContextBlock,
   selectFormatsBlock,
   buildTgContextBlock,
+  buildYoutubeContextBlock,
 } from "@/lib/knowledge-retrieval";
 import { VOICE_SAMPLES } from "@/lib/knowledge-base-voice";
 import { ANTIPATTERNS } from "@/lib/knowledge-base-antipatterns";
@@ -13,6 +14,7 @@ import { KNOWLEDGE_BASE } from "@/lib/knowledge-base";
 import { VIDEO_FORMATS } from "@/lib/knowledge-base-formats";
 import { TELEGRAM_KNOWLEDGE_CLOSED } from "@/lib/knowledge-base-tg-closed";
 import { TELEGRAM_KNOWLEDGE } from "@/lib/knowledge-base-tg-open";
+import { YOUTUBE_KNOWLEDGE } from "@/lib/knowledge-base-youtube";
 import { KNOWLEDGE_MAP, METHOD_DIGEST, GOLD_EXAMPLES } from "@/lib/llm/method-digest";
 import type { QueryCategory } from "@/lib/router";
 
@@ -54,6 +56,7 @@ export const SYSTEM_CORE = `Ты — Николай Велижанин, осно
 
 - **Книга (подгружается под запрос)** — про длинные YouTube-видео (10+ мин): сценарий, удержание, превью, монтаж, призывы. В книге НЕТ слов «рилс», «шортс», «ВИСП».
 - **TG-каналы (подгружаются под запрос)** — современный слой: ВИСП (Выгода / Интрига / Срочность / Причастность), Матрица Дайсона, рилсы / шортсы, тайм-актуальные тренды, кейсы из практики студии. Когда задача про шортс / рилс / ВИСП — опирайся СЮДА, не на книгу.
+- **Разборы с YouTube-канала (подгружаются под запрос)** — расшифровки моих роликов: живьём разбираю воронку охватов, расширение ниши, лестницу Ханта, названия/SEO, превью, удержание, сценарий, харизму и образы спикера, шортсы, проявленность и стратегии по нишам (b2b, строительство, психология, недвижимость, подкасты, тревел). Самый широкий разговорный слой с кучей реальных кейсов студии — когда нужен мой живой разбор «как это работает» и примеры, иди СЮДА.
 - **Библиотека форматов (подгружается под запрос)** — 12 моих эталонных форматов коротких видео (оценка идей / реакция на новости / глупый вопрос / пересказ фильма / анекдот / история из детства / эксперимент / ебучий гений / "в России сейчас..." / худший совет / загадка / статичная табличка). Когда юзер просит сценарий или идею для рилса / шортса — определи формат по триггерным фразам и копируй output-структуру дословно.
 - **Антипаттерны (блок антипаттернов)** — конкретные ошибки твоей же генерации, которые я отметил на реальных ответах. Приоритетнее всего остального.
 
@@ -227,6 +230,10 @@ export function buildSystem(
     const tgBlock = buildTgContextBlock(query, "open");
     if (tgBlock) blocks.push({ type: "text", text: tgBlock });
   }
+  if (route.youtube) {
+    const ytBlock = buildYoutubeContextBlock(query);
+    if (ytBlock) blocks.push({ type: "text", text: ytBlock });
+  }
   if (route.book) {
     const bookBlock = buildBookContextBlock(query, 10);
     if (bookBlock) blocks.push({ type: "text", text: bookBlock });
@@ -268,6 +275,7 @@ export function buildFullSystem(
     { type: "text", text: CONTENT_PLAN_GUIDE },
     { type: "text", text: frame("Мой закрытый Telegram-канал (полностью)", TELEGRAM_KNOWLEDGE_CLOSED) },
     { type: "text", text: frame("Мой публичный Telegram-канал (полностью)", TELEGRAM_KNOWLEDGE) },
+    { type: "text", text: frame("Разборы с моего YouTube-канала (полностью)", YOUTUBE_KNOWLEDGE) },
     { type: "text", text: frame("Моя книга по YouTube (полностью)", KNOWLEDGE_BASE) },
     // Recency-слой (см. method-digest.ts): база лежит серединой ~207К контекста и
     // «тонет» — модель помнит методику, но не применяет. Эти три статичных блока

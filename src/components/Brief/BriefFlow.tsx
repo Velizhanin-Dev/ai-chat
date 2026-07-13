@@ -232,6 +232,10 @@ export default function BriefFlow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DiscType | null>(null);
+  // Внутри шага «О себе»: сначала экран выбора (choose) — пройти тест или указать
+  // тип вручную; затем сам тест (test) либо ручной выбор архетипа (manual).
+  const [discMode, setDiscMode] = useState<"choose" | "test" | "manual">("choose");
+  const [manualPick, setManualPick] = useState<DiscType | "">("");
   // localStorage читается только на клиенте, в эффекте на маунте. Пока черновик
   // не восстановлен — показываем лоадер, чтобы при случайном обновлении страницы
   // не мигнул первый вопрос вместо места, где юзер остановился.
@@ -260,6 +264,10 @@ export default function BriefFlow({
       setAnswers(draft.answers);
       setStep(draft.step);
       setSub(draft.sub);
+      // На шаге «О себе»: если тест уже начат (есть ответы) — возвращаем в тест,
+      // иначе на экран выбора (пройти тест / указать вручную).
+      if (draft.step === 1)
+        setDiscMode(draft.answers.some((a) => a !== null) ? "test" : "choose");
     } else if (initialBrief) {
       setForm({ ...EMPTY_BRIEF, ...initialBrief });
     }
@@ -318,14 +326,28 @@ export default function BriefFlow({
   const goBack = () => {
     clearAdvance();
     setError(null);
-    if (sub > 0) {
-      setSub((s) => s - 1);
-      return;
-    }
     if (step === 1) {
+      // Ручной выбор типа → назад на экран выбора.
+      if (discMode === "manual") {
+        setDiscMode("choose");
+        return;
+      }
+      // Тест: назад по вопросам, с первого вопроса → на экран выбора.
+      if (discMode === "test") {
+        if (sub > 0) {
+          setSub((s) => s - 1);
+          return;
+        }
+        setDiscMode("choose");
+        return;
+      }
+      // Экран выбора → назад к последнему вопросу «о проекте».
       setStep(0);
       setSub(PROJECT_TOTAL - 1);
+      return;
     }
+    // Шаг «о проекте».
+    if (sub > 0) setSub((s) => s - 1);
   };
 
   const projectNext = () => {
@@ -335,6 +357,7 @@ export default function BriefFlow({
     } else {
       setStep(1);
       setSub(0);
+      setDiscMode("choose");
     }
   };
 
@@ -350,15 +373,10 @@ export default function BriefFlow({
     }, 280);
   };
 
-  const finish = async (finalAnswers: (number | null)[]) => {
+  // Единый финиш: сохраняем бриф с выбранным типом харизмы и показываем результат.
+  const submitBrief = async (disc: DiscType) => {
     if (saving) return;
-    if (finalAnswers.some((a) => a === null)) return;
-    const axes: DiscAxis[] = finalAnswers.map(
-      (a, i) => DISC_QUESTIONS[i].options[a as number].axis
-    );
-    const disc = scoreDisc(axes);
     const brief: Brief = { ...form, disc };
-
     setSaving(true);
     setError(null);
     const res = await onSubmit(brief);
@@ -372,6 +390,15 @@ export default function BriefFlow({
     setStep(2);
   };
 
+  // Финиш по тесту: считаем архетип из ответов и сохраняем.
+  const finish = async (finalAnswers: (number | null)[]) => {
+    if (finalAnswers.some((a) => a === null)) return;
+    const axes: DiscAxis[] = finalAnswers.map(
+      (a, i) => DISC_QUESTIONS[i].options[a as number].axis
+    );
+    await submitBrief(scoreDisc(axes));
+  };
+
   const restart = () => {
     clearAdvance();
     clearBriefDraft(draftKey);
@@ -381,6 +408,8 @@ export default function BriefFlow({
     setError(null);
     setStep(0);
     setSub(0);
+    setDiscMode("choose");
+    setManualPick("");
   };
 
   const profile = result ? DISC_PROFILES[result] : null;
@@ -497,8 +526,9 @@ export default function BriefFlow({
         </Alert>
       )}
 
-      {/* Прогресс внутри шага (вопрос n из N) — не на экране результата. */}
-      {step !== 2 && (
+      {/* Прогресс (вопрос n из N) — на «о проекте» и в самом тесте (не на экране
+          выбора / ручного ввода / результата). */}
+      {(step === 0 || (step === 1 && discMode === "test")) && (
         <Stack gap={6} mb="lg">
           <Progress value={innerValue} color="brand" size="sm" radius="xl" />
           <Text size="xs" c="dimmed" ta="right">
@@ -543,7 +573,7 @@ export default function BriefFlow({
               onClick={projectNext}
             >
               {isLastProject
-                ? "Дальше — пара вопросов о тебе"
+                ? "Дальше — про тебя"
                 : current && itemFilled(current)
                 ? "Дальше"
                 : "Пропустить"}
@@ -552,13 +582,136 @@ export default function BriefFlow({
         </Stack>
       )}
 
-      {/* ── Шаг 2: вопросы «о себе» (DISC), по одному (обязательно) ─────────── */}
-      {step === 1 && (
+      {/* ── Шаг 2а: экран выбора — пройти тест или указать тип вручную ──────── */}
+      {step === 1 && discMode === "choose" && (
+        <Stack gap="lg">
+          <div>
+            <Title order={4}>Определим твой типаж на камере</Title>
+            <Text size="sm" c="dimmed" mt={6}>
+              Это помогает мне подбирать форматы и подачу лично под тебя. Пройди
+              короткий тест — 10 вопросов, отвечай по первому ощущению. А если уже
+              знаешь свой тип личности, укажи его сам.
+            </Text>
+          </div>
+
+          <Stack gap="sm">
+            <Button
+              color="brand"
+              size="lg"
+              radius="md"
+              fullWidth
+              leftSection={<IconSparkles size={18} />}
+              onClick={() => {
+                setError(null);
+                setSub(0);
+                setDiscMode("test");
+              }}
+            >
+              Пройти тест
+            </Button>
+            <Button
+              variant="outline"
+              color="brand"
+              size="lg"
+              radius="md"
+              fullWidth
+              leftSection={<IconUser size={18} />}
+              onClick={() => {
+                setError(null);
+                setDiscMode("manual");
+              }}
+            >
+              Я уже знаю свой тип личности
+            </Button>
+          </Stack>
+
+          <Group justify="flex-start" mt="xs">
+            <Button
+              variant="subtle"
+              color="gray"
+              radius="md"
+              leftSection={<IconArrowLeft size={16} />}
+              onClick={goBack}
+            >
+              Назад
+            </Button>
+          </Group>
+        </Stack>
+      )}
+
+      {/* ── Шаг 2б: ручной выбор архетипа (radio: код + наше название) ──────── */}
+      {step === 1 && discMode === "manual" && (
+        <Stack gap="lg">
+          <div>
+            <Title order={4}>Выбери свой тип личности</Title>
+            <Text size="sm" c="dimmed" mt={6}>
+              Отметь свой типаж на камере. Не уверен — лучше вернись и пройди тест.
+            </Text>
+          </div>
+
+          <Radio.Group
+            value={manualPick}
+            onChange={(v) => setManualPick(v as DiscType)}
+          >
+            <Stack gap="sm">
+              {Object.values(DISC_PROFILES).map((p) => (
+                <Radio.Card
+                  key={p.code}
+                  value={p.code}
+                  radius="md"
+                  p="sm"
+                  style={{ cursor: "pointer" }}
+                >
+                  <Group wrap="nowrap" align="flex-start" gap="sm">
+                    <Radio.Indicator color="brand" mt={4} />
+                    <div>
+                      <Text size="sm" fw={600}>
+                        {p.code}{" "}
+                        <Text span c="dimmed" fw={400}>
+                          · «{p.nick}»
+                        </Text>
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={2}>
+                        {p.character}
+                      </Text>
+                    </div>
+                  </Group>
+                </Radio.Card>
+              ))}
+            </Stack>
+          </Radio.Group>
+
+          <Group justify="space-between" mt="xs" wrap="nowrap">
+            <Button
+              variant="subtle"
+              color="gray"
+              radius="md"
+              leftSection={<IconArrowLeft size={16} />}
+              onClick={goBack}
+            >
+              Назад
+            </Button>
+            <Button
+              color="brand"
+              radius="md"
+              rightSection={<IconArrowRight size={16} />}
+              disabled={!manualPick}
+              loading={saving}
+              onClick={() => manualPick && void submitBrief(manualPick)}
+            >
+              Готово
+            </Button>
+          </Group>
+        </Stack>
+      )}
+
+      {/* ── Шаг 2в: вопросы «о себе» (DISC), по одному (обязательно) ────────── */}
+      {step === 1 && discMode === "test" && (
         <Stack gap="lg">
           {sub === 0 && (
             <Text size="sm" c="dimmed">
-              Теперь — пара вопросов про тебя: как ты ведешь себя в кадре, что заводит, 
-              что бесит. Отвечай по первому ощущению, правильных ответов нет.
+              Пара вопросов про тебя: как ты ведешь себя в кадре, что заводит, что
+              бесит. Отвечай по первому ощущению, правильных ответов нет.
             </Text>
           )}
 
