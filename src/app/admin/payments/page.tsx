@@ -15,7 +15,7 @@ import {
   Alert,
 } from "@mantine/core";
 import { IconSearch, IconAlertCircle, IconMail } from "@tabler/icons-react";
-import { PlanBadge, PaymentStatusBadge } from "@/components/Admin/Badges";
+import { PlanBadge, PaymentStatusBadge, PaymentProviderBadge } from "@/components/Admin/Badges";
 import { formatPrice } from "@/lib/plans";
 import type { AdminPaymentListRow } from "@/app/api/admin/payments/route";
 
@@ -125,6 +125,7 @@ export default function AdminPaymentsPage() {
                 <Table.Th>Плательщик</Table.Th>
                 <Table.Th miw={120}>Тариф</Table.Th>
                 <Table.Th>Сумма</Table.Th>
+                <Table.Th miw={130}>Способ</Table.Th>
                 <Table.Th miw={110}>Статус</Table.Th>
                 <Table.Th>Дата</Table.Th>
               </Table.Tr>
@@ -152,6 +153,9 @@ export default function AdminPaymentsPage() {
                     </Text>
                   </Table.Td>
                   <Table.Td>
+                    <PaymentProviderBadge provider={p.provider} />
+                  </Table.Td>
+                  <Table.Td>
                     <PaymentStatusBadge status={p.status} />
                   </Table.Td>
                   <Table.Td>
@@ -163,7 +167,7 @@ export default function AdminPaymentsPage() {
               ))}
               {data && data.payments.length === 0 && !loading && (
                 <Table.Tr>
-                  <Table.Td colSpan={5}>
+                  <Table.Td colSpan={6}>
                     <Text ta="center" c="dimmed" py="lg">
                       Платежей не найдено
                     </Text>

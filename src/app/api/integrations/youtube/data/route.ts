@@ -10,11 +10,20 @@ import {
   fetchPeriodSummary,
   fetchTrafficSources,
   fetchSubscriberVideos,
+  fetchSubscriberTimeline,
   fetchAudience,
   periodRanges,
   assertOwnedProject,
+  statsCacheKey,
+  getCachedStats,
+  setCachedStats,
 } from "@/lib/youtube";
-import { PERIOD_DAYS, type YouTubeData, type PeriodComparison } from "@/lib/youtube-types";
+import {
+  PERIOD_DAYS,
+  type YouTubeData,
+  type PeriodComparison,
+  type VideoPage,
+} from "@/lib/youtube-types";
 
 // Живые данные канала ПРОЕКТА для дашборда «Канал»: инфа о канале + последние
 // видео + аналитика за выбранный период (?period=7|28|90|365, дефолт 28) со
@@ -33,6 +42,15 @@ export async function GET(req: Request) {
   const days = (PERIOD_DAYS as readonly number[]).includes(reqDays) ? reqDays : 28;
   const ranges = periodRanges(days);
 
+  // Кэш дашборда: повторные заходы и переключение периода отдаём из памяти (экономим
+  // квоту YouTube API). `?refresh=1` (кнопка «Обновить») форсит свежую выборку.
+  const cacheKey = statsCacheKey(owned, days);
+  const forceRefresh = url.searchParams.get("refresh") === "1";
+  if (!forceRefresh) {
+    const cached = getCachedStats(cacheKey);
+    if (cached) return NextResponse.json(cached);
+  }
+
   const integ = await prisma.youTubeIntegration.findUnique({
     where: { conversationId: owned },
   });
@@ -43,11 +61,11 @@ export async function GET(req: Request) {
     const channel = await fetchChannelInfo(accessToken);
     if (!channel) return apiError("Канал не найден", 502, "YT_ERROR");
 
-    const [videos, daily, curSummary, prevSummary, traffic, subVideos, audience] =
+    const [videosPage, daily, curSummary, prevSummary, traffic, subVideos, audience] =
       await Promise.all([
         channel.uploadsPlaylistId
           ? fetchRecentVideosWithAnalytics(accessToken, channel.uploadsPlaylistId)
-          : Promise.resolve([]),
+          : Promise.resolve<VideoPage>({ videos: [], nextPageToken: null }),
         fetchDailyAnalytics(accessToken, ranges.current.start, ranges.current.end),
         fetchPeriodSummary(accessToken, ranges.current.start, ranges.current.end),
         fetchPeriodSummary(accessToken, ranges.previous.start, ranges.previous.end),
@@ -55,10 +73,25 @@ export async function GET(req: Request) {
         fetchSubscriberVideos(accessToken, ranges.current.start, ranges.current.end),
         fetchAudience(accessToken, ranges.current.start, ranges.current.end),
       ]);
+    const videos = videosPage.videos;
 
     // Сравнение периодов — только если получили текущий агрегат.
     const period: PeriodComparison | null = curSummary
       ? { days, current: curSummary, previous: prevSummary }
+      : null;
+
+    // Таймлайн роста (просмотры + прирост по видео + релизы) — переиспользует уже
+    // полученные daily/subVideos/videos, добавляет лишь дневной ряд по драйверам.
+    const timeline = daily
+      ? await fetchSubscriberTimeline(
+          accessToken,
+          ranges.current.start,
+          ranges.current.end,
+          days,
+          daily,
+          subVideos,
+          videos
+        )
       : null;
 
     // Динамика подписчиков: по дням берём из daily (там уже gained/lost),
@@ -71,6 +104,7 @@ export async function GET(req: Request) {
             lost: d.subscribersLost,
           })),
           topVideos: subVideos,
+          timeline,
         }
       : null;
 
@@ -78,12 +112,15 @@ export async function GET(req: Request) {
       connected: true,
       channel,
       videos,
+      videosNextPageToken: videosPage.nextPageToken,
       daily,
       period,
       traffic,
       subscribers,
       audience,
+      fetchedAt: new Date().toISOString(),
     };
+    setCachedStats(cacheKey, payload);
     return NextResponse.json(payload);
   } catch (err) {
     const status = (err as { status?: number }).status;

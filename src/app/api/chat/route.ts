@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { routeQuery, fullModeRoute } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
-import { buildSystem, buildFullSystem } from "@/lib/llm/system";
+import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
+import { getChannelSnapshotCached } from "@/lib/youtube";
+import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
@@ -16,6 +18,61 @@ import { prisma } from "@/lib/prisma";
 const HISTORY_LIMIT = 20;
 
 type ClientMessage = { role: "user" | "assistant"; content: string };
+
+// Ограничение ожидания снимка канала перед ответом: если YouTube тупит — отвечаем
+// без данных канала (следующее сообщение подхватит из кэша), а не ждём его.
+const CHANNEL_SNAPSHOT_TIMEOUT_MS = 4_000;
+
+// Promise с мягким таймаутом: по истечении отдаёт fallback (не бросает). Исходный
+// промис не отменяем — он спокойно дорешается в фоне (снимок ляжет в кэш).
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let done = false;
+    const t = setTimeout(() => {
+      if (!done) {
+        done = true;
+        resolve(fallback);
+      }
+    }, ms);
+    const settle = (v: T) => {
+      if (!done) {
+        done = true;
+        clearTimeout(t);
+        resolve(v);
+      }
+    };
+    p.then(settle, () => settle(fallback));
+  });
+}
+
+// Контекст канала для промпта: снимок (если подключён, с таймаутом) ИЛИ режим
+// приглашения подключить (active — пока не предлагали в этом диалоге, потом gentle).
+// Best-effort: любая ошибка → без данных и без CTA, чат не роняем.
+async function resolveChannelContext(
+  conversationId: string,
+  messages: ClientMessage[]
+): Promise<{ channelBlock: string | null; nudge: ConnectNudge }> {
+  try {
+    const integ = await prisma.youTubeIntegration.findUnique({
+      where: { conversationId },
+    });
+    if (!integ) {
+      const alreadyNudged = messages.some(
+        (m) => m.role === "assistant" && m.content.includes(CONNECT_YT_MARKER)
+      );
+      return { channelBlock: null, nudge: alreadyNudged ? "gentle" : "active" };
+    }
+    const snap = await withTimeout(
+      getChannelSnapshotCached(conversationId, integ),
+      CHANNEL_SNAPSHOT_TIMEOUT_MS,
+      null
+    );
+    return { channelBlock: snap ? buildChannelBlock(snap) : null, nudge: "off" };
+  } catch (err) {
+    console.error("[chat] channel context error:", err);
+    return { channelBlock: null, nudge: "off" };
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -144,26 +201,34 @@ export async function POST(request: NextRequest) {
     // Пользователь движок не выбирает.
     const provider = settings.provider;
 
-    // Сборка знаний: два режима (глобальная настройка `routing`).
-    //  • "full" — отдаём ВСЮ базу целиком, БЕЗ LLM-роутера (для моделей с кэшем
-    //    контекста, напр. DeepSeek через OpenRouter): дешёвая эвристика категории +
-    //    buildFullSystem. Экономит вызов роутера и даёт модели всё сразу.
-    //  • "smart" — BM25-роутинг: классифицируем и подгружаем только релевантное.
+    // Контекст канала (снимок + режим CTA) и роутинг знаний — ПАРАЛЛЕЛЬНО: они
+    // независимы, и складывать их задержки перед первым токеном не нужно. У снимка
+    // канала — таймаут (resolveChannelContext), чтобы медленный YouTube не держал
+    // ответ; у роутера — свой таймаут (router.ts → откат на эвристику).
+    //  • routing "full" — вся база целиком, без LLM-роутера (эвристика категории);
+    //  • routing "smart" — BM25-роутинг: классифицируем и грузим только релевантное.
     const lastUser = messages[messages.length - 1].content;
     const tRoute0 = Date.now();
-    let route;
-    let systemBlocks;
-    if (settings.routing === "full") {
-      route = fullModeRoute(lastUser);
-      systemBlocks = buildFullSystem(route.category, aboutYou, brief, userName);
-    } else {
-      route = await routeQuery(messages, provider, {
-        userId: sessionUser.id,
-        conversationId,
-      });
-      systemBlocks = buildSystem(route, route.searchQuery || lastUser, aboutYou, brief, userName);
-    }
+    const [channel, route] = await Promise.all([
+      resolveChannelContext(conversationId, messages),
+      settings.routing === "full"
+        ? Promise.resolve(fullModeRoute(lastUser))
+        : routeQuery(messages, provider, { userId: sessionUser.id, conversationId }),
+    ]);
     const routeMs = Date.now() - tRoute0;
+
+    const systemBlocks =
+      settings.routing === "full"
+        ? buildFullSystem(route.category, aboutYou, brief, userName, channel.channelBlock, channel.nudge)
+        : buildSystem(
+            route,
+            route.searchQuery || lastUser,
+            aboutYou,
+            brief,
+            userName,
+            channel.channelBlock,
+            channel.nudge
+          );
 
     const encoder = new TextEncoder();
 

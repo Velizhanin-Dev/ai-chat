@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Paper, Text, Stack, ScrollArea, Box, ThemeIcon, Loader, Center } from "@mantine/core";
 import { IconUser, IconRobot } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
+import { splitConnectCta } from "@/lib/chat-markers";
+import { apiYouTubeStatus } from "@/lib/youtube-client";
 import Markdown from "./Markdown";
 import ThinkingIndicator from "./ThinkingIndicator";
+import ConnectYouTubeCta from "./ConnectYouTubeCta";
 
 const STICK_THRESHOLD = 80;
 const EMPTY: ChatMessage[] = [];
@@ -24,6 +27,26 @@ export default function ChatWindow() {
   const messagesLoading = useAppSelector((s) => s.chat.messagesLoading);
   const viewport = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+
+  // Подключён ли YouTube у текущего проекта — гейтит CTA-кнопку под ответом (даже
+  // если модель поставила маркер, при подключённом канале кнопку не показываем).
+  // null — ещё не знаем (не мигаем кнопкой). activeId = id проекта/диалога.
+  const [ytConnected, setYtConnected] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!activeId) {
+      setYtConnected(null);
+      return;
+    }
+    let alive = true;
+    setYtConnected(null);
+    apiYouTubeStatus(activeId).then((r) => {
+      if (alive) setYtConnected(r.ok ? r.data.connected : null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activeId]);
+  const showCta = ytConnected === false && !!activeId;
 
   const handleScroll = () => {
     const el = viewport.current;
@@ -75,6 +98,9 @@ export default function ChatWindow() {
 
         {messages.map((msg) => {
           const isUser = msg.role === "user";
+          // Маркер подключения YouTube вырезаем из текста; кнопку показываем под
+          // ответом, только если канал реально не подключён.
+          const parsed = isUser ? null : splitConnectCta(msg.content);
           return (
             <Box
               key={msg.id}
@@ -123,7 +149,12 @@ export default function ChatWindow() {
                     {msg.content}
                   </Text>
                 ) : (
-                  <Markdown content={msg.content} />
+                  <>
+                    <Markdown content={parsed!.text} />
+                    {parsed!.cta && showCta && activeId && (
+                      <ConnectYouTubeCta projectId={activeId} />
+                    )}
+                  </>
                 )}
               </Paper>
             </Box>
@@ -152,7 +183,7 @@ export default function ChatWindow() {
               style={{ width: "fit-content" }}
             >
               {streamingContent ? (
-                <Markdown content={streamingContent} streaming />
+                <Markdown content={splitConnectCta(streamingContent).text} streaming />
               ) : (
                 <ThinkingIndicator />
               )}

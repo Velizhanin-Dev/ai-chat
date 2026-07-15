@@ -174,7 +174,10 @@ model Payment {
   planId         String
   amount         Int // в копейках
   status         String    @default("NEW")
-  tbankPaymentId String?
+  // Провайдер оплаты: "tbank" (рос. карты/СБП/Мир) или "cloudpayments" (зарубежные
+  // карты Visa/Mastercard). От него зависит синхронизация статуса на возврате.
+  provider       String    @default("tbank")
+  tbankPaymentId String? // внешний id транзакции (ТБанк PaymentId / CloudPayments TransactionId)
   rebillId       String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

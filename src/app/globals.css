@@ -671,3 +671,41 @@ section[id] {
     transform: none;
   }
 }
+
+/* Строка лидерборда видео-драйверов в блоке «Рост канала» — кликабельна (открывает
+   разбор). Мягкая подсветка фона на hover/focus, курсор-указатель. */
+.yt-driver-row {
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 8px;
+  transition: background-color 140ms ease;
+}
+.yt-driver-row:hover {
+  background-color: var(--mantine-color-default-hover);
+}
+.yt-driver-row:focus-visible {
+  outline: 2px solid var(--mantine-color-brand-6);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .yt-driver-row {
+    transition: none;
+  }
+}
+
+/* Кликабельное превью внутри «липкого» тултипа графика роста. */
+.yt-tip-thumb {
+  transition: transform 140ms ease, filter 140ms ease;
+}
+.yt-tip-thumb:hover {
+  transform: scale(1.04);
+  filter: brightness(1.08);
+}
+@media (prefers-reduced-motion: reduce) {
+  .yt-tip-thumb {
+    transition: none;
+  }
+  .yt-tip-thumb:hover {
+    transform: none;
+  }
+}

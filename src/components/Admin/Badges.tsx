@@ -42,3 +42,19 @@ export function PaymentStatusBadge({ status }: { status: string }) {
     </Badge>
   );
 }
+
+// Способ оплаты (провайдер): ТБанк (рос. карты/СБП/Мир) или CloudPayments
+// (зарубежные карты Visa/MC). Старые платежи без явного провайдера = ТБанк.
+export function paymentProviderMeta(provider: string): { color: string; label: string } {
+  if (provider === "cloudpayments") return { color: "indigo", label: "CloudPayments" };
+  return { color: "cyan", label: "ТБанк" };
+}
+
+export function PaymentProviderBadge({ provider }: { provider: string }) {
+  const { color, label } = paymentProviderMeta(provider);
+  return (
+    <Badge color={color} variant="light" radius="sm" style={{ flexShrink: 0 }}>
+      {label}
+    </Badge>
+  );
+}

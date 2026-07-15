@@ -47,6 +47,13 @@ export interface YouTubeVideo {
   watchMinutes?: number; // суммарное время просмотра, минуты
 }
 
+// Страница видео канала + курсор на следующую (null — дальше нет). Раздел «Канал»
+// подгружает все ролики постранично через этот курсор.
+export interface VideoPage {
+  videos: YouTubeVideo[];
+  nextPageToken: string | null;
+}
+
 // Точка временного ряда аналитики (день).
 export interface DailyPoint {
   date: string; // YYYY-MM-DD
@@ -66,10 +73,50 @@ export interface SubscriberVideo {
   net: number; // gained - lost
 }
 
-// Динамика подписчиков за период: по дням (пришло/ушло) + видео-драйверы.
+// Видео, вышедшее в конкретный отрезок времени (маркер релиза под таймлайном).
+export interface TimelineRelease {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+}
+
+// Видео-драйвер подписчиков на таймлайне роста: суммарный вклад за период + дата
+// выхода. Порядок в массиве = порядок стека столбца и цвета (по убыванию вклада).
+export interface SubscriberTimelineVideo {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+  gained: number; // сколько подписчиков привёл за период (по дневному ряду)
+  publishedAt: string | null;
+}
+
+// Один отрезок таймлайна (день/неделя/месяц): просмотры + прирост подписчиков,
+// разложенный по видео-драйверам (+ «Другое») + какие ролики вышли в этот отрезок.
+export interface SubscriberTimelineBucket {
+  key: string; // канонический старт отрезка: YYYY-MM-DD (день/неделя) или YYYY-MM (месяц)
+  views: number;
+  totalGained: number; // весь прирост за отрезок (из дневного ряда канала)
+  gainedByVideo: Record<string, number>; // videoId → сколько привёл в этом отрезке
+  other: number; // прирост, не отнесённый к топ-драйверам
+  releases: TimelineRelease[]; // ролики, вышедшие в этот отрезок
+}
+
+export type Granularity = "day" | "week" | "month";
+
+// Таймлайн роста канала: общие отрезки времени для двух синхронных графиков
+// (просмотры + подписчики по видео) + список драйверов для легенды-лидерборда.
+export interface SubscriberTimeline {
+  granularity: Granularity;
+  buckets: SubscriberTimelineBucket[];
+  videos: SubscriberTimelineVideo[]; // драйверы по убыванию вклада (= порядок/цвета стека)
+}
+
+// Динамика подписчиков за период: по дням (пришло/ушло) + видео-драйверы + таймлайн.
 export interface SubscriberDynamics {
   daily: { date: string; gained: number; lost: number }[];
   topVideos: SubscriberVideo[]; // по net-приросту (лидеры сверху)
+  // Таймлайн роста (просмотры + прирост по видео + релизы); null — данных мало.
+  timeline?: SubscriberTimeline | null;
 }
 
 // Допустимые окна периода (дней). 365 подписываем как «год».
@@ -131,11 +178,44 @@ export interface AudienceData {
   devices: { label: string; views: number; pct: number }[]; // по устройствам
 }
 
+// ── Компактный снимок канала для контекста ассистента в чате ──────────────────
+// Лёгкая выжимка (не весь дашборд): подставляется в system-промпт, чтобы нейронка
+// разбирала канал предметно по цифрам. Кэшируется отдельно (см. youtube.ts).
+export interface ChannelSnapshotVideo {
+  title: string;
+  views: number;
+  retention: number | null; // средний % досмотра (avgViewPercentage)
+  publishedAt: string;
+}
+export interface ChannelSnapshotPeriod {
+  days: number;
+  views: number;
+  minutes: number;
+  subscribersNet: number;
+  avgRetention: number;
+  prevViews: number | null;
+  prevSubscribersNet: number | null;
+  prevAvgRetention: number | null;
+}
+export interface ChannelSnapshot {
+  title: string;
+  subscribers: number;
+  totalViews: number;
+  videoCount: number;
+  period: ChannelSnapshotPeriod | null;
+  topVideos: ChannelSnapshotVideo[];
+  traffic: { label: string; pct: number }[];
+  subscriberDrivers: { title: string; net: number }[];
+}
+
 // Ответ GET /api/integrations/youtube/data (дашборд «Канал»).
 export interface YouTubeData {
   connected: boolean;
   channel?: YouTubeChannelInfo;
   videos?: YouTubeVideo[];
+  // Курсор на следующую страницу видео (null/пусто — больше нет). Раздел «Канал»
+  // догружает остальные ролики по нему через /videos.
+  videosNextPageToken?: string | null;
   // null — аналитика недоступна (нет прав/данных), график просто не рисуем.
   daily?: DailyPoint[] | null;
   // Сравнение периодов для KPI-карточек с дельтами; null — аналитика недоступна.
@@ -146,4 +226,7 @@ export interface YouTubeData {
   subscribers?: SubscriberDynamics | null;
   // Аудитория за период (демография/гео/устройства); null — данных недостаточно.
   audience?: AudienceData | null;
+  // Когда данные реально дёрнуты из YouTube (ISO). При отдаче из кэша — время
+  // исходного запроса, а не текущее. UI показывает «обновлено …».
+  fetchedAt?: string;
 }

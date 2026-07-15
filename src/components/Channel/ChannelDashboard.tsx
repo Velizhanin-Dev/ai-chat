@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -54,6 +54,7 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import {
   apiYouTubeData,
+  apiYouTubeVideos,
   apiAnalyzeVideo,
   getVideoDetailCached,
   prefetchVideoDetail,
@@ -61,6 +62,7 @@ import {
   formatCount,
   formatFull,
   formatDuration,
+  durationToSeconds,
   formatDate,
   formatShortDate,
   formatWatchTime,
@@ -78,7 +80,10 @@ import {
   type VideoAnalysis,
   type TrafficSource,
   type SubscriberDynamics as SubscriberDynamicsData,
-  type SubscriberVideo,
+  type SubscriberTimeline,
+  type SubscriberTimelineVideo,
+  type TimelineRelease,
+  type Granularity,
   type AudienceData,
 } from "@/lib/youtube-types";
 
@@ -90,6 +95,14 @@ const PERIOD_OPTIONS = PERIOD_DAYS.map((d) => ({
   value: String(d),
   label: d === 365 ? "Год" : `${d} дн.`,
 }));
+
+// Время последнего реального обновления из YouTube (данные могут отдаваться из
+// кэша — тогда это время исходного запроса). Только клиент — SSR не рендерит.
+const timeFmt = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : timeFmt.format(d);
+}
 
 type Phase =
   | { s: "loading" }
@@ -108,10 +121,10 @@ export default function ChannelDashboard() {
   const [period, setPeriod] = useState<number>(28);
 
   const load = useCallback(
-    async (soft: boolean) => {
+    async (soft: boolean, force = false) => {
       if (soft) setRefreshing(true);
       else setPhase({ s: "loading" });
-      const res = await apiYouTubeData(projectId, period);
+      const res = await apiYouTubeData(projectId, period, force);
       setRefreshing(false);
       if (!res.ok) {
         if (res.code === "YT_REAUTH") setPhase({ s: "reauth" });
@@ -142,6 +155,11 @@ export default function ChannelDashboard() {
           </Title>
           {phase.s === "ready" && (
             <Group gap="sm" wrap="nowrap">
+              {phase.data.fetchedAt && (
+                <Text size="xs" c="dimmed" visibleFrom="md" style={{ whiteSpace: "nowrap" }}>
+                  обновлено {formatTime(phase.data.fetchedAt)}
+                </Text>
+              )}
               <SegmentedControl
                 size="sm"
                 radius="md"
@@ -152,13 +170,13 @@ export default function ChannelDashboard() {
                 disabled={refreshing}
                 aria-label="Период аналитики"
               />
-              <Tooltip label="Обновить данные" withArrow>
+              <Tooltip label="Обновить данные из YouTube" withArrow>
                 <ActionIcon
                   variant="light"
                   color="brand"
                   size="lg"
                   radius="md"
-                  onClick={() => load(true)}
+                  onClick={() => load(true, true)}
                   loading={refreshing}
                   aria-label="Обновить данные канала"
                 >
@@ -187,12 +205,74 @@ function Dashboard({ data }: { data: YouTubeData }) {
   const params = useParams();
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
   const ch = data.channel;
-  const videos = data.videos ?? [];
   const daily = data.daily ?? null;
   const period = data.period ?? null;
 
+  // Список видео — состояние: первая страница из payload, дальше догружаем все
+  // остальные постранично (курсор videosNextPageToken). Сброс при новой загрузке
+  // (смена периода/обновление) — сиквенс подгрузки начинается заново.
+  const [videos, setVideos] = useState<YouTubeVideo[]>(data.videos ?? []);
+  const [nextToken, setNextToken] = useState<string | null>(data.videosNextPageToken ?? null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => {
+    setVideos(data.videos ?? []);
+    setNextToken(data.videosNextPageToken ?? null);
+  }, [data]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextToken || loadingMore) return;
+    setLoadingMore(true);
+    const res = await apiYouTubeVideos(projectId, nextToken);
+    setLoadingMore(false);
+    if (res.ok) {
+      setVideos((prev) => [...prev, ...res.data.videos]);
+      setNextToken(res.data.nextPageToken);
+    } else {
+      // Ошибка/переподключение — прекращаем автоподгрузку, чтобы не долбить.
+      setNextToken(null);
+    }
+  }, [nextToken, loadingMore, projectId]);
+
+  // Автоподгрузка при доскролле до конца ленты (сентинел). Видео — в самом низу
+  // длинного дашборда, поэтому на открытии не триггерится: только когда доскроллил.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !nextToken) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "300px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [nextToken, loadMore]);
+
   // Выбранное видео для детальной панели (кривая удержания).
   const [selected, setSelected] = useState<YouTubeVideo | null>(null);
+
+  // Быстрый доступ к видео по id — чтобы клик по драйверу в лидерборде открывал
+  // модалку с полными метриками, если ролик уже подгружен в ленте.
+  const videosById = useMemo(() => new Map(videos.map((v) => [v.id, v])), [videos]);
+  const openDriver = useCallback(
+    (v: SubscriberTimelineVideo) => {
+      const existing = videosById.get(v.id);
+      setSelected(
+        existing ?? {
+          id: v.id,
+          title: v.title,
+          thumbnail: v.thumbnail,
+          publishedAt: v.publishedAt ?? "",
+          duration: "",
+          viewCount: 0,
+          likeCount: 0,
+          commentCount: 0,
+        }
+      );
+    },
+    [videosById]
+  );
 
   if (!ch) return null;
 
@@ -295,28 +375,39 @@ function Dashboard({ data }: { data: YouTubeData }) {
         </SimpleGrid>
       )}
 
-      {/* График просмотров */}
-      {daily && daily.length > 0 && (
-        <Paper withBorder radius="lg" p="md">
-          <Text fw={600} mb="md">
-            Просмотры {periodLabel(period?.days ?? 28)}
-          </Text>
-          <AreaChart
-            h={240}
-            data={daily.map((d) => ({
-              date: formatShortDate(d.date),
-              Просмотры: d.views,
-            }))}
-            dataKey="date"
-            series={[{ name: "Просмотры", color: "brand.6" }]}
-            curveType="monotone"
-            withGradient
-            withDots={false}
-            valueFormatter={(v) => formatFull(v)}
-            gridAxis="y"
-            tickLine="none"
-          />
-        </Paper>
+      {/* Рост канала: просмотры + прирост подписчиков по видео-драйверам + релизы.
+          Основной блок — таймлайн (2 синхронных графика); если он недоступен, но
+          есть дневной ряд — фолбэк на простой график просмотров. */}
+      {data.subscribers?.timeline && data.subscribers.timeline.buckets.length > 0 ? (
+        <GrowthSection
+          sub={data.subscribers}
+          days={period?.days ?? 28}
+          onOpenVideo={openDriver}
+        />
+      ) : (
+        daily &&
+        daily.length > 0 && (
+          <Paper withBorder radius="lg" p="md">
+            <Text fw={600} mb="md">
+              Просмотры {periodLabel(period?.days ?? 28)}
+            </Text>
+            <AreaChart
+              h={240}
+              data={daily.map((d) => ({
+                date: formatShortDate(d.date),
+                Просмотры: d.views,
+              }))}
+              dataKey="date"
+              series={[{ name: "Просмотры", color: "brand.6" }]}
+              curveType="monotone"
+              withGradient
+              withDots={false}
+              valueFormatter={(v) => formatFull(v)}
+              gridAxis="y"
+              tickLine="none"
+            />
+          </Paper>
+        )
       )}
 
       {/* Источники трафика */}
@@ -324,21 +415,20 @@ function Dashboard({ data }: { data: YouTubeData }) {
         <TrafficSources traffic={data.traffic} days={period?.days ?? 28} />
       )}
 
-      {/* Динамика подписчиков */}
-      {data.subscribers &&
-        (data.subscribers.topVideos.length > 0 ||
-          data.subscribers.daily.some((d) => d.gained > 0 || d.lost > 0)) && (
-          <SubscriberSection sub={data.subscribers} days={period?.days ?? 28} />
-        )}
-
       {/* Аудитория */}
       {data.audience && <AudienceSection a={data.audience} days={period?.days ?? 28} />}
 
-      {/* Последние видео */}
+      {/* Видео канала — все ролики, догружаются постранично при доскролле */}
       <Box>
-        <Text fw={600} mb="md">
-          Последние видео
-        </Text>
+        <Group justify="space-between" mb="md" wrap="nowrap" gap="sm">
+          <Text fw={600}>Видео канала</Text>
+          {videos.length > 0 && (
+            <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatCount(videos.length)}
+              {ch.videoCount > videos.length ? ` из ${formatCount(ch.videoCount)}` : ""}
+            </Text>
+          )}
+        </Group>
         {videos.length === 0 ? (
           <Text size="sm" c="dimmed">
             На канале пока нет опубликованных видео.
@@ -354,6 +444,20 @@ function Dashboard({ data }: { data: YouTubeData }) {
               />
             ))}
           </SimpleGrid>
+        )}
+        {/* Сентинел автоподгрузки + кнопка-фолбэк «Показать ещё» */}
+        {nextToken && (
+          <Group ref={sentinelRef} justify="center" mt="lg">
+            <Button
+              variant="light"
+              color="brand"
+              radius="md"
+              onClick={loadMore}
+              loading={loadingMore}
+            >
+              Показать ещё
+            </Button>
+          </Group>
         )}
       </Box>
 
@@ -600,24 +704,131 @@ function TrafficSources({ traffic, days }: { traffic: TrafficSource[]; days: num
   );
 }
 
-// ── Динамика подписчиков: пришло/ушло по дням + видео-драйверы ─────────────────
+// ── Рост канала: просмотры + прирост подписчиков по видео-драйверам + релизы ────
 
-function SubscriberSection({ sub, days }: { sub: SubscriberDynamicsData; days: number }) {
+// Палитра серий стека (видео-драйверы), по порядку убывания вклада. Цвета
+// различимы и держат контраст в обеих темах; «Другое» — нейтральный серый.
+const VIDEO_COLORS = ["brand.6", "blue.6", "teal.6", "grape.6", "cyan.6", "yellow.6"];
+const OTHER_COLOR = "gray.5";
+const OTHER_KEY = "__other__";
+const cssVar = (c: string) => `var(--mantine-color-${c.replace(".", "-")})`;
+
+const bucketMonthFmt = new Intl.DateTimeFormat("ru-RU", { month: "short", year: "2-digit" });
+// Подпись отрезка на оси: месяц («июл 26») или короткая дата дня/недели («3 июл»).
+function bucketLabel(key: string, gran: Granularity): string {
+  if (gran === "month") {
+    const [y, m] = key.split("-").map(Number);
+    return bucketMonthFmt.format(new Date(Date.UTC(y, (m || 1) - 1, 1)));
+  }
+  return formatShortDate(key);
+}
+
+function GrowthSection({
+  sub,
+  days,
+  onOpenVideo,
+}: {
+  sub: SubscriberDynamicsData;
+  days: number;
+  onOpenVideo: (v: SubscriberTimelineVideo) => void;
+}) {
+  const tl = sub.timeline as SubscriberTimeline;
+  const gran = tl.granularity;
+  const drivers = tl.videos;
+  const colorById = new Map(drivers.map((v, i) => [v.id, VIDEO_COLORS[i % VIDEO_COLORS.length]]));
+
+  const hasOther = tl.buckets.some((b) => b.other > 0);
+  const hasSubs = tl.buckets.some((b) => b.totalGained > 0);
+  const hasViews = tl.buckets.some((b) => b.views > 0);
+  const hasReleases = tl.buckets.some((b) => b.releases.length > 0);
+
+  // Общая сетка отрезков для обоих графиков: одна строка = один отрезок времени.
+  const rows = tl.buckets.map((b) => {
+    const row: Record<string, number | string> = {
+      label: bucketLabel(b.key, gran),
+      Просмотры: b.views,
+    };
+    for (const v of drivers) row[v.id] = b.gainedByVideo[v.id] ?? 0;
+    if (hasOther) row[OTHER_KEY] = b.other;
+    return row;
+  });
+
+  // Релизы по подписи отрезка — для рейки превью под нижним графиком.
+  const releasesByLabel: Record<string, TimelineRelease[]> = {};
+  for (const b of tl.buckets) {
+    if (b.releases.length) releasesByLabel[bucketLabel(b.key, gran)] = b.releases;
+  }
+
+  const subSeries = [
+    ...drivers.map((v) => ({ name: v.id, color: colorById.get(v.id) as string })),
+    ...(hasOther ? [{ name: OTHER_KEY, color: OTHER_COLOR }] : []),
+  ];
+  const titleById = new Map<string, string>([
+    ...drivers.map((v) => [v.id, v.title] as const),
+    [OTHER_KEY, "Другое"],
+  ]);
+
+  // Итоги — из дневного ряда (там есть и «ушло», чего нет в таймлайне прироста).
   const totalGained = sub.daily.reduce((s, d) => s + d.gained, 0);
   const totalLost = sub.daily.reduce((s, d) => s + d.lost, 0);
   const net = totalGained - totalLost;
-  const hasActivity = totalGained > 0 || totalLost > 0;
-  // «Ушло» — отрицательными, чтобы столбцы шли вниз (расходящиеся столбцы).
-  const chartData = sub.daily.map((d) => ({
-    date: formatShortDate(d.date),
-    Пришло: d.gained,
-    Ушло: -d.lost,
-  }));
+  const otherTotal = tl.buckets.reduce((s, b) => s + b.other, 0);
+
+  // Показываем ~8 подписей дат; превью релизов — на всех своих отрезках.
+  const stride = Math.max(1, Math.ceil(tl.buckets.length / 8));
+  const xAxisHeight = hasReleases ? 46 : 22;
+
+  // Мета видео для тултипа: превью + ссылка на ролик (по id серии столбца).
+  const metaById = new Map<string, TipMeta>(
+    drivers.map((v) => [
+      v.id,
+      { title: v.title, thumbnail: v.thumbnail, url: `https://www.youtube.com/watch?v=${v.id}` },
+    ])
+  );
+
+  // ── Интерактивный «липкий» тултип столбца ───────────────────────────────────
+  // recharts-тултип по умолчанию не наводибельный и пропадает мгновенно. Делаем
+  // свой оверлей: recharts-контент работает сенсором позиции (TooltipSensor), а
+  // карточку рисуем сами с таймером скрытия, который отменяется при наведении на
+  // неё — так пользователь успевает перейти на тултип и кликнуть по ссылке видео.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [tip, setTip] = useState<TipState | null>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Мышь сейчас над самой карточкой тултипа — тогда прятать нельзя (recharts при
+  // уходе курсора с графика шлёт active=false и на КАЖДЫЙ ре-рендер, поэтому таймер
+  // скрытия может перевзвестись уже после входа на карточку; проверяем флаг в колбэке).
+  const hoveringCard = useRef(false);
+  const clearHide = useCallback(() => {
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  }, []);
+  const scheduleHide = useCallback(() => {
+    clearHide();
+    hideTimer.current = setTimeout(() => {
+      if (!hoveringCard.current) setTip(null);
+    }, 500);
+  }, [clearHide]);
+  const showTip = useCallback(
+    (x: number, y: number, label: string, payload: TooltipItem[]) => {
+      clearHide();
+      const items = payload
+        .filter((p) => (p.value ?? 0) > 0)
+        .map((p) => ({ key: String(p.dataKey ?? ""), value: p.value ?? 0, color: p.color ?? "" }));
+      // Клампим X, чтобы карточка не уезжала за края графика.
+      const w = wrapRef.current?.offsetWidth ?? 600;
+      const cx = Math.min(Math.max(x, 160), w - 160);
+      setTip((prev) => (prev && prev.label === label ? prev : { x: cx, y, label, items }));
+    },
+    [clearHide]
+  );
+  useEffect(() => clearHide, [clearHide]);
 
   return (
     <Paper withBorder radius="lg" p="md">
       <Group justify="space-between" mb="md" wrap="nowrap" gap="sm">
-        <Text fw={600}>Подписчики {periodLabel(days)}</Text>
+        <Text fw={600}>Рост канала {periodLabel(days)}</Text>
         <Group gap="sm" wrap="nowrap">
           <Text size="sm" c="teal" fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
             +{formatCount(totalGained)}
@@ -632,55 +843,424 @@ function SubscriberSection({ sub, days }: { sub: SubscriberDynamicsData; days: n
         </Group>
       </Group>
 
-      {hasActivity ? (
-        <BarChart
-          h={220}
-          data={chartData}
-          dataKey="date"
-          type="stacked"
-          series={[
-            { name: "Пришло", color: "teal.6" },
-            { name: "Ушло", color: "red.6" },
-          ]}
-          withLegend
-          gridAxis="y"
-          tickLine="none"
-          valueFormatter={(v) => String(Math.abs(v))}
-        />
-      ) : (
+      {/* Верхний график — просмотры во времени (ось X скрыта: общая с нижним). */}
+      {hasViews && (
+        <Box mb="xs">
+          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
+            Просмотры
+          </Text>
+          <AreaChart
+            h={130}
+            data={rows}
+            dataKey="label"
+            series={[{ name: "Просмотры", color: "brand.6" }]}
+            curveType="monotone"
+            withGradient
+            withDots={false}
+            withXAxis={false}
+            valueFormatter={(v) => formatFull(v)}
+            gridAxis="y"
+            tickLine="none"
+            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
+          />
+        </Box>
+      )}
+
+      {/* Нижний график — прирост подписчиков, столбец разложен по видео-драйверам. */}
+      {hasSubs ? (
+        <Box ref={wrapRef} style={{ position: "relative" }} onMouseLeave={scheduleHide}>
+          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
+            Новые подписчики — по видео-драйверам
+          </Text>
+          <BarChart
+            h={210}
+            data={rows}
+            dataKey="label"
+            type="stacked"
+            series={subSeries}
+            withLegend={false}
+            gridAxis="y"
+            tickLine="none"
+            valueFormatter={(v) => formatFull(v)}
+            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
+            xAxisProps={{
+              interval: 0,
+              height: xAxisHeight,
+              tick: (props: TickProps) => (
+                <ReleaseTick
+                  {...props}
+                  stride={stride}
+                  releases={releasesByLabel[props.payload?.value ?? ""]}
+                />
+              ),
+            }}
+            tooltipProps={{
+              isAnimationActive: false,
+              // Контент recharts — только сенсор позиции; видимую карточку рисуем сами.
+              content: (props: any) => (
+                <TooltipSensor
+                  active={props.active}
+                  payload={props.payload}
+                  label={props.label}
+                  coordinate={props.coordinate}
+                  onShow={showTip}
+                  onHide={scheduleHide}
+                />
+              ),
+            }}
+          />
+          {tip && (
+            <GrowthTipCard
+              tip={tip}
+              titleById={titleById}
+              metaById={metaById}
+              onMouseEnter={() => {
+                hoveringCard.current = true;
+                clearHide();
+              }}
+              onMouseLeave={() => {
+                hoveringCard.current = false;
+                scheduleHide();
+              }}
+            />
+          )}
+        </Box>
+      ) : hasViews ? null : (
         <Text size="sm" c="dimmed">
           За период подписки почти не менялись.
         </Text>
       )}
 
-      {sub.topVideos.length > 0 && (
+      {/* Легенда-лидерборд: видео-драйверы (цвет = серия стека), клик → разбор. */}
+      {drivers.length > 0 && (
         <Box mt="lg">
           <Text fw={600} mb="sm">
             Видео, приносящие подписчиков
           </Text>
-          <Stack gap="sm">
-            {sub.topVideos.map((v) => (
-              <SubVideoRow key={v.id} v={v} />
+          <Stack gap="xs">
+            {drivers.map((v) => (
+              <DriverRow
+                key={v.id}
+                v={v}
+                color={colorById.get(v.id) as string}
+                onOpen={() => onOpenVideo(v)}
+              />
             ))}
+            {hasOther && otherTotal > 0 && (
+              <Group gap="sm" wrap="nowrap" px={4} py={2}>
+                <Box
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 3,
+                    background: cssVar(OTHER_COLOR),
+                    flexShrink: 0,
+                  }}
+                />
+                <Text size="sm" c="dimmed" style={{ flex: 1 }}>
+                  Другое (старые ролики, страница канала и т.п.)
+                </Text>
+                <Text size="sm" fw={600} c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+                  +{formatCount(otherTotal)}
+                </Text>
+              </Group>
+            )}
           </Stack>
         </Box>
       )}
+
+      <Text size="xs" c="dimmed" mt="md">
+        Цвет столбца = ролик, который привёл этих подписчиков. Внизу — когда вышли ролики. Клик по
+        видео открывает разбор упаковки.
+      </Text>
     </Paper>
   );
 }
 
-function SubVideoRow({ v }: { v: SubscriberVideo }) {
+// Тип аргументов кастомного тика оси X (recharts прокидывает координаты + payload).
+type TickProps = {
+  x?: number;
+  y?: number;
+  index?: number;
+  payload?: { value?: string };
+  stride?: number;
+  releases?: TimelineRelease[];
+};
+
+// Кастомный тик оси X: подпись даты (прореженная, чтобы не наезжали) + рейка
+// превью роликов, вышедших в этот отрезок (SVG-миниатюры, ровно под столбцом).
+function ReleaseTick({ x = 0, y = 0, index = 0, payload, stride = 1, releases }: TickProps) {
+  const rel = releases ?? [];
+  const showLabel = index % stride === 0;
+  const thumbs = rel.slice(0, 3);
+  const tw = 26;
+  const th = 15;
+  const gap = 3;
+  const ty = 18;
+  const totalW = thumbs.length * tw + (thumbs.length - 1) * gap;
+  const startX = -totalW / 2;
   return (
-    <Anchor
-      href={`https://www.youtube.com/watch?v=${v.id}`}
-      target="_blank"
-      rel="noreferrer"
-      underline="never"
-      c="inherit"
-      display="block"
+    <g transform={`translate(${x},${y})`}>
+      {showLabel && (
+        <text x={0} y={0} dy={11} textAnchor="middle" fontSize={11} fill="var(--mantine-color-dimmed)">
+          {payload?.value}
+        </text>
+      )}
+      {thumbs.map((r, i) => {
+        const tx = startX + i * (tw + gap);
+        const clipId = `rel-clip-${index}-${i}`;
+        return (
+          <g key={r.id}>
+            <title>{r.title}</title>
+            {/* матовая подложка — отделяет превью от сетки графика */}
+            <rect
+              x={tx - 1.5}
+              y={ty - 1.5}
+              width={tw + 3}
+              height={th + 3}
+              rx={5}
+              fill="var(--mantine-color-body)"
+            />
+            {r.thumbnail && (
+              <>
+                <clipPath id={clipId}>
+                  <rect x={tx} y={ty} width={tw} height={th} rx={3} />
+                </clipPath>
+                <image
+                  href={r.thumbnail}
+                  x={tx}
+                  y={ty}
+                  width={tw}
+                  height={th}
+                  preserveAspectRatio="xMidYMid slice"
+                  clipPath={`url(#${clipId})`}
+                />
+              </>
+            )}
+            {/* обводка превью */}
+            <rect
+              x={tx}
+              y={ty}
+              width={tw}
+              height={th}
+              rx={3}
+              fill="none"
+              stroke="var(--mantine-color-gray-5)"
+              strokeWidth={1}
+            />
+          </g>
+        );
+      })}
+      {rel.length > thumbs.length && (
+        <text x={totalW / 2 + 5} y={ty + th} textAnchor="start" fontSize={9} fill="var(--mantine-color-dimmed)">
+          +{rel.length - thumbs.length}
+        </text>
+      )}
+    </g>
+  );
+}
+
+// Элемент активной серии тултипа (то, что прокидывает recharts).
+type TooltipItem = { dataKey?: string | number; value?: number; color?: string };
+// Мета видео для тултипа/лидерборда.
+type TipMeta = { title: string; thumbnail: string | null; url: string };
+// Состояние «липкого» тултипа: позиция в контейнере + разложение по сериям.
+type TipState = {
+  x: number;
+  y: number;
+  label: string;
+  items: { key: string; value: number; color: string }[];
+};
+
+// Сенсор наведения: recharts зовёт content с active/coordinate — прокидываем это
+// наверх (показать/скрыть), сам ничего не рисует. Видимую карточку рисует родитель.
+function TooltipSensor({
+  active,
+  payload,
+  label,
+  coordinate,
+  onShow,
+  onHide,
+}: {
+  active?: boolean;
+  payload?: TooltipItem[];
+  label?: string | number;
+  coordinate?: { x?: number; y?: number };
+  onShow: (x: number, y: number, label: string, payload: TooltipItem[]) => void;
+  onHide: () => void;
+}) {
+  useEffect(() => {
+    if (active && payload && payload.length && coordinate?.x != null) {
+      onShow(coordinate.x, coordinate.y ?? 0, String(label ?? ""), payload);
+    } else {
+      onHide();
+    }
+  });
+  return null;
+}
+
+// «Липкая» карточка тултипа: превью ролика + название (кликабельные ссылки на видео)
+// + зелёный «+N» подписчиков. Наведение на карточку отменяет таймер скрытия, поэтому
+// пользователь может перейти по ссылке. «Другое» — без ссылки (нет конкретного видео).
+function GrowthTipCard({
+  tip,
+  titleById,
+  metaById,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  tip: TipState;
+  titleById: Map<string, string>;
+  metaById: Map<string, TipMeta>;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  const total = tip.items.reduce((s, i) => s + i.value, 0);
+  return (
+    <Paper
+      withBorder
+      radius="md"
+      p="sm"
+      shadow="md"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        position: "absolute",
+        left: tip.x,
+        top: tip.y,
+        transform: "translate(-50%, calc(-100% - 10px))",
+        width: 300,
+        maxWidth: "90%",
+        zIndex: 5,
+        pointerEvents: "auto",
+      }}
     >
-      <Group gap="sm" wrap="nowrap">
-        <Box
+      <Text fw={600} size="sm">
+        {tip.label}
+      </Text>
+      <Text size="xs" c="dimmed" mb="xs">
+        Новых подписчиков: <b>+{formatFull(total)}</b>
+      </Text>
+      <Stack gap={8}>
+        {tip.items.map((it) => {
+          const meta = metaById.get(it.key);
+          return (
+            <Group key={it.key} gap={8} wrap="nowrap" align="center">
+              {meta ? (
+                <Anchor
+                  href={meta.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ lineHeight: 0, flexShrink: 0 }}
+                  aria-label={`Открыть видео «${meta.title}» на YouTube`}
+                >
+                  <Box
+                    className="yt-tip-thumb"
+                    style={{
+                      width: 56,
+                      aspectRatio: "16 / 9",
+                      borderRadius: 6,
+                      overflow: "hidden",
+                      border: `2px solid ${it.color}`,
+                      background: "var(--mantine-color-dark-4)",
+                    }}
+                  >
+                    {meta.thumbnail && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={meta.thumbnail}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                      />
+                    )}
+                  </Box>
+                </Anchor>
+              ) : (
+                <Box
+                  style={{
+                    width: 56,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Box
+                    style={{ width: 12, height: 12, borderRadius: 3, background: it.color }}
+                  />
+                </Box>
+              )}
+              <Box style={{ flex: 1, minWidth: 0 }}>
+                {meta ? (
+                  <Anchor
+                    href={meta.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    c="inherit"
+                    underline="hover"
+                    size="xs"
+                    lineClamp={2}
+                  >
+                    {meta.title}
+                  </Anchor>
+                ) : (
+                  <Text size="xs" c="dimmed">
+                    {titleById.get(it.key) ?? "Другое"}
+                  </Text>
+                )}
+              </Box>
+              <Text
+                size="xs"
+                fw={700}
+                c="teal"
+                style={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+              >
+                +{formatFull(it.value)}
+              </Text>
+            </Group>
+          );
+        })}
+      </Stack>
+    </Paper>
+  );
+}
+
+// Строка лидерборда драйвера: цвет серии + превью + название + вклад; клик → разбор.
+function DriverRow({
+  v,
+  color,
+  onOpen,
+}: {
+  v: SubscriberTimelineVideo;
+  color: string;
+  onOpen: () => void;
+}) {
+  return (
+    <Group
+      gap="sm"
+      wrap="nowrap"
+      className="yt-driver-row"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      aria-label={`Разобрать видео «${v.title}»`}
+    >
+      <Box
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: 3,
+          background: cssVar(color),
+          flexShrink: 0,
+        }}
+      />
+      <Box
         style={{
           width: 76,
           aspectRatio: "16 / 9",
@@ -700,22 +1280,25 @@ function SubVideoRow({ v }: { v: SubscriberVideo }) {
           />
         )}
       </Box>
-      <Text size="sm" lineClamp={1} style={{ flex: 1, minWidth: 0 }}>
-        {v.title}
-      </Text>
-        <Tooltip label={`Пришло ${formatFull(v.gained)}, ушло ${formatFull(v.lost)}`} withArrow>
-          <Text
-            size="sm"
-            fw={700}
-            c={v.net >= 0 ? "teal" : "red"}
-            style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
-          >
-            {v.net >= 0 ? "+" : "−"}
-            {formatCount(Math.abs(v.net))}
+      <Box style={{ flex: 1, minWidth: 0 }}>
+        <Text size="sm" lineClamp={1}>
+          {v.title}
+        </Text>
+        {v.publishedAt && (
+          <Text size="xs" c="dimmed">
+            {formatDate(v.publishedAt)}
           </Text>
-        </Tooltip>
-      </Group>
-    </Anchor>
+        )}
+      </Box>
+      <Text
+        size="sm"
+        fw={700}
+        c="teal"
+        style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+      >
+        +{formatCount(v.gained)}
+      </Text>
+    </Group>
   );
 }
 
@@ -987,7 +1570,7 @@ function VideoDetailModal({
             )}
           </Group>
 
-          <RetentionSection state={state} />
+          <RetentionSection state={state} durationSec={durationToSeconds(video.duration)} />
 
           <Divider label="ИИ-разбор упаковки" labelPosition="center" />
           <AnalysisPanel key={video.id} projectId={projectId} videoId={video.id} />
@@ -1231,7 +1814,7 @@ function CopyRow({ text, multiline }: { text: string; multiline?: boolean }) {
   );
 }
 
-function RetentionSection({ state }: { state: DetailState }) {
+function RetentionSection({ state, durationSec }: { state: DetailState; durationSec: number }) {
   if (state.s === "loading") return <Skeleton height={240} radius="md" />;
   if (state.s === "error") {
     return (
@@ -1248,10 +1831,14 @@ function RetentionSection({ state }: { state: DetailState }) {
       </Alert>
     );
   }
+  // По оси X — реальные секунды ролика (доля длины × длительность). Если длительность
+  // неизвестна (ролик открыт из лидерборда без метаданных) — фолбэк на долю длины в %.
+  const useSeconds = durationSec > 0;
   const chartData = curve.map((pt) => ({
-    pos: Math.round(pt.ratio * 100),
+    pos: useSeconds ? Math.round(pt.ratio * durationSec) : Math.round(pt.ratio * 100),
     Удержание: Math.round(pt.watchRatio * 100),
   }));
+  const xFormat = (v: number) => (useSeconds ? formatSeconds(v) : `${v}%`);
   return (
     <Box>
       <Group justify="space-between" mb="xs" wrap="nowrap">
@@ -1274,12 +1861,28 @@ function RetentionSection({ state }: { state: DetailState }) {
         valueFormatter={(v) => `${v}%`}
         gridAxis="xy"
         tickLine="none"
-        xAxisProps={{ interval: 19, tickFormatter: (v: number) => `${v}%` }}
+        xAxisProps={{ interval: 19, tickFormatter: xFormat }}
         yAxisProps={{ tickFormatter: (v: number) => `${v}%` }}
+        tooltipProps={{
+          content: (props: any) => {
+            const p = props?.payload?.[0];
+            if (!p) return null;
+            return (
+              <Paper withBorder radius="md" p="xs" shadow="md">
+                <Text size="xs" c="dimmed">
+                  {useSeconds ? "Время" : "Доля ролика"}: {xFormat(Number(props.label))}
+                </Text>
+                <Text size="sm" fw={600}>
+                  Удержание {p.value}%
+                </Text>
+              </Paper>
+            );
+          },
+        }}
       />
       <Text size="xs" c="dimmed" mt="xs">
-        По горизонтали — доля длины ролика, по вертикали — сколько зрителей ещё смотрит. Провал в
-        начале = слабый хук.
+        По горизонтали — {useSeconds ? "секунды ролика" : "доля длины ролика"}, по вертикали —
+        сколько зрителей ещё смотрит. Провал в начале = слабый хук.
       </Text>
     </Box>
   );

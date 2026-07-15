@@ -1,5 +1,6 @@
 import type { AuthUser } from "@/store/authSlice";
 import type { Brief } from "@/lib/brief";
+import type { CloudWidgetParams } from "@/lib/cloudpayments-widget";
 
 // ── Клиентская обёртка над /api/auth/* ────────────────────────────────────
 // Возвращаем дискриминируемый результат, чтобы страницы показывали ошибку
@@ -59,10 +60,16 @@ export function apiSaveBrief(brief: Brief) {
   return post<{ user: AuthUser }>("/api/auth/brief", { brief }, "PATCH");
 }
 
-// ── Платежи (эквайринг ТБанк) ────────────────────────────────────────────
-// Создать платёж за тариф → ссылка на платёжную страницу ТБанк.
+// ── Платежи ──────────────────────────────────────────────────────────────
+// ТБанк (рос. карты / СБП / Мир): создать платёж → ссылка на платёжную страницу.
 export function apiCreatePayment(planId: string) {
   return post<{ url: string }>("/api/payments/create", { planId });
+}
+
+// CloudPayments (зарубежные карты Visa/Mastercard): создать платёж → параметры для
+// клиентского виджета (открывается на месте, без редиректа).
+export function apiCreateCloudPayment(planId: string) {
+  return post<{ params: CloudWidgetParams }>("/api/payments/cloudpayments/create", { planId });
 }
 
 // Синхронизация платежа на возврате (SuccessURL) → статус + свежий юзер.

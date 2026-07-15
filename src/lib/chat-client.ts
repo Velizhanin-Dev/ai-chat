@@ -125,6 +125,44 @@ export function apiDeleteConversation(id: string): Promise<unknown> {
   }).catch((err) => console.error("[chat] delete failed", err));
 }
 
+// ── Бриф проекта (страница настроек проекта) ───────────────────────────────
+
+// Прочитать бриф проекта (тип личности + поля «о проекте»).
+export async function apiGetProjectBrief(id: string): Promise<Result<Brief>> {
+  try {
+    const res = await fetchWithTimeout(
+      `/api/conversations/${encodeURIComponent(id)}/brief`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return { ok: false, error: "Не удалось загрузить данные проекта" };
+    const data = (await res.json()) as { brief: Brief };
+    return { ok: true, data: data.brief };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Перезаписать бриф проекта («Исправить информацию»). Тип личности обязателен.
+export async function apiUpdateProjectBrief(
+  id: string,
+  brief: Brief
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}/brief`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brief }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: data.error || "Не удалось сохранить" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
 // ── Разовая миграция истории из localStorage в БД ──────────────────────────
 // Чаты раньше жили в localStorage (ключ ниже). При первом заходе залогиненного
 // заливаем их в БД и удаляем ключ, чтобы не потерять. Идемпотентно (сервер

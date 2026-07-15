@@ -10,6 +10,13 @@ import type {
   TrafficSource,
   SubscriberVideo,
   AudienceData,
+  Granularity,
+  SubscriberTimeline,
+  SubscriberTimelineBucket,
+  SubscriberTimelineVideo,
+  YouTubeData,
+  ChannelSnapshot,
+  VideoPage,
 } from "./youtube-types";
 
 // ── Интеграция с YouTube (Google OAuth + YouTube Data API v3 / Analytics API) ──
@@ -69,6 +76,131 @@ export async function assertOwnedProject(
     select: { id: true },
   });
   return conv?.id ?? null;
+}
+
+// ── Кэш дашборда «Канал» (экономия квоты YouTube API) ─────────────────────────
+// Один заход на дашборд = ~13+ вызовов YouTube API (канал, видео+аналитика, период
+// ×2, трафик, подписчики, аудитория + до 6 запросов таймлайна). Переключение
+// периода (7/28/90/365) и повторные заходы дёргали всё заново → квота таяла.
+// Кэшируем СОБРАННЫЙ payload по ключу (проект:период) в памяти процесса с TTL.
+// Кнопка «Обновить» на дашборде форсит свежие данные (bypass). При отключении
+// интеграции кэш проекта чистим (clearStatsCache). In-memory: живёт в рамках
+// инстанса; для мульти-инстанса можно перенести в БД/Redis (пока не нужно).
+const STATS_TTL_MS = 15 * 60 * 1000; // 15 минут — аналитика меняется медленно
+const STATS_CACHE_MAX = 500; // грубый потолок против роста Map
+type CachedStats = { at: number; data: YouTubeData };
+const statsCache = new Map<string, CachedStats>();
+
+export function statsCacheKey(conversationId: string, days: number): string {
+  return `${conversationId}:${days}`;
+}
+
+export function getCachedStats(key: string): YouTubeData | null {
+  const c = statsCache.get(key);
+  if (!c) return null;
+  if (Date.now() - c.at >= STATS_TTL_MS) {
+    statsCache.delete(key);
+    return null;
+  }
+  return c.data;
+}
+
+export function setCachedStats(key: string, data: YouTubeData): void {
+  // Ленивая уборка протухших при разрастании Map.
+  if (statsCache.size >= STATS_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of Array.from(statsCache.entries())) {
+      if (now - v.at >= STATS_TTL_MS) statsCache.delete(k);
+    }
+  }
+  statsCache.set(key, { at: Date.now(), data });
+}
+
+// Сбросить кэш всех периодов проекта (при отключении/переподключении интеграции).
+export function clearStatsCache(conversationId: string): void {
+  const prefix = `${conversationId}:`;
+  for (const k of Array.from(statsCache.keys())) {
+    if (k.startsWith(prefix)) statsCache.delete(k);
+  }
+  snapshotCache.delete(conversationId); // и снимок для чата
+}
+
+// ── Снимок канала для контекста ассистента (чат) ──────────────────────────────
+// Компактная выжимка (не весь дашборд): канал + KPI за 28 дней с трендом + топ-видео
+// с удержанием + источники трафика + драйверы подписчиков. Подставляется в промпт,
+// чтобы нейронка разбирала канал предметно. Отдельный кэш (TTL 30 мин) по проекту —
+// чтобы НЕ дёргать YouTube на каждое сообщение. Легче дашборда: без таймлайна и
+// аудитории. Ошибки best-effort: что не пришло — опускаем.
+const SNAPSHOT_TTL_MS = 30 * 60 * 1000;
+type CachedSnapshot = { at: number; data: ChannelSnapshot };
+const snapshotCache = new Map<string, CachedSnapshot>();
+
+async function fetchChannelSnapshot(accessToken: string): Promise<ChannelSnapshot | null> {
+  const channel = await fetchChannelInfo(accessToken);
+  if (!channel) return null;
+  const { current, previous } = periodRanges(28);
+
+  const [videosPage, curSummary, prevSummary, traffic, subVideos] = await Promise.all([
+    channel.uploadsPlaylistId
+      ? fetchRecentVideosWithAnalytics(accessToken, channel.uploadsPlaylistId, 6)
+      : Promise.resolve<VideoPage>({ videos: [], nextPageToken: null }),
+    fetchPeriodSummary(accessToken, current.start, current.end),
+    fetchPeriodSummary(accessToken, previous.start, previous.end),
+    fetchTrafficSources(accessToken, current.start, current.end),
+    fetchSubscriberVideos(accessToken, current.start, current.end),
+  ]);
+  const videos = videosPage.videos;
+
+  const period: ChannelSnapshot["period"] = curSummary
+    ? {
+        days: 28,
+        views: curSummary.views,
+        minutes: curSummary.minutes,
+        subscribersNet: curSummary.netSubscribers,
+        avgRetention: curSummary.avgViewPercentage,
+        prevViews: prevSummary?.views ?? null,
+        prevSubscribersNet: prevSummary?.netSubscribers ?? null,
+        prevAvgRetention: prevSummary?.avgViewPercentage ?? null,
+      }
+    : null;
+
+  return {
+    title: channel.title,
+    subscribers: channel.subscriberCount,
+    totalViews: channel.viewCount,
+    videoCount: channel.videoCount,
+    period,
+    topVideos: videos.slice(0, 6).map((v) => ({
+      title: v.title,
+      views: v.viewCount,
+      retention: v.avgViewPercentage ?? null,
+      publishedAt: v.publishedAt,
+    })),
+    traffic: (traffic ?? []).slice(0, 4).map((t) => {
+      const total = (traffic ?? []).reduce((s, x) => s + x.views, 0) || 1;
+      return { label: t.label, pct: Math.round((t.views / total) * 100) };
+    }),
+    subscriberDrivers: subVideos.slice(0, 3).map((v) => ({ title: v.title, net: v.net })),
+  };
+}
+
+// Снимок канала проекта для чата: из кэша (TTL 30 мин) или свежий. Токен обновляем
+// при необходимости. Любая ошибка (нет прав/протух токен/сбой API) → null: чат
+// продолжается без данных канала, не падает.
+export async function getChannelSnapshotCached(
+  conversationId: string,
+  integ: YouTubeIntegration
+): Promise<ChannelSnapshot | null> {
+  const cached = snapshotCache.get(conversationId);
+  if (cached && Date.now() - cached.at < SNAPSHOT_TTL_MS) return cached.data;
+  try {
+    const accessToken = await getValidAccessToken(integ);
+    const snap = await fetchChannelSnapshot(accessToken);
+    if (snap) snapshotCache.set(conversationId, { at: Date.now(), data: snap });
+    return snap ?? cached?.data ?? null;
+  } catch {
+    return cached?.data ?? null; // отдаём протухший снимок, если был, иначе ничего
+  }
 }
 
 // ── Authorize / токены ──────────────────────────────────────────────────────
@@ -179,22 +311,34 @@ function pickThumb(t?: Thumbnails): string | null {
   return t.high?.url ?? t.medium?.url ?? t.standard?.url ?? t.default?.url ?? null;
 }
 
+// Таймаут одного вызова YouTube API — чтобы зависшее соединение не блокировало
+// дашборд/снимок канала бесконечно (без него fetch на мёртвом сокете висит вечно).
+const YT_FETCH_TIMEOUT_MS = 10_000;
+
 // GET к API YouTube с Bearer-токеном. На не-2xx бросает ошибку с .status (401/403
-// = токен протух/отозван → переподключение).
+// = токен протух/отозван → переподключение). По таймауту — AbortError (ловится
+// best-effort-обёртками, вернут null/[]; на дашборде — обычная ошибка загрузки).
 async function ytGet<T>(url: string, accessToken: string): Promise<T> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    const err = new Error(`youtube_api_${res.status} ${body.slice(0, 400)}`) as Error & {
-      status?: number;
-    };
-    err.status = res.status;
-    throw err;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), YT_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const err = new Error(`youtube_api_${res.status} ${body.slice(0, 400)}`) as Error & {
+        status?: number;
+      };
+      err.status = res.status;
+      throw err;
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
   }
-  return (await res.json()) as T;
 }
 
 interface ChannelsResponse {
@@ -243,6 +387,7 @@ export async function fetchChannelInfo(accessToken: string): Promise<YouTubeChan
 
 interface PlaylistItemsResponse {
   items?: Array<{ contentDetails?: { videoId?: string } }>;
+  nextPageToken?: string;
 }
 interface VideosResponse {
   items?: Array<{
@@ -298,27 +443,33 @@ export async function fetchVideoFull(
 }
 
 // Последние N видео канала (через плейлист загрузок) + их статистика.
+// Страница видео канала (через плейлист загрузок) + их статистика. pageToken —
+// курсор для подгрузки следующих страниц (все ролики, а не только первые). Отдаём
+// nextPageToken (null — дальше нет). maxResults у playlistItems максимум 50.
 export async function fetchRecentVideos(
   accessToken: string,
   uploadsPlaylistId: string,
-  max = 12
-): Promise<YouTubeVideo[]> {
+  max = 12,
+  pageToken?: string
+): Promise<VideoPage> {
+  const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
   const pl = await ytGet<PlaylistItemsResponse>(
     `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=${max}&playlistId=${encodeURIComponent(
       uploadsPlaylistId
-    )}`,
+    )}${tokenParam}`,
     accessToken
   );
+  const nextPageToken = pl.nextPageToken ?? null;
   const ids = (pl.items ?? [])
     .map((it) => it.contentDetails?.videoId)
     .filter((v): v is string => Boolean(v));
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { videos: [], nextPageToken };
 
   const vd = await ytGet<VideosResponse>(
     `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${ids.join(",")}`,
     accessToken
   );
-  return (vd.items ?? []).map((v) => {
+  const videos = (vd.items ?? []).map((v) => {
     const s = v.snippet ?? {};
     const st = v.statistics ?? {};
     return {
@@ -332,6 +483,7 @@ export async function fetchRecentVideos(
       commentCount: Number(st.commentCount ?? 0),
     };
   });
+  return { videos, nextPageToken };
 }
 
 interface AnalyticsResponse {
@@ -433,12 +585,18 @@ export async function fetchVideoAnalytics(
 export async function fetchRecentVideosWithAnalytics(
   accessToken: string,
   uploadsPlaylistId: string,
-  max = 12
-): Promise<YouTubeVideo[]> {
-  const videos = await fetchRecentVideos(accessToken, uploadsPlaylistId, max);
-  if (videos.length === 0) return videos;
+  max = 12,
+  pageToken?: string
+): Promise<VideoPage> {
+  const { videos, nextPageToken } = await fetchRecentVideos(
+    accessToken,
+    uploadsPlaylistId,
+    max,
+    pageToken
+  );
+  if (videos.length === 0) return { videos, nextPageToken };
   const analytics = await fetchVideoAnalytics(accessToken, videos.map((v) => v.id));
-  return videos.map((v) => {
+  const withAnalytics = videos.map((v) => {
     const a = analytics[v.id];
     return a
       ? {
@@ -449,6 +607,7 @@ export async function fetchRecentVideosWithAnalytics(
         }
       : v;
   });
+  return { videos: withAnalytics, nextPageToken };
 }
 
 // Кривая удержания видео (audience retention): по долям длины ролика — сколько
@@ -549,6 +708,149 @@ export async function fetchSubscriberVideos(
   } catch {
     return [];
   }
+}
+
+// ── Таймлайн роста: прирост подписчиков по видео + релизы по отрезкам времени ──
+
+// Гранулярность отрезков под период: короткие окна — по дням, длинные — крупнее,
+// чтобы столбцов было читаемо (~7–28 штук), а не сотни.
+function granularityFor(days: number): Granularity {
+  if (days <= 28) return "day";
+  if (days <= 90) return "week";
+  return "month";
+}
+
+// Канонический ключ отрезка, в который попадает дата YYYY-MM-DD: сам день, начало
+// ISO-недели (понедельник) или YYYY-MM. Даты трактуем в UTC (Analytics API — по дням).
+function bucketKeyFor(dateStr: string, gran: Granularity): string {
+  if (gran === "day") return dateStr;
+  if (gran === "month") return dateStr.slice(0, 7);
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const weekday = (d.getUTCDay() + 6) % 7; // 0 = понедельник
+  return ymd(new Date(d.getTime() - weekday * DAY_MS));
+}
+
+// Дневной прирост подписчиков по одному видео (dimensions=day, фильтр по видео).
+// Пусто при ошибке — просто не разложим прирост этого ролика по отрезкам.
+async function fetchVideoDailySubs(
+  accessToken: string,
+  videoId: string,
+  startDate: string,
+  endDate: string
+): Promise<Record<string, number>> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "subscribersGained",
+      dimensions: "day",
+      filters: `video==${videoId}`,
+      sort: "day",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const out: Record<string, number> = {};
+    for (const r of data.rows ?? []) out[String(r[0])] = Number(r[1] ?? 0);
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Таймлайн роста канала за период: единая сетка отрезков (день/неделя/месяц) с
+// просмотрами и приростом подписчиков, РАЗЛОЖЕННЫМ по видео-драйверам (+ «Другое»),
+// плюс какие ролики вышли в каждый отрезок. Переиспользует уже полученные `daily`
+// (просмотры + суммарный прирост по каналу), `subVideos` (топ-драйверы за период) и
+// `recentVideos` (для дат выхода/релизов) — добавляет только ≤6 лёгких запросов
+// дневного ряда по каждому драйверу. null — если дневного ряда нет.
+export async function fetchSubscriberTimeline(
+  accessToken: string,
+  startDate: string,
+  endDate: string,
+  days: number,
+  daily: DailyPoint[],
+  subVideos: SubscriberVideo[],
+  recentVideos: YouTubeVideo[]
+): Promise<SubscriberTimeline | null> {
+  if (!daily || daily.length === 0) return null;
+  const gran = granularityFor(days);
+
+  // Драйверы: топ-6 по приросту (subVideos отсортированы по net — пересортируем по
+  // gained и берём тех, кто реально привёл подписчиков).
+  const drivers = [...subVideos]
+    .filter((v) => v.gained > 0)
+    .sort((a, b) => b.gained - a.gained)
+    .slice(0, 6);
+
+  // Дневной ряд прироста по каждому драйверу — параллельно.
+  const dayMaps = await Promise.all(
+    drivers.map((v) => fetchVideoDailySubs(accessToken, v.id, startDate, endDate))
+  );
+
+  // Каркас отрезков в порядке дней (просмотры + суммарный прирост канала).
+  const order: string[] = [];
+  const buckets = new Map<string, SubscriberTimelineBucket>();
+  const ensure = (key: string): SubscriberTimelineBucket => {
+    let b = buckets.get(key);
+    if (!b) {
+      b = { key, views: 0, totalGained: 0, gainedByVideo: {}, other: 0, releases: [] };
+      buckets.set(key, b);
+      order.push(key);
+    }
+    return b;
+  };
+  for (const dp of daily) {
+    const b = ensure(bucketKeyFor(dp.date, gran));
+    b.views += dp.views;
+    b.totalGained += dp.subscribersGained;
+  }
+
+  // Разложить прирост по драйверам и посчитать суммарный вклад каждого.
+  const driverTotal = new Map<string, number>();
+  drivers.forEach((v, i) => {
+    for (const [date, gained] of Object.entries(dayMaps[i])) {
+      if (gained <= 0) continue;
+      const b = buckets.get(bucketKeyFor(date, gran));
+      if (!b) continue;
+      b.gainedByVideo[v.id] = (b.gainedByVideo[v.id] ?? 0) + gained;
+      driverTotal.set(v.id, (driverTotal.get(v.id) ?? 0) + gained);
+    }
+  });
+
+  // «Другое» = прирост отрезка минус то, что отнесли к драйверам (не уходим в минус:
+  // дневной ряд по видео и общий канальный ряд считаются чуть по-разному).
+  for (const b of Array.from(buckets.values())) {
+    const attributed = Object.values(b.gainedByVideo).reduce((s, g) => s + g, 0);
+    b.other = Math.max(0, b.totalGained - attributed);
+  }
+
+  // Релизы: ролики из недавних, вышедшие в окне периода, — в свои отрезки.
+  const startT = new Date(`${startDate}T00:00:00Z`).getTime();
+  const endT = new Date(`${endDate}T23:59:59Z`).getTime();
+  const pubById = new Map(recentVideos.map((v) => [v.id, v.publishedAt] as const));
+  for (const v of recentVideos) {
+    if (!v.publishedAt) continue;
+    const t = new Date(v.publishedAt).getTime();
+    if (Number.isNaN(t) || t < startT || t > endT) continue;
+    const b = buckets.get(bucketKeyFor(v.publishedAt.slice(0, 10), gran));
+    if (b) b.releases.push({ id: v.id, title: v.title, thumbnail: v.thumbnail });
+  }
+
+  const videos: SubscriberTimelineVideo[] = drivers
+    .map((v) => ({
+      id: v.id,
+      title: v.title,
+      thumbnail: v.thumbnail,
+      gained: driverTotal.get(v.id) ?? 0,
+      publishedAt: pubById.get(v.id) ?? null,
+    }))
+    .filter((v) => v.gained > 0)
+    .sort((a, b) => b.gained - a.gained);
+
+  return { granularity: gran, buckets: order.map((k) => buckets.get(k)!), videos };
 }
 
 // ── Аудитория (демография/гео/устройства) ────────────────────────────────────

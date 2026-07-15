@@ -110,6 +110,26 @@ function heuristicCategory(text: string): QueryCategory {
 
 const VALID: QueryCategory[] = ["chat", "short", "long", "method", "content_plan"];
 
+// Таймаут LLM-роутера: провайдер (особенно GLM/OpenRouter под нагрузкой) может
+// зависнуть, а сам вызов classify без ограничения ждёт вечно и блокирует ответ.
+// По таймауту бросаем — routeQuery ловит и откатывается на keyword-эвристику.
+const ROUTER_TIMEOUT_MS = 6_000;
+function withRouterTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("router_timeout")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 const GEN_RE =
   /(сценари|напиши|придума|сделай|хук|заход|идею|идей|превью|назван|рилс|шортс|reels|shorts|tiktok|тикток|клип|висп|ролик|видео|выпуск|лонг|контент[\s-]?план|сетк)/;
 const CHAT_RE =
@@ -219,7 +239,7 @@ export async function routeQuery(
   // Контекст: последние до 4 реплик, чтобы понять follow-up.
   const ctx = messages.slice(-4);
   try {
-    const out = await classify(provider, ctx, meta);
+    const out = await withRouterTimeout(classify(provider, ctx, meta), ROUTER_TIMEOUT_MS);
     const [catPart, ...kw] = out.split("|");
     const word = catPart.toLowerCase().trim().replace(/[^a-z]/g, "");
     const keywords = kw.join("|").trim();

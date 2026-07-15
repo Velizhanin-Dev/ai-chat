@@ -7,6 +7,12 @@ import {
   tbankConfigured,
   type TbankReceipt,
 } from "./tbank";
+import {
+  cloudpaymentsConfigured,
+  cloudpaymentsPublicId,
+  cloudFindByInvoice,
+  type CloudPaymentParams,
+} from "./cloudpayments";
 
 // ── Биллинг: разовая оплата подписки через ТБанк ────────────────────────────
 // MVP: оплата даёт доступ на PERIOD_DAYS дней (продление — новый платёж). При
@@ -83,8 +89,13 @@ export async function createPayment(user: User, planId: string): Promise<CreateP
 }
 
 // Применить успешный платёж: ставим план + срок, сохраняем rebillId. Идемпотентно
-// (повторный вебхук/синхронизация не продлевают второй раз).
-async function markPaid(paymentId: string, rebillId?: string): Promise<void> {
+// (повторный вебхук/синхронизация не продлевают второй раз). externalId — id
+// транзакции провайдера (у CloudPayments приходит только с вебхуком/синком).
+async function markPaid(
+  paymentId: string,
+  rebillId?: string,
+  externalId?: string
+): Promise<void> {
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!payment || payment.status === "CONFIRMED") return;
 
@@ -92,7 +103,12 @@ async function markPaid(paymentId: string, rebillId?: string): Promise<void> {
   await prisma.$transaction([
     prisma.payment.update({
       where: { id: payment.id },
-      data: { status: "CONFIRMED", paidAt: new Date(), rebillId: rebillId ?? payment.rebillId },
+      data: {
+        status: "CONFIRMED",
+        paidAt: new Date(),
+        rebillId: rebillId ?? payment.rebillId,
+        ...(externalId ? { tbankPaymentId: externalId } : {}),
+      },
     }),
     prisma.user.update({
       where: { id: payment.userId },
@@ -105,6 +121,67 @@ async function markPaid(paymentId: string, rebillId?: string): Promise<void> {
       },
     }),
   ]);
+}
+
+// ── CloudPayments (зарубежные карты) ────────────────────────────────────────
+
+export interface CreateCloudResult {
+  ok: boolean;
+  params?: CloudPaymentParams;
+  error?: string;
+}
+
+// Создать платёж CloudPayments: строка Payment(NEW, provider=cloudpayments) →
+// возвращаем параметры для клиентского виджета (сумма — в рублях, id платежа =
+// InvoiceId). Подтверждение — вебхук Pay + синк find на возврате.
+export async function createCloudPayment(user: User, planId: string): Promise<CreateCloudResult> {
+  if (!cloudpaymentsConfigured()) {
+    return { ok: false, error: "Оплата зарубежной картой временно недоступна" };
+  }
+  const plan = (await getPlans()).find((p) => p.id === planId);
+  if (!plan || !plan.active) return { ok: false, error: "Тариф не найден" };
+  if (plan.priceRub <= 0) return { ok: false, error: "Перейти на бесплатный тариф нельзя" };
+
+  const payment = await prisma.payment.create({
+    data: {
+      userId: user.id,
+      planId,
+      amount: plan.priceRub * 100, // храним в копейках, как у ТБанк
+      status: "NEW",
+      provider: "cloudpayments",
+    },
+  });
+
+  return {
+    ok: true,
+    params: {
+      publicId: cloudpaymentsPublicId(),
+      invoiceId: payment.id,
+      amount: plan.priceRub, // виджету — в рублях
+      currency: "RUB",
+      description: `Тариф «${plan.label}» — ${PERIOD_DAYS} дней`,
+      accountId: user.id,
+      email: user.email,
+    },
+  };
+}
+
+// Вебхук Pay CloudPayments (HMAC уже проверен в роуте). Приходит на УСПЕШНУЮ оплату
+// (Status="Completed"). Матчим по InvoiceId (= id платежа), подтверждаем идемпотентно.
+export async function handleCloudNotification(body: Record<string, unknown>): Promise<boolean> {
+  const invoiceId = String(body.InvoiceId || "");
+  const status = String(body.Status || "");
+  const txId = body.TransactionId != null ? String(body.TransactionId) : undefined;
+  if (!invoiceId) return false;
+
+  const payment = await prisma.payment.findUnique({ where: { id: invoiceId } });
+  if (!payment) return false;
+
+  // Pay-уведомление шлётся только при успехе; при пустом Status тоже трактуем как успех.
+  if (status === "Completed" || status === "") {
+    await markPaid(payment.id, undefined, txId);
+  }
+  return true;
 }
 
 // Обработка webhook-уведомления (Token уже проверен в роуте). Возвращает true,
@@ -132,6 +209,22 @@ export async function syncPayment(paymentId: string, userId: string): Promise<st
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!payment || payment.userId !== userId) return null;
   if (payment.status === "CONFIRMED") return "CONFIRMED";
+
+  // CloudPayments: ищем транзакцию по InvoiceId (= id платежа). Completed = оплачено.
+  if (payment.provider === "cloudpayments") {
+    const found = await cloudFindByInvoice(payment.id);
+    if (!found.ok || !found.status) return payment.status;
+    if (found.status === "Completed") {
+      await markPaid(payment.id, undefined, found.transactionId);
+      return "CONFIRMED";
+    }
+    if (["Declined", "Cancelled"].includes(found.status) && payment.status === "NEW") {
+      await prisma.payment.update({ where: { id: payment.id }, data: { status: found.status } });
+    }
+    return found.status;
+  }
+
+  // ТБанк (провайдер по умолчанию): GetState по PaymentId.
   if (!payment.tbankPaymentId) return payment.status;
 
   const st = await tbankGetState(payment.tbankPaymentId);

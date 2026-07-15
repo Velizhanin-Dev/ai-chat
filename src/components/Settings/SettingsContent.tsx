@@ -18,28 +18,22 @@ import {
   IconCreditCard,
   IconLanguage,
   IconCheck,
-  IconPlug,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setLanguage } from "@/store/settingsSlice";
 import { authenticated } from "@/store/authSlice";
 import { apiUpdateProfile } from "@/lib/auth-client";
 import PlanCards from "@/components/Billing/PlanCards";
-import YouTubeConnect from "@/components/Settings/YouTubeConnect";
 
-// Тело настроек (вкладки Основные/Биллинг/Язык) — общий блок для модалки
-// (SettingsModal, открывается из меню профиля и при «Оформить» с лендинга) и для
-// страницы /settings (вкладка горизонтального меню). Вся логика автосейва имени,
-// «о себе» и языка — здесь.
+// Тело АККАУНТНЫХ настроек (вкладки Основные/Биллинг/Язык) — открывается из меню
+// профиля (SettingsModal), в т.ч. при «Оформить» с лендинга (сразу на «Биллинг»).
+// Пер-проектные настройки (тип личности, бриф, YouTube) — отдельно, на странице
+// проекта (ProjectSettings). Автосейв имени/«о себе»/языка — здесь.
 export default function SettingsContent({
   initialTab = "general",
-  projectId,
 }: {
   // На какой вкладке стартовать (например, "billing" — приход с «Оформить»).
   initialTab?: string;
-  // Если задан — это настройки ПРОЕКТА: показываем вкладку «Интеграции» (YouTube
-  // пер-проектный). В аккаунтной модалке (меню профиля) projectId нет → таба нет.
-  projectId?: string;
 }) {
   const dispatch = useAppDispatch();
   const user = useAppSelector((s) => s.auth.user);
@@ -98,11 +92,6 @@ export default function SettingsContent({
         <Tabs.Tab value="general" leftSection={<IconUser size={16} />}>
           Основные
         </Tabs.Tab>
-        {projectId && (
-          <Tabs.Tab value="integrations" leftSection={<IconPlug size={16} />}>
-            Интеграции
-          </Tabs.Tab>
-        )}
         <Tabs.Tab value="billing" leftSection={<IconCreditCard size={16} />}>
           Биллинг
         </Tabs.Tab>
@@ -165,16 +154,9 @@ export default function SettingsContent({
             ответы будут учитывать твою нишу и контекст. Сохраняется само.
           </Text>
         </Stack>
-        {/* Бриф теперь у каждого проекта свой (создаётся при «Новый проект»),
-            отдельной кнопки «пройти бриф» в настройках больше нет. */}
+        {/* Тип личности, бриф и YouTube — пер-проектные, живут на странице
+            настроек проекта (ProjectSettings), не в аккаунтной модалке. */}
       </Tabs.Panel>
-
-      {/* ── Интеграции (пер-проектные) ────────────────────────────── */}
-      {projectId && (
-        <Tabs.Panel value="integrations">
-          <YouTubeConnect projectId={projectId} />
-        </Tabs.Panel>
-      )}
 
       {/* ── Биллинг ───────────────────────────────────────────────── */}
       <Tabs.Panel value="billing">

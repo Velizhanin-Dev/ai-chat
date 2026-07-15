@@ -17,6 +17,7 @@ export interface AdminPaymentRow {
   planLabel: string;
   amount: number; // копейки
   status: string;
+  provider: string; // "tbank" | "cloudpayments"
   tbankPaymentId: string | null;
   createdAt: string;
   paidAt: string | null;
@@ -72,6 +73,7 @@ export async function GET(req: Request) {
       planLabel: labelOf(p.planId),
       amount: p.amount,
       status: p.status,
+      provider: p.provider,
       tbankPaymentId: p.tbankPaymentId,
       createdAt: p.createdAt.toISOString(),
       paidAt: p.paidAt ? p.paidAt.toISOString() : null,
@@ -115,6 +117,7 @@ export async function GET(req: Request) {
     planLabel: labelOf(p.planId),
     amount: p.amount,
     status: p.status,
+    provider: p.provider,
     tbankPaymentId: p.tbankPaymentId,
     createdAt: p.createdAt.toISOString(),
     paidAt: p.paidAt ? p.paidAt.toISOString() : null,

@@ -30,7 +30,7 @@ import {
 } from "@tabler/icons-react";
 import { DISC_PROFILES, CAMERA_OPTIONS } from "@/lib/brief";
 import { PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
-import { PlanBadge, PaymentStatusBadge } from "@/components/Admin/Badges";
+import { PlanBadge, PaymentStatusBadge, PaymentProviderBadge } from "@/components/Admin/Badges";
 import { formatPrice } from "@/lib/plans";
 import type { AdminUserRow } from "@/app/api/admin/users/route";
 import type { AdminPaymentRow } from "@/app/api/admin/payments/route";
@@ -731,7 +731,10 @@ export default function AdminUsersPage() {
                               {new Date(pay.paidAt ?? pay.createdAt).toLocaleString("ru-RU")}
                             </Text>
                           </div>
-                          <PaymentStatusBadge status={pay.status} />
+                          <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+                            <PaymentProviderBadge provider={pay.provider} />
+                            <PaymentStatusBadge status={pay.status} />
+                          </Group>
                         </Group>
                       ))}
                     </Stack>

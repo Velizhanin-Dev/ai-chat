@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { apiError } from "@/lib/http";
-import { youtubeConfigured, revokeToken, assertOwnedProject } from "@/lib/youtube";
+import {
+  youtubeConfigured,
+  revokeToken,
+  assertOwnedProject,
+  clearStatsCache,
+} from "@/lib/youtube";
 import type { YouTubeStatus } from "@/lib/youtube-types";
 
 // Статус пер-проектной интеграции YouTube (для карточки в настройках проекта).
@@ -49,6 +54,7 @@ export async function DELETE(req: Request) {
   if (integ) {
     await revokeToken(integ.refreshToken || integ.accessToken);
     await prisma.youTubeIntegration.delete({ where: { id: integ.id } });
+    clearStatsCache(owned); // не отдавать закэшированные данные отключённого канала
   }
   return NextResponse.json({ ok: true });
 }

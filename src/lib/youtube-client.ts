@@ -1,4 +1,10 @@
-import type { YouTubeStatus, YouTubeData, VideoDetail, VideoAnalysis } from "./youtube-types";
+import type {
+  YouTubeStatus,
+  YouTubeData,
+  VideoDetail,
+  VideoAnalysis,
+  VideoPage,
+} from "./youtube-types";
 
 // ── Клиентские обёртки над /api/integrations/youtube/* ──────────────────────
 
@@ -31,12 +37,14 @@ export async function apiYouTubeDisconnect(projectId: string): Promise<Result<nu
 
 export async function apiYouTubeData(
   projectId: string,
-  period: number
+  period: number,
+  refresh = false
 ): Promise<Result<YouTubeData>> {
   try {
-    const res = await fetch(`/api/integrations/youtube/data?${q(projectId)}&period=${period}`, {
-      cache: "no-store",
-    });
+    const res = await fetch(
+      `/api/integrations/youtube/data?${q(projectId)}&period=${period}${refresh ? "&refresh=1" : ""}`,
+      { cache: "no-store" }
+    );
     const data = (await res.json().catch(() => ({}))) as YouTubeData & {
       error?: string;
       code?: string;
@@ -45,6 +53,29 @@ export async function apiYouTubeData(
       return { ok: false, error: data.error || "Не удалось загрузить данные", code: data.code };
     }
     return { ok: true, data };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Следующая страница видео канала (для «показать ещё» / бесконечного скролла).
+export async function apiYouTubeVideos(
+  projectId: string,
+  pageToken: string
+): Promise<Result<VideoPage>> {
+  try {
+    const res = await fetch(
+      `/api/integrations/youtube/videos?${q(projectId)}&pageToken=${encodeURIComponent(pageToken)}`,
+      { cache: "no-store" }
+    );
+    const data = (await res.json().catch(() => ({}))) as VideoPage & {
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, error: data.error || "Не удалось загрузить видео", code: data.code };
+    }
+    return { ok: true, data: { videos: data.videos ?? [], nextPageToken: data.nextPageToken ?? null } };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
@@ -176,6 +207,14 @@ export function formatDuration(iso: string): string {
   const mm = String(min).padStart(h ? 2 : 1, "0");
   const ss = String(s).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// ISO8601-длительность → всего секунд (0, если пусто/не распарсилось). Нужна, чтобы
+// перевести долю длины ролика (elapsedVideoTimeRatio) в реальные секунды на графике.
+export function durationToSeconds(iso: string): number {
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso);
+  if (!m) return 0;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
 }
 
 // Время просмотра: минуты → «12,3 тыс. ч» / «340 ч» / «45 мин».

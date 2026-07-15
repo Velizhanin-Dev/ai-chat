@@ -243,8 +243,9 @@ AI-ассистент Велижанина (методика КМК) в форм
     по `updatedAt`; экран «Создайте первый проект» — только когда проектов реально нет.
   - **Чат проекта — `src/app/[projectId]/chat/page.tsx`** (порт прежнего `chat/page`, без
     брифа): заголовок/переименование/удаление (удаление → `/app`), ленивая загрузка
-    сообщений, блокировка по тарифу. Настройки — `src/app/[projectId]/settings/page.tsx`
-    (контент общий с модалкой — `components/Settings/SettingsContent.tsx`).
+    сообщений, блокировка по тарифу. Настройки проекта — `src/app/[projectId]/settings/page.tsx`
+    (компонент `components/Settings/ProjectSettings.tsx`: тип личности + «Исправить
+    информацию» + YouTube; НЕ аккаунтная модалка).
   - **Горизонтальное меню — `components/Shell/TopNav.tsx`:** полоса во всю ширину области
     (вынесена из колонки `maw 900`, отделена нижним бордером; `AppShell.Main` — flex-колонка
     с `padding={0}`), ссылки `/{projectId}/{seg}`. На `/app` (нет projectId) не рендерится.
@@ -254,11 +255,14 @@ AI-ассистент Велижанина (методика КМК) в форм
   - **Сайдбар «Мои проекты» — на всех страницах обвязки.** Выбор проекта → `/{id}/chat`
     (`router.push`), «Новый проект» → `startBriefing` + `/app`. Переключатель темы и меню
     профиля (Настройки/Админка/Выйти) — внизу сайдбара (как раньше).
-  - **Закрытые разделы (только админам).** Канал / Генератор креативов / Разборы — «в
-    разработке». Для не-админов вкладки в `TopNav` задизейблены с тултипом «Будет доступно
-    позже» (`adminOnly` + роль из стора). Сами роуты прикрыты **серверным админ-гвардом**:
-    route-group `src/app/[projectId]/(locked)/layout.tsx` (`getAdminUser()` → `notFound()`,
-    паттерн `/admin`; группа `(locked)` не влияет на URL). Заглушки — `components/Shell/ComingSoon.tsx`.
+  - **Раздел «Канал» — открыт всем залогиненным** (вкладка `adminOnly:false`, роут
+    `src/app/[projectId]/channel/`, вне `(locked)`; гость → middleware на `/login`; данные —
+    только если канал подключён).
+  - **Закрытые разделы (только админам).** Генератор креативов / Разборы — «в разработке».
+    Для не-админов вкладки в `TopNav` задизейблены с тултипом «Будет доступно позже» (`adminOnly`
+    + роль из стора). Сами роуты прикрыты **серверным админ-гвардом**: route-group
+    `src/app/[projectId]/(locked)/layout.tsx` (`getAdminUser()` → `notFound()`, паттерн `/admin`;
+    группа `(locked)` не влияет на URL). Заглушки — `components/Shell/ComingSoon.tsx`.
   - **Middleware** гейтит `/app` и `/:projectId/chat|channel|creatives|reviews|settings`
     (+ `/:path*`); функция в начале пропускает `/api/*` (иначе matcher `/:projectId/chat`
     поймал бы `/api/chat` и отдал бы гостю HTML-редирект вместо JSON 401). Гость → `/login`;
@@ -294,29 +298,52 @@ AI-ассистент Велижанина (методика КМК) в форм
     аналитики за 28 дней). `409 YT_REAUTH` при протухшем/отозванном токене → UI просит
     переподключить; аналитика best-effort (`fetchDailyAnalytics` → null при ошибке, график
     просто не рисуем).
-  - **UI.** Настройки ПРОЕКТА (`/{projectId}/settings`): вкладка «Интеграции»
-    (`components/Settings/YouTubeConnect.tsx`, проп `projectId`) — карточка подключения /
-    состояние «подключено» (аватар канала + отключить с инлайн-подтверждением) + тост по
-    `?yt=` из колбэка. Кнопка «Подключить» задизейблена без Google-ключей (`configured:false`).
-    Вкладка показывается ТОЛЬКО когда `SettingsContent` получил `projectId` — в аккаунтной
-    модалке (меню профиля, `SettingsModal` без projectId) её НЕТ. Раздел «Канал»:
+  - **UI.** Настройки ПРОЕКТА (`/{projectId}/settings`, компонент `ProjectSettings`) —
+    единый экран без вкладок: карточка YouTube (`components/Settings/YouTubeConnect.tsx`, проп
+    `projectId`) — подключение / состояние «подключено» (аватар канала + отключить с инлайн-
+    подтверждением) + тост по `?yt=` из колбэка. Кнопка «Подключить» задизейблена без Google-
+    ключей (`configured:false`). Аккаунтная модалка (`SettingsModal`) YouTube НЕ показывает —
+    интеграция пер-проектная. Раздел «Канал»:
     `components/Channel/ChannelDashboard.tsx` (`projectId` из URL) — шапка канала
     (баннер+аватар), 4 KPI-карточки (подписчики/просмотры/видео/просмотры за 28 дней),
-    area-график просмотров (`@mantine/charts`) и адаптивная сетка видео с превью,
-    длительностью и метриками (просмотры/лайки/комменты). Состояния: skeleton / «не
-    подключено» (CTA в настройки проекта `?tab=integrations`) / «переподключить» / ошибка+
-    ретрай. Ховер-микроанимации карточек видео — `.yt-video-card`/`.yt-thumb` в globals.css
-    (с `prefers-reduced-motion`). Настройки проекта читают `?tab=` (Suspense + `useSearchParams`).
-  - ⚠️ **Раздел «Канал» пока за админ-гвардом** `(locked)` (как и раньше — «в разработке,
-    только админам»). Открыть всем — вынести `channel/` из route-group `(locked)` и снять
-    `adminOnly` во вкладке `TopNav`. Подключение в настройках проекта — для всех залогиненных.
+    area-график просмотров (`@mantine/charts`) и адаптивная сетка **всех видео канала** с превью,
+    длительностью и метриками (просмотры/лайки/комменты). **Пагинация:** `/data` отдаёт первую
+    страницу + `videosNextPageToken`, остальные догружаются постранично (по 30) через `GET
+    /api/integrations/youtube/videos?pageToken=` (`apiYouTubeVideos`) — автоподгрузка по
+    `IntersectionObserver` при доскролле до конца ленты + кнопка-фолбэк «Показать ещё»; счётчик
+    «N из M». Общий помощник — `fetchRecentVideos(...,pageToken)` → `VideoPage {videos,
+    nextPageToken}`. Состояния: skeleton / «не
+    подключено» (CTA в настройки проекта `?tab=integrations` — `ProjectSettings` по этому
+    параметру проскроллит к секции YouTube) / «переподключить» / ошибка+ретрай. Ховер-
+    микроанимации карточек видео — `.yt-video-card`/`.yt-thumb` в globals.css (с `prefers-reduced-motion`).
+  - 🟢 **Раздел «Канал» открыт всем залогиненным** (роут `src/app/[projectId]/channel/`, вне
+    `(locked)`; вкладка `TopNav` `adminOnly:false`). Гость → middleware на `/login`; данные — по
+    подключённому каналу. Ассистент в чате по делу упоминает раздел «Канал» для полной аналитики
+    (инструкция в `buildChannelBlock`, только когда канал подключён).
   - 🟢 **Расширенная аналитика дашборда** (этапы 1–5, см.
     [docs/channel-analytics-plan.md](docs/channel-analytics-plan.md)): переключатель периода
     7/28/90/365 + KPI за период с дельтами роста; per-video удержание (ср. % досмотра баром
-    + **кривая удержания** в модалке по клику); источники трафика (donut); динамика
-    подписчиков (пришло/ушло по дням + видео-драйверы); **ИИ-разбор видео** — см. ниже.
+    + **кривая удержания** в модалке по клику); источники трафика (donut); **блок «Рост канала»**
+    (см. ниже); **ИИ-разбор видео** — см. ниже.
     Ограничение: CTR/показы превью публичный Analytics API не отдаёт. Осталось (🔴): вовлечённость,
     аудитория/ЦА, топы/регулярность, доп. кнопки «действие ассистента».
+  - 🟢 **Блок «Рост канала» (атрибуция подписчиков по видео)** — `GrowthSection` в
+    [ChannelDashboard.tsx](src/components/Channel/ChannelDashboard.tsx): два синхронных графика
+    на общей оси времени — сверху область просмотров, снизу **столбцы прироста подписчиков,
+    разложенные по видео-драйверам** (`BarChart type=stacked`, серия на видео + серая «Другое»):
+    цветной сегмент = сколько подписчиков привёл конкретный ролик в этот отрезок (а не общий
+    прирост). Под нижним графиком — **рейка релизов** (кастомный тик оси X `ReleaseTick`,
+    SVG-`<image>`: превью роликов ровно под столбцом отрезка, где они вышли; пиксель-в-пиксель по
+    координатам тика). Кастомный тултип (`GrowthTooltip`) разбивает прирост по видео; легенда-
+    лидерборд (`DriverRow`, цвет серии + превью + вклад +N) кликом открывает `VideoDetailModal`
+    (разбор упаковки). Данные — `fetchSubscriberTimeline` в [youtube.ts](src/lib/youtube.ts):
+    гранулярность под период (≤28 дн → день, ≤90 → неделя, иначе месяц), переиспользует уже
+    полученные `daily`/`subVideos`/`videos` и добавляет лишь **≤6 лёгких** дневных запросов по
+    драйверам (`fetchVideoDailySubs`, dimensions=day+filters=video==ID); тип `SubscriberTimeline`
+    (youtube-types), поле `SubscriberDynamics.timeline`. Заменил прежнюю секцию «пришло/ушло по
+    дням» + плоский список драйверов; null-таймлайн → фолбэк на простой график просмотров.
+    Ограничение: релизы берутся из недавних ~12 видео (на 365 дн старые релизы могут не попасть в
+    рейку; атрибуция подписчиков при этом полная).
   - 🟢 **ИИ-разбор упаковки видео** (`POST /api/integrations/youtube/analyze`) — в модалке
     видео кнопка «Разобрать с ИИ»: по названию/описанию/тегам/удержанию даёт summary
     (сильное/слабое) + готовые варианты (3 названия по ВИСП, переписанное описание, теги)
@@ -326,6 +353,40 @@ AI-ассистент Велижанина (методика КМК) в форм
     промпт урезан под упаковку (book/formats off, TG-ВИСП on, category→chat = thinking off).
     Ответ копится на сервере (не стрим) → латентность = латентность движка (Claude ~10–15с,
     GLM зависит от нагрузки Z.ai).
+  - 🟢 **Кэш дашборда «Канал» (экономия квоты YouTube API).** Раньше каждый заход + каждое
+    переключение периода (7/28/90/365) дёргали YouTube заново (~13+ вызовов на заход). Теперь
+    собранный payload кэшируется в памяти по ключу `(проект:период)`, TTL 15 мин
+    (`statsCacheKey`/`getCachedStats`/`setCachedStats`/`clearStatsCache` в
+    [youtube.ts](src/lib/youtube.ts)). Переключения на уже загруженный период и повторные
+    заходы — из кэша (0 вызовов). Кнопка «Обновить» форсит свежее (`?refresh=1`, байпас);
+    отключение канала (DELETE) чистит кэш проекта. В шапке — метка «обновлено HH:MM» (`fetchedAt`
+    в payload). In-memory (per-instance); для мульти-инстанса позже — БД/Redis.
+  - 🟢 **P1: аналитик-осведомлённый ассистент (данные канала в контексте чата).** Если у
+    проекта подключён YouTube — `POST /api/chat` подставляет в system-промпт **компактный снимок
+    канала** (`buildChannelBlock` в [system.ts](src/lib/llm/system.ts)): канал + KPI за 28 дней с
+    трендом + топ-видео с удержанием + источники трафика + драйверы подписчиков. Нейронка
+    разбирает канал предметно по цифрам (в голосе Велижанина, методику молча). Снимок легче
+    дашборда (без таймлайна/аудитории) и кэшируется ОТДЕЛЬНО (`getChannelSnapshotCached`,
+    `fetchChannelSnapshot` в youtube.ts, TTL 30 мин по проекту) — **YouTube не дёргается на каждое
+    сообщение**; сбой снимка чат не роняет (best-effort → null). Блок идёт в некэшируемый хвост
+    промпта (recency, кэш-префикс не ломает); в full-режиме — перед `FINAL_CHECKLIST`.
+    `buildSystem`/`buildFullSystem` получили опциональные `channelBlock`/`youtubeConnected`
+    (ИИ-разбор видео их не передаёт — там канал не нужен).
+  - 🟢 **Активный призыв подключить канал прямо в чате (заметно, но не спамом).** Когда канал НЕ
+    подключён, в промпт добавляется инструкция предлагать подключение и ставить В КОНЦЕ ответа
+    маркер `[[connect_youtube]]` (единый источник — [chat-markers.ts](src/lib/chat-markers.ts),
+    `CONNECT_YT_MARKER`/`splitConnectCta`). **Дросселирование по режиму `ConnectNudge` (system.ts):**
+    `active` — пока в истории диалога ещё нет маркера: модель предлагает заметно, в т.ч. **мягкой
+    припиской к генеративным ответам** (сценарий/идея/контент-план: «кстати, я теперь умею разбирать
+    твой канал по цифрам — подключи…»), обязательно — если вопрос прямо про канал; `gentle` — маркер
+    в истории уже есть (предлагали): больше не долбит, зовёт только по прямому вопросу про канал;
+    `off` — канал подключён или не-чат вызов (ИИ-разбор видео). Режим считает `route.ts` по истории
+    (`messages.some(...CONNECT_YT_MARKER)`), т.е. **не чаще одного заметного предложения за диалог**
+    (в пределах `HISTORY_LIMIT`). Клиент (`ChatWindow`) вырезает маркер (и хвостовой недописанный во
+    время стрима) и рисует под ответом кнопку
+    [ConnectYouTubeCta](src/components/Chat/ConnectYouTubeCta.tsx) → в настройки `?tab=integrations`.
+    **Двойной гейт:** кнопка показывается только если `apiYouTubeStatus` подтвердил, что канал реально
+    не подключён (при случайном маркере не мигнёт; на старых сообщениях после подключения кнопки нет).
 - 🟢 **Брендовые 404 и 500** — `src/app/not-found.tsx` (404) и `src/app/error.tsx` (500,
   client, с `reset`). Логотип + крупный код в бренд-акценте + кнопки «На главную» (`/`) и
   «В приложение» (`/app`); у 500 ещё «Попробовать снова» (`reset`). Рендерятся «голыми».
@@ -437,10 +498,23 @@ AI-ассистент Велижанина (методика КМК) в форм
   - **В модель:** `route.ts` берёт бриф проекта из БД (`conv.brief`) и через `buildBriefBlock`
     вставляет отдельным system-блоком (поля брифа + карта архетипа) рядом с «о себе».
     `ChatInput` бриф больше не шлёт.
-  - **«Пройти бриф заново» в настройках убрано** — бриф у проекта, отдельной кнопки нет.
-- 🟡 **Настройки (модалка)** — `components/Settings/SettingsModal.tsx`, открывается из
-  меню профиля **только для залогиненных** (кнопка скрыта для гостей). Вкладки: Основные,
-  Биллинг, Язык. Слайс — `store/settingsSlice.ts`.
+  - **«Исправить информацию» (перезапуск брифа) — на странице настроек ПРОЕКТА**
+    (`ProjectSettings`, см. ниже). Кнопка открывает `BriefFlow` на месте (предзаполнен текущим
+    брифом проекта), на финале — `PATCH /api/conversations/[id]/brief` (валидирует DISC,
+    `sanitizeBrief`+`isBriefComplete`; клиент — `apiUpdateProjectBrief`). Заголовок проекта при
+    этом НЕ трогаем (правится отдельно в шапке). Чтение брифа проекта — `GET
+    /api/conversations/[id]/brief` (`apiGetProjectBrief`).
+- 🟢 **Настройки ПРОЕКТА (пер-проектные)** — `components/Settings/ProjectSettings.tsx`, страница
+  `/{projectId}/settings`. Единый экран без вкладок, только то, что относится к проекту:
+  **тип личности** (карточка архетипа DISC из `Conversation.brief` — nick/код/характеристика +
+  форматы/что заводит/что убивает, `DISC_PROFILES`), **«Исправить информацию»** (перезапуск брифа
+  проекта, см. выше) и **интеграция YouTube** (`YouTubeConnect`). По `?tab=integrations` скроллит
+  к YouTube (старые CTA из чата/дашборда). Аккаунтные настройки (имя/почта/о себе/биллинг/язык) —
+  отдельно, в модалке меню профиля (`SettingsModal`/`SettingsContent`).
+- 🟡 **Настройки аккаунта (модалка)** — `components/Settings/SettingsModal.tsx` →
+  `SettingsContent`, открывается из меню профиля **только для залогиненных** (кнопка скрыта для
+  гостей). Вкладки: Основные, Биллинг, Язык (YouTube/бриф отсюда убраны — они пер-проектные).
+  Слайс — `store/settingsSlice.ts`.
   - **Основные → Аккаунт:** имя и почта в один ряд (по `TextInput`). Имя «как обращаться» —
     редактируемое, **автосейв с дебаунсом** (700 мс, без кнопки): `PATCH /api/auth/me`
     обновляет `User.name` и диспатчит `authenticated` → шапка/сайдбар подхватывают новое имя;
@@ -449,8 +523,8 @@ AI-ассистент Велижанина (методика КМК) в форм
     (`/api/auth/resend-verification`).
   - **Основные → О себе:** `settings.aboutYou`, реально подгружается в нейронку (`ChatInput`
     шлёт в `/api/chat`, `route.ts` вставляет отдельным system-блоком в конец).
-  - **Основные → Бриф и тип харизмы:** статус (бейдж с архетипом) + кнопка «Пройти бриф
-    заново» → открывает `BriefModal` (см. отдельный пункт «Бриф клиента + карта харизмы»).
+  - **Бриф и тип личности в модалке аккаунта НЕТ** — они пер-проектные, живут на странице
+    настроек проекта (`ProjectSettings`, см. «Настройки ПРОЕКТА»).
   - **Биллинг:** карточки тарифов тянутся из БД через `GET /api/plans` (модель `Plan`,
     редактируется в админке — см. «Админка + фичефлаги» → «Тарифы в БД»), тот же источник,
     что и у лендинга. id'шники `PlanId` (`start`/`blogger`/`studio`) исторические. Переход
@@ -565,8 +639,11 @@ AI-ассистент Велижанина (методика КМК) в форм
       сообщений, архетип DISC из брифа, поля «о проекте»); платежи юзера —
       `GET /api/admin/payments?userId=`.
   - **Страница платежей (`/admin/payments`).** Глобальный список всех платежей (плательщик +
-    почта, тариф `PlanBadge`, сумма, статус `PaymentStatusBadge`, дата) — пагинация по 30 +
+    почта, тариф `PlanBadge`, сумма, **способ оплаты `PaymentProviderBadge`** — ТБанк /
+    CloudPayments, `provider` из строки платежа, `paymentProviderMeta` в Badges), статус
+    `PaymentStatusBadge`, дата) — пагинация по 30 +
     поиск по имени/почте плательщика + фильтр по статусу (оплачено/ожидают/отклонён/возврат).
+    Способ оплаты виден и в карточке юзера (история платежей).
     Тот же `GET /api/admin/payments`, но **без `userId`** уходит в режим списка: `where` по
     `user.OR` (имя/почта) + группировка raw-статусов ТБанк (`statusWhere`: `pending` =
     `notIn` терминальных), `include user`, отдаёт `{ payments: AdminPaymentListRow[], total,
@@ -632,17 +709,48 @@ AI-ассистент Велижанина (методика КМК) в форм
     54-ФЗ (`Receipt`) собирается всегда: позиция = подписка, `Email` покупателя,
     `Taxation`/`Tax` — из env (`TBANK_TAXATION`/`TBANK_VAT`, опц. `TBANK_FFD_VERSION`).
   - **Модели БД** (`schema.prisma`, миграция `add_payments`): `Payment` (id=OrderId,
-    planId, amount-копейки, status, tbankPaymentId, rebillId, paidAt) + `User.planExpiresAt`
+    planId, amount-копейки, status, `provider` (`tbank`/`cloudpayments`, миграция
+    `add_payment_provider`), tbankPaymentId, rebillId, paidAt) + `User.planExpiresAt`
     и `User.rebillId`. `planExpiresAt` в `publicUser`/`AuthUser` (показ срока в биллинге).
   - **API** `src/app/api/payments/*`: `POST create` (авторизован → ссылка на оплату),
     `POST webhook` (публичный, Token-проверка, ответ телом `OK`; невалидный Token → 403),
     `GET status?order=` (синк на возврате → статус + свежий юзер). Источник правды —
     вебхук **и** GetState-синк (последний даёт работать без публичного `NotificationURL`,
     напр. в dev/песочнице).
-  - **UI** — биллинг в `SettingsModal` (общий `PlanCards`): «Перейти» → `apiCreatePayment`
-    → редирект на `PaymentURL` (или ошибка в `Alert`, graceful «Оплата временно недоступна»
-    без ключей); строка статуса «Тариф **{label}** активен до **{дата+время}** · осталось
-    запросов: **N**» (название тарифа и значения — бренд-акцентом; истёк → красным).
+  - **UI** — биллинг в `SettingsModal` (общий `PlanCards`): «Перейти» открывает **модалку
+    выбора способа оплаты** (`components/Billing/PaymentMethodModal.tsx`) с превью тарифа
+    (название + цена) и двумя путями: **российская карта** (СБП/Мир → ТБанк, редирект на
+    `PaymentURL`) или **зарубежная карта** (Visa/MC → CloudPayments-виджет на месте, см. ниже).
+    Строка статуса «Тариф **{label}** активен до **{дата+время}** · осталось запросов: **N**»
+    (название тарифа и значения — бренд-акцентом; истёк → красным).
+- 🟡 **Оплата зарубежными картами (CloudPayments) — второй провайдер рядом с ТБанк.**
+  Visa/Mastercard и прочие иностранные карты через **клиентский виджет** CloudPayments
+  (`cp.CloudPayments().pay('charge', …)`), а не редиректом. **Не протестировано вживую**
+  (нужны ключи CloudPayments).
+  - **Клиент CloudPayments** — `src/lib/cloudpayments.ts` (сервер): `cloudpaymentsConfigured`,
+    `verifyCloudHmac` (проверка вебхука: `Content-HMAC` = Base64(HMAC-SHA256(rawBody,
+    apiSecret))), `cloudFindByInvoice` (POST `/v2/payments/find` — синк статуса на возврате,
+    аналог GetState у ТБанк). Виджет-обёртка — `src/lib/cloudpayments-widget.ts` (клиент):
+    ленивая загрузка `widget.cloudpayments.ru/bundles/cloudpayments.js` + `openCloudPaymentsWidget`
+    (резолвит success/fail/cancel).
+  - **Домен** — в `src/lib/billing.ts`: `createCloudPayment` (строка `Payment(NEW,
+    provider="cloudpayments")` → параметры виджета: publicId, invoiceId=id платежа, сумма в
+    **рублях**, RUB, description, accountId=userId, email), `handleCloudNotification` (вебхук Pay,
+    Status="Completed" → `markPaid`), ветка `provider==="cloudpayments"` в `syncPayment`
+    (find по InvoiceId). `markPaid` получил `externalId` (TransactionId CloudPayments кладём в
+    `tbankPaymentId` как внешний id). Чек 54-ФЗ пока НЕ шлём (TODO, если нужен по кассе).
+  - **Модель** — `Payment.provider` (`tbank`|`cloudpayments`, дефолт `tbank`; миграция
+    `add_payment_provider`). От него зависит синк статуса. `syncPayment`/страница `/payment`
+    провайдер-агностичны (читают `provider` из строки платежа).
+  - **API** `src/app/api/payments/cloudpayments/*`: `POST create` (авторизован → параметры
+    виджета), `POST webhook` (публичный, HMAC-проверка по СЫРОМУ телу; тело form-urlencoded или
+    JSON; ответ `{"code":0}` = принято, иначе `{"code":13}`). URL вебхука в кабинете
+    CloudPayments = `{NEXT_PUBLIC_APP_URL}/api/payments/cloudpayments/webhook`.
+  - **UI-флоу** — модалка `PaymentMethodModal` (см. выше): «Зарубежная карта» →
+    `apiCreateCloudPayment` → `openCloudPaymentsWidget` → на success редирект на
+    `/payment?order=<invoiceId>` (та же страница результата синкает через `apiPaymentStatus`,
+    который по `provider` вызывает `cloudFindByInvoice`). Кнопка задизейблена без
+    `NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID`.
   - **Результат платежа — отдельная страница `/payment`** (`src/app/payment/page.tsx`,
     bare-route). ТБанк возвращает на `SuccessURL=/payment?order=…` и
     `FailURL=/payment?status=fail&order=…`. Раньше возврат шёл на `/chat?payment=…`, но там
@@ -964,6 +1072,11 @@ AI-ассистент Велижанина (методика КМК) в форм
 `https://securepay.tinkoff.ru/v2`), `TBANK_TAXATION` (дефолт `usn_income`), `TBANK_VAT`
 (дефолт `none`), `TBANK_FFD_VERSION` (опц.) — для чека 54-ФЗ. `NEXT_PUBLIC_APP_URL` нужен
 для `NotificationURL`/`SuccessURL`/`FailURL` (в ТБанк-кабинете укажи тот же домен).
+Оплата зарубежными картами (CloudPayments): `NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID` (публичный
+id — клиент, для виджета; **инлайнится на сборке**) и `CLOUDPAYMENTS_API_SECRET` (API-пароль —
+сервер: HMAC вебхука + вызовы API). Без них способ «Зарубежная карта» задизейблен. Опц.
+`CLOUDPAYMENTS_API_URL` (дефолт `https://api.cloudpayments.ru`). В кабинете CloudPayments укажи
+Pay-вебхук на `{NEXT_PUBLIC_APP_URL}/api/payments/cloudpayments/webhook`.
 GLM: `GLM_API_KEY` (обязателен для движка GLM), `GLM_MODEL` (дефолт `glm-5.2`),
 `GLM_BASE_URL` (дефолт `https://api.z.ai/api/paas/v4`; для bigmodel.cn —
 `https://open.bigmodel.cn/api/paas/v4`). Без `GLM_API_KEY` выбор GLM отдаёт ошибку,

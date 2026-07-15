@@ -1,22 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Stack,
-  Text,
-  Paper,
-  Button,
-  List,
-  ThemeIcon,
-  SimpleGrid,
-  Alert,
-} from "@mantine/core";
-import { IconCheck, IconInfoCircle } from "@tabler/icons-react";
+import { Stack, Text, Paper, Button, List, ThemeIcon, SimpleGrid } from "@mantine/core";
+import { IconCheck } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
-import { apiCreatePayment } from "@/lib/auth-client";
 import { fetchActivePlans } from "@/lib/plans-client";
 import { formatPrice, type PublicPlan } from "@/lib/plans";
-import { ymGoal } from "@/lib/metrika";
+import PaymentMethodModal from "@/components/Billing/PaymentMethodModal";
 
 // Карточки тарифов с кнопкой оплаты — общий блок для биллинга в настройках и для
 // модалки «подписка закончилась». Логика одинаковая:
@@ -29,8 +19,8 @@ export default function PlanCards({ showStatus = false }: { showStatus?: boolean
   const user = useAppSelector((s) => s.auth.user);
   const currentPlan = user?.plan;
   const [plans, setPlans] = useState<PublicPlan[]>([]);
-  const [payingId, setPayingId] = useState<string | null>(null);
-  const [payError, setPayError] = useState<string | null>(null);
+  // Выбранный для оплаты тариф → открывает модалку выбора способа оплаты.
+  const [chosenPlan, setChosenPlan] = useState<PublicPlan | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -41,20 +31,6 @@ export default function PlanCards({ showStatus = false }: { showStatus?: boolean
       active = false;
     };
   }, []);
-
-  const handleChoosePlan = async (id: string) => {
-    setPayError(null);
-    setPayingId(id);
-    const res = await apiCreatePayment(id);
-    if (res.ok) {
-      ymGoal("payment_start", { plan: id });
-      // Уходим на платёжную страницу ТБанк (лоадер не снимаем — навигация).
-      window.location.href = res.data.url;
-      return;
-    }
-    setPayError(res.error);
-    setPayingId(null);
-  };
 
   const planExpiry = user?.planExpiresAt ? new Date(user.planExpiresAt) : null;
   const planExpired = planExpiry ? planExpiry.getTime() <= Date.now() : false;
@@ -145,8 +121,7 @@ export default function PlanCards({ showStatus = false }: { showStatus?: boolean
                   // Купить можно только платный тариф. Пробный — лишь статус
                   // (подключён / завершён / недоступен), без действия.
                   disabled={isActiveNow || isFree}
-                  loading={payingId === p.id}
-                  onClick={() => !isFree && handleChoosePlan(p.id)}
+                  onClick={() => !isFree && setChosenPlan(p)}
                 >
                   {isActiveNow
                     ? "Подключён"
@@ -162,19 +137,7 @@ export default function PlanCards({ showStatus = false }: { showStatus?: boolean
         })}
       </SimpleGrid>
 
-      {payError && (
-        <Alert
-          color="red"
-          variant="light"
-          radius="md"
-          icon={<IconInfoCircle size={18} />}
-          withCloseButton
-          onClose={() => setPayError(null)}
-          title="Не удалось перейти к оплате"
-        >
-          {payError}. Если ошибка повторяется — напишите нам, исправим.
-        </Alert>
-      )}
+      <PaymentMethodModal plan={chosenPlan} onClose={() => setChosenPlan(null)} />
     </Stack>
   );
 }
