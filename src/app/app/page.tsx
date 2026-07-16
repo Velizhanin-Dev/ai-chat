@@ -55,6 +55,8 @@ export default function AppHomePage() {
 
   // Созданный проект (для кнопки «Поехали в чат» на экране результата брифа).
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // На экране результата брифа расширяем контейнер и прячем заголовок.
+  const [briefResult, setBriefResult] = useState(false);
 
   // Бриф пройден в визарде → создаём проект, показываем экран результата (архетип),
   // переход в чат — по кнопке (см. resultActions ниже).
@@ -112,19 +114,25 @@ export default function AppHomePage() {
     // Бриф нового проекта. После прохождения — экран результата + «Поехали в чат».
     return (
       <Box style={{ flex: 1, overflowY: "auto", minHeight: 0 }} py="md">
-        <Box maw={560} mx="auto" px={{ base: 4, sm: 0 }}>
-          <Title order={2} className="lp-h2" fz={{ base: "1.35rem", sm: "1.6rem" }} mb={4}>
-            Новый проект
-          </Title>
-          <Text c="dimmed" size="sm" mb="lg">
-            Пара вопросов о проекте и короткий тест — на их основе я буду собирать
-            контент именно под него.
-          </Text>
+        <Box maw={briefResult ? 900 : 560} mx="auto" px={{ base: 4, sm: 0 }}>
+          {/* Заголовок брифа прячем на экране результата — там полноэкранный reveal. */}
+          {!briefResult && (
+            <>
+              <Title order={2} className="lp-h2" fz={{ base: "1.35rem", sm: "1.6rem" }} mb={4}>
+                Новый проект
+              </Title>
+              <Text c="dimmed" size="sm" mb="lg">
+                Пара вопросов о проекте и короткий тест — на их основе я буду собирать
+                контент именно под него.
+              </Text>
+            </>
+          )}
           <BriefFlow
             initialBrief={readAnonBrief()}
             draftKey={PROJECT_BRIEF_DRAFT_KEY}
             draftScope={userId ?? "anon"}
             onSubmit={handleBriefSubmit}
+            onResultChange={(disc) => setBriefResult(disc !== null)}
             resultNote={
               <Text size="sm" c="dimmed">
                 Готово — бриф проекта сохранён. Можно начинать.

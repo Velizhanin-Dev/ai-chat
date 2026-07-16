@@ -12,32 +12,27 @@ import {
   Radio,
   Text,
   Title,
-  Paper,
-  ThemeIcon,
   Alert,
-  List,
   Loader,
-  Image,
   Progress,
 } from "@mantine/core";
 import {
   IconClipboardText,
   IconUser,
   IconSparkles,
-  IconCheck,
   IconAlertCircle,
   IconArrowRight,
   IconArrowLeft,
 } from "@tabler/icons-react";
+import CharismaResult from "@/components/Brief/CharismaResult";
 import {
   EMPTY_BRIEF,
   BRIEF_LIMITS,
   CAMERA_OPTIONS,
   DISC_QUESTIONS,
   DISC_PROFILES,
-  scoreDisc,
+  scoreDiscTest,
   type Brief,
-  type DiscAxis,
   type DiscType,
 } from "@/lib/brief";
 
@@ -210,6 +205,10 @@ export interface BriefFlowProps {
   // Сообщает родителю, стоим ли мы на самом первом вопросе (step 0 / вопрос 1).
   // Страница по QR прячет по нему свой заголовок после первого вопроса.
   onAtStartChange?: (atStart: boolean) => void;
+  // Сообщает родителю тип харизмы, когда показан экран результата (иначе null).
+  // По нему родитель расширяет контейнер под полноэкранный reveal и прячет
+  // свой заголовок брифа.
+  onResultChange?: (disc: DiscType | null) => void;
 }
 
 export default function BriefFlow({
@@ -220,6 +219,7 @@ export default function BriefFlow({
   resultNote,
   resultActions,
   onAtStartChange,
+  onResultChange,
 }: BriefFlowProps) {
   // step: 0 — о проекте, 1 — о себе (DISC), 2 — результат (тип харизмы).
   const [step, setStep] = useState(0);
@@ -232,6 +232,8 @@ export default function BriefFlow({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DiscType | null>(null);
+  // Флаг «смешанный тип» (перекрёстная тройка Q3/Q7/Q8) — для приписки на результате.
+  const [resultMixed, setResultMixed] = useState(false);
   // Внутри шага «О себе»: сначала экран выбора (choose) — пройти тест или указать
   // тип вручную; затем сам тест (test) либо ручной выбор архетипа (manual).
   const [discMode, setDiscMode] = useState<"choose" | "test" | "manual">("choose");
@@ -308,6 +310,11 @@ export default function BriefFlow({
     onAtStartChange?.(step === 0 && sub === 0 && !result);
   }, [step, sub, result, onAtStartChange]);
 
+  // Сообщаем родителю тип харизмы на экране результата (для широкого reveal).
+  useEffect(() => {
+    onResultChange?.(step === 2 ? result : null);
+  }, [step, result, onResultChange]);
+
   const setField = (key: keyof Brief, value: string) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -374,9 +381,10 @@ export default function BriefFlow({
   };
 
   // Единый финиш: сохраняем бриф с выбранным типом харизмы и показываем результат.
-  const submitBrief = async (disc: DiscType) => {
+  // isMixed приходит только из теста (ручной выбор типа — всегда достоверный).
+  const submitBrief = async (disc: DiscType, isMixed = false) => {
     if (saving) return;
-    const brief: Brief = { ...form, disc };
+    const brief: Brief = { ...form, disc, isMixed };
     setSaving(true);
     setError(null);
     const res = await onSubmit(brief);
@@ -387,16 +395,15 @@ export default function BriefFlow({
     }
     clearBriefDraft(draftKey);
     setResult(disc);
+    setResultMixed(isMixed);
     setStep(2);
   };
 
-  // Финиш по тесту: считаем архетип из ответов и сохраняем.
+  // Финиш по тесту: считаем архетип + флаг смешанного типа из ответов и сохраняем.
   const finish = async (finalAnswers: (number | null)[]) => {
     if (finalAnswers.some((a) => a === null)) return;
-    const axes: DiscAxis[] = finalAnswers.map(
-      (a, i) => DISC_QUESTIONS[i].options[a as number].axis
-    );
-    await submitBrief(scoreDisc(axes));
+    const { type, isMixed } = scoreDiscTest(finalAnswers as number[]);
+    await submitBrief(type, isMixed);
   };
 
   const restart = () => {
@@ -405,6 +412,7 @@ export default function BriefFlow({
     setForm(initialBrief ? { ...EMPTY_BRIEF, ...initialBrief } : EMPTY_BRIEF);
     setAnswers(DISC_QUESTIONS.map(() => null));
     setResult(null);
+    setResultMixed(false);
     setError(null);
     setStep(0);
     setSub(0);
@@ -492,27 +500,30 @@ export default function BriefFlow({
 
   return (
     <div>
-      <Stepper
-        active={step}
-        onStepClick={(s) => {
-          // Назад ходить можно; вперёд — нет. После результата — заблокировано.
-          if (result) return;
-          if (s < step) {
-            clearAdvance();
-            setError(null);
-            setStep(s);
-            setSub(0);
-          }
-        }}
-        color="brand"
-        size="sm"
-        mb="lg"
-        allowNextStepsSelect={false}
-      >
-        <Stepper.Step label="О проекте" icon={<IconClipboardText size={16} />} />
-        <Stepper.Step label="О себе" icon={<IconUser size={16} />} />
-        <Stepper.Completed>{null}</Stepper.Completed>
-      </Stepper>
+      {/* Степпер прячем на экране результата — там полноэкранный reveal типажа. */}
+      {step < 2 && (
+        <Stepper
+          active={step}
+          onStepClick={(s) => {
+            // Назад ходить можно; вперёд — нет. После результата — заблокировано.
+            if (result) return;
+            if (s < step) {
+              clearAdvance();
+              setError(null);
+              setStep(s);
+              setSub(0);
+            }
+          }}
+          color="brand"
+          size="sm"
+          mb="lg"
+          allowNextStepsSelect={false}
+        >
+          <Stepper.Step label="О проекте" icon={<IconClipboardText size={16} />} />
+          <Stepper.Step label="О себе" icon={<IconUser size={16} />} />
+          <Stepper.Completed>{null}</Stepper.Completed>
+        </Stepper>
+      )}
 
       {error && (
         <Alert
@@ -764,72 +775,14 @@ export default function BriefFlow({
         </Stack>
       )}
 
-      {/* ── Шаг 3: результат — раскрываем типаж харизмы ────────────────────── */}
+      {/* ── Шаг 3: результат — красивый reveal типажа харизмы ──────────────── */}
       {step === 2 && profile && (
-        <Stack gap="md">
-          <Paper withBorder radius="md" p="md">
-            {/* Картинка типажа. У файлов разный размер и пропорции (от широких до
-                портретных). Натуральный размер с потолками maw=100% / mah=220 +
-                центрирование: каждый масштабируется по своей стороне, влезает
-                везде и не режется/не искажается. */}
-            <Image
-              src={`/images/disc/${profile.code}.webp`}
-              alt={`Типаж «${profile.nick}»`}
-              fit="contain"
-              w="auto"
-              maw="100%"
-              mah={220}
-              mx="auto"
-              radius="md"
-              mb="md"
-            />
-            <Group gap="xs" mb="xs">
-              <ThemeIcon color="brand" variant="light" radius="xl" size="lg">
-                <IconSparkles size={18} />
-              </ThemeIcon>
-              <div>
-                <Text size="xs" c="dimmed">
-                  Твой типаж на камере
-                </Text>
-                <Title order={4}>
-                  «{profile.nick}»{" "}
-                  <Text span c="dimmed" fz="sm">
-                    ({profile.code})
-                  </Text>
-                </Title>
-              </div>
-            </Group>
-            <Text size="sm" mb="sm">
-              {profile.character}
-            </Text>
-            <List
-              size="sm"
-              spacing={4}
-              icon={
-                <ThemeIcon color="brand" variant="light" size={18} radius="xl">
-                  <IconCheck size={12} />
-                </ThemeIcon>
-              }
-            >
-              <List.Item>
-                <Text span fw={500}>
-                  Форматы под тебя:
-                </Text>{" "}
-                {profile.formats}
-              </List.Item>
-              <List.Item>
-                <Text span fw={500}>
-                  Что тебя заводит:
-                </Text>{" "}
-                {profile.works}
-              </List.Item>
-            </List>
-          </Paper>
-          {resultNote}
-          {resultActions && (
-            <Group justify="flex-end">{resultActions({ restart })}</Group>
-          )}
-        </Stack>
+        <CharismaResult
+          profile={profile}
+          isMixed={resultMixed}
+          note={resultNote}
+          actions={resultActions?.({ restart })}
+        />
       )}
     </div>
   );

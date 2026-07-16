@@ -61,7 +61,7 @@ export default function BriefIntro({ onStart }: { onStart: () => void }) {
 
           <Text fz={{ base: "md", sm: "lg" }} c="dimmed" maw={460}>
             Ответь на пару вопросов и пройди короткий тест. В конце откроем твой
-            типаж на камере — один из 7 ярких архетипов.
+            типаж на камере — один из 9 ярких архетипов.
           </Text>
         </Stack>
 

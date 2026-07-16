@@ -30,6 +30,8 @@ type Phase = "checking" | "intro" | "flow";
 
 export default function BriefStandaloneClient() {
   const [phase, setPhase] = useState<Phase>("checking");
+  // На экране результата брифа расширяем контейнер под полноэкранный reveal типажа.
+  const [resultActive, setResultActive] = useState(false);
 
   // На маунте решаем: если бриф уже начат (есть черновик с прогрессом) — сразу в
   // визард (BriefFlow восстановит позицию на незаполненном вопросе); иначе
@@ -88,8 +90,13 @@ export default function BriefStandaloneClient() {
             padding: "16px 16px max(40px, env(safe-area-inset-bottom))",
           }}
         >
-          <Stack gap="lg" w="100%" maw={520}>
-            <Paper withBorder radius="lg" p={{ base: "md", sm: "xl" }}>
+          <Stack gap="lg" w="100%" maw={resultActive ? 900 : 520}>
+            <Paper
+              withBorder={!resultActive}
+              radius="lg"
+              p={resultActive ? 0 : { base: "md", sm: "xl" }}
+              bg={resultActive ? "transparent" : undefined}
+            >
               {/* На финале — карточка типажа + CTA в нейронку. Анон-бриф уже
                   лежит в localStorage (writeAnonBrief): на /chat middleware уведёт
                   на вход/регистрацию, а после AppShell подхватит бриф и создаст
@@ -98,6 +105,7 @@ export default function BriefStandaloneClient() {
                 draftKey={DRAFT_KEY}
                 draftScope="anon"
                 onSubmit={handleSubmit}
+                onResultChange={(disc) => setResultActive(disc !== null)}
                 resultNote={
                   <Stack gap="sm" mt="xs" align="center">
                     <Text fw={600} fz="lg" ta="center">

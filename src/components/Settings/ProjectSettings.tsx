@@ -30,6 +30,8 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // На экране результата брифа расширяем контейнер и прячем заголовок.
+  const [editResult, setEditResult] = useState(false);
   const ytRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,18 +63,24 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
   // предзаполненный текущими данными. На сохранение — PATCH брифа проекта.
   if (editing) {
     return (
-      <Box maw={560} mx="auto">
-        <Text fw={600} fz={{ base: "1.1rem", sm: "1.25rem" }} mb={4}>
-          Исправить информацию
-        </Text>
-        <Text c="dimmed" size="sm" mb="lg">
-          Пара вопросов о проекте и короткий тест типа личности — на их основе я собираю
-          контент именно под тебя.
-        </Text>
+      <Box maw={editResult ? 900 : 560} mx="auto">
+        {/* Заголовок прячем на экране результата — там полноэкранный reveal. */}
+        {!editResult && (
+          <>
+            <Text fw={600} fz={{ base: "1.1rem", sm: "1.25rem" }} mb={4}>
+              Исправить информацию
+            </Text>
+            <Text c="dimmed" size="sm" mb="lg">
+              Пара вопросов о проекте и короткий тест типа личности — на их основе я собираю
+              контент именно под тебя.
+            </Text>
+          </>
+        )}
         <BriefFlow
           initialBrief={brief}
           draftKey={`creative-chat:project-brief-edit-v1:${projectId}`}
           draftScope={userId}
+          onResultChange={(disc) => setEditResult(disc !== null)}
           onSubmit={async (b) => {
             const res = await apiUpdateProjectBrief(projectId, b);
             if (res.ok) setBrief(b);
