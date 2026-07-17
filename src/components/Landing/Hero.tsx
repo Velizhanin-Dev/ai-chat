@@ -176,9 +176,10 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
               style={{
                 display: "block",
                 flexShrink: 0,
-                width: 300,
+                width: 400,
                 height: "auto",
-                marginBottom: -40,
+                marginBottom: -20,
+                marginLeft: 20,
                 filter:
                   "drop-shadow(0 18px 34px color-mix(in srgb, var(--color-accent) 30%, transparent))",
                 pointerEvents: "none",
@@ -203,15 +204,13 @@ export default function Hero({ launchTarget }: { launchTarget?: string | null })
             <img
               src="/images/photo-alpha.png"
               alt="Николай Велижанин"
-              width={208}
-              height={278}
               style={{
                 position: "relative",
                 zIndex: 0,
                 display: "inline-block",
-                width: 208,
+                width: 280,
                 height: "auto",
-                marginBottom: -44,
+                marginBottom: -30,
                 filter:
                   "drop-shadow(0 14px 28px color-mix(in srgb, var(--color-accent) 30%, transparent))",
               }}
