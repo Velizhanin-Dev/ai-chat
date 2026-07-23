@@ -442,6 +442,26 @@ export async function fetchVideoFull(
   };
 }
 
+// Только длительность ролика (1 unit квоты) — когда клиент открыл видео без
+// метаданных (напр. из лидерборда роста), а кривой удержания нужны секунды.
+// Best-effort: не вышло — пустая строка, график откатится на % длины.
+export async function fetchVideoDuration(
+  accessToken: string,
+  videoId: string
+): Promise<string> {
+  try {
+    const vd = await ytGet<VideosResponse>(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${encodeURIComponent(
+        videoId
+      )}`,
+      accessToken
+    );
+    return vd.items?.[0]?.contentDetails?.duration ?? "";
+  } catch {
+    return "";
+  }
+}
+
 // Последние N видео канала (через плейлист загрузок) + их статистика.
 // Страница видео канала (через плейлист загрузок) + их статистика. pageToken —
 // курсор для подгрузки следующих страниц (все ролики, а не только первые). Отдаём

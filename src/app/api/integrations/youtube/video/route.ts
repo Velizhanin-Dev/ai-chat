@@ -5,6 +5,7 @@ import { apiError } from "@/lib/http";
 import {
   getValidAccessToken,
   fetchVideoRetention,
+  fetchVideoDuration,
   assertOwnedProject,
 } from "@/lib/youtube";
 
@@ -21,6 +22,9 @@ export async function GET(req: Request) {
   // диапазон тормозит запрос). Принимаем только валидный формат.
   const startRaw = url.searchParams.get("start") || "";
   const start = /^\d{4}-\d{2}-\d{2}$/.test(startRaw) ? startRaw : undefined;
+  // Клиент не знает длительность ролика (открыт не из ленты видео) — дотягиваем её,
+  // чтобы ось X кривой удержания была в секундах. Лишний вызов только в этом случае.
+  const needDuration = url.searchParams.get("needDuration") === "1";
   if (!videoId) return apiError("Не указан videoId");
 
   const owned = await assertOwnedProject(user.id, projectId);
@@ -33,9 +37,15 @@ export async function GET(req: Request) {
 
   try {
     const accessToken = await getValidAccessToken(integ);
-    const detail = await fetchVideoRetention(accessToken, videoId, start);
+    const [detail, duration] = await Promise.all([
+      fetchVideoRetention(accessToken, videoId, start),
+      needDuration ? fetchVideoDuration(accessToken, videoId) : Promise.resolve(""),
+    ]);
     // fetchVideoRetention сам глушит ошибки в null → отдаём пустую кривую.
-    return NextResponse.json(detail ?? { videoId, curve: [], avgRelative: null });
+    return NextResponse.json({
+      ...(detail ?? { videoId, curve: [], avgRelative: null }),
+      ...(duration ? { duration } : {}),
+    });
   } catch (err) {
     const status = (err as { status?: number }).status;
     const msg = (err as Error).message;

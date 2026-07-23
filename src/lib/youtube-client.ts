@@ -84,12 +84,14 @@ export async function apiYouTubeVideos(
 export async function apiYouTubeVideoDetail(
   projectId: string,
   videoId: string,
-  publishedAt?: string
+  publishedAt?: string,
+  needDuration = false
 ): Promise<Result<VideoDetail>> {
   try {
     const start = publishedAt ? `&start=${encodeURIComponent(publishedAt.slice(0, 10))}` : "";
+    const dur = needDuration ? "&needDuration=1" : "";
     const res = await fetch(
-      `/api/integrations/youtube/video?${q(projectId)}&videoId=${encodeURIComponent(videoId)}${start}`,
+      `/api/integrations/youtube/video?${q(projectId)}&videoId=${encodeURIComponent(videoId)}${start}${dur}`,
       { cache: "no-store" }
     );
     const data = (await res.json().catch(() => ({}))) as VideoDetail & {
@@ -113,12 +115,15 @@ const detailCache = new Map<string, Promise<Result<VideoDetail>>>();
 export function getVideoDetailCached(
   projectId: string,
   videoId: string,
-  publishedAt?: string
+  publishedAt?: string,
+  needDuration = false
 ): Promise<Result<VideoDetail>> {
-  const key = `${projectId}:${videoId}`;
+  // Ключ разный для запросов с длительностью и без — иначе ответ без duration
+  // (предзагрузка по ховеру карточки) переиспользовался бы там, где она нужна.
+  const key = `${projectId}:${videoId}${needDuration ? ":d" : ""}`;
   let p = detailCache.get(key);
   if (!p) {
-    p = apiYouTubeVideoDetail(projectId, videoId, publishedAt).then((res) => {
+    p = apiYouTubeVideoDetail(projectId, videoId, publishedAt, needDuration).then((res) => {
       if (!res.ok) detailCache.delete(key);
       return res;
     });

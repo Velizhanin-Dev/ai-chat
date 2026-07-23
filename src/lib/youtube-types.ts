@@ -152,6 +152,9 @@ export interface VideoDetail {
   videoId: string;
   curve: RetentionPoint[]; // пусто — данных для кривой недостаточно
   avgRelative: number | null; // средний relativeRetentionPerformance по ролику
+  // ISO8601-длительность ролика. Приходит только если клиент её не знал и попросил
+  // (`needDuration`) — нужна, чтобы ось X кривой была в секундах, а не в % длины.
+  duration?: string;
 }
 
 // Результат ИИ-разбора видео (тратит 1 запрос квоты): summary + варианты упаковки.

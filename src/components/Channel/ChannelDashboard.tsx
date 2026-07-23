@@ -1511,19 +1511,22 @@ function VideoDetailModal({
 
   const videoId = video?.id ?? null;
   const publishedAt = video?.publishedAt;
+  // Длительность знаем из ленты видео; если ролик открыт из лидерборда роста —
+  // её нет, тогда просим сервер дотянуть (ось X кривой должна быть в секундах).
+  const knownDurationSec = durationToSeconds(video?.duration ?? "");
   useEffect(() => {
     if (!videoId) return;
     let alive = true;
     setState({ s: "loading" });
     // Кэш+prefetch: если карточку наводили, промис уже готов → откроется мгновенно.
-    getVideoDetailCached(projectId, videoId, publishedAt).then((res) => {
+    getVideoDetailCached(projectId, videoId, publishedAt, knownDurationSec === 0).then((res) => {
       if (!alive) return;
       setState(res.ok ? { s: "ready", detail: res.data } : { s: "error", msg: res.error });
     });
     return () => {
       alive = false;
     };
-  }, [videoId, projectId, publishedAt]);
+  }, [videoId, projectId, publishedAt, knownDurationSec]);
 
   const rewriteHook = () => {
     if (!video) return;
@@ -1570,7 +1573,7 @@ function VideoDetailModal({
             )}
           </Group>
 
-          <RetentionSection state={state} durationSec={durationToSeconds(video.duration)} />
+          <RetentionSection state={state} durationSec={knownDurationSec} />
 
           <Divider label="ИИ-разбор упаковки" labelPosition="center" />
           <AnalysisPanel key={video.id} projectId={projectId} videoId={video.id} />
@@ -1831,11 +1834,13 @@ function RetentionSection({ state, durationSec }: { state: DetailState; duration
       </Alert>
     );
   }
-  // По оси X — реальные секунды ролика (доля длины × длительность). Если длительность
-  // неизвестна (ролик открыт из лидерборда без метаданных) — фолбэк на долю длины в %.
-  const useSeconds = durationSec > 0;
+  // По оси X — реальные секунды ролика (доля длины × длительность). Длительность либо
+  // знаем из ленты видео, либо её дотянул сервер (detail.duration). Фолбэк на % длины —
+  // только если не удалось узнать вообще.
+  const sec = durationSec > 0 ? durationSec : durationToSeconds(state.detail.duration ?? "");
+  const useSeconds = sec > 0;
   const chartData = curve.map((pt) => ({
-    pos: useSeconds ? Math.round(pt.ratio * durationSec) : Math.round(pt.ratio * 100),
+    pos: useSeconds ? Math.round(pt.ratio * sec) : Math.round(pt.ratio * 100),
     Удержание: Math.round(pt.watchRatio * 100),
   }));
   const xFormat = (v: number) => (useSeconds ? formatSeconds(v) : `${v}%`);
