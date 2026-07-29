@@ -7,6 +7,7 @@ import { sanitizeBrief, isBriefComplete } from "@/lib/brief";
 import { getPlans } from "@/lib/plans";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
+import { attachPendingConnection } from "@/lib/youtube";
 
 // Список диалогов текущего пользователя — только метаданные (id/title/даты),
 // без сообщений. Сообщения тянутся лениво по клику (GET /api/conversations/[id]).
@@ -94,6 +95,11 @@ export async function POST(req: Request) {
       },
       select: { id: true, title: true, createdAt: true, updatedAt: true },
     });
+    // Канал, подключённый на шаге брифа (проекта тогда ещё не было), переезжает на
+    // созданный проект — только если клиент явно об этом просит (иначе брошенный
+    // черновик подключения прицепился бы к чужому по смыслу проекту). Best-effort:
+    // не вышло — проект живёт, канал подключат в настройках проекта.
+    if (body.attachChannel === true) await attachPendingConnection(user.id, conv.id);
     const conversation: ConversationMeta = {
       id: conv.id,
       title: conv.title,

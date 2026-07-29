@@ -1,8 +1,18 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Textarea, ActionIcon, Group, Box, Paper, Text, Button, ThemeIcon } from "@mantine/core";
-import { IconSend, IconLock } from "@tabler/icons-react";
+import {
+  Textarea,
+  ActionIcon,
+  Group,
+  Box,
+  Paper,
+  Text,
+  Button,
+  ThemeIcon,
+  Tooltip,
+} from "@mantine/core";
+import { IconSend, IconLock, IconPlayerStopFilled } from "@tabler/icons-react";
 import type { ChatAccessReason } from "@/hooks/useChatAccess";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -196,6 +206,34 @@ export default function ChatInput({
     }
   }, [inputFocusSignal]);
 
+  // Подстановка запроса из плиток стартового экрана. Реагируем на рост seq
+  // (а не на текст) — повторный клик по той же плитке тоже должен срабатывать.
+  const prefill = useAppSelector((s) => s.chat.prefill);
+  const prevPrefillSeq = useRef(prefill.seq);
+  useEffect(() => {
+    if (prevPrefillSeq.current === prefill.seq) return;
+    prevPrefillSeq.current = prefill.seq;
+    setInput(prefill.text);
+    const el = textareaRef.current;
+    if (el) {
+      el.focus();
+      // Курсор в конец — плитки заканчиваются на «…тему: », юзер сразу дописывает.
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = el.value.length;
+      });
+    }
+  }, [prefill]);
+
+  // ── Остановка генерации ───────────────────────────────────────────────────
+  // Рвём fetch AbortController'ом. Сервер видит обрыв через req.signal и НЕ
+  // списывает квоту (см. /api/chat). Уже напечатанное сохраняем в историю.
+  const abortRef = useRef<AbortController | null>(null);
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+  // Размонтирование во время стрима не должно оставлять висящий запрос.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const handleSend = useCallback(async () => {
     const question = input.trim();
     if (!question || isLoading) return;
@@ -238,11 +276,18 @@ export default function ChatInput({
       dispatch(appendStreamingContent(chunk))
     );
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // Текст копим снаружи try: при остановке он нужен в catch, чтобы сохранить
+    // уже сгенерированную часть ответа, а не потерять её.
+    let fullContent = "";
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: history, aboutYou, conversationId: convId }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -273,7 +318,6 @@ export default function ChatInput({
       if (!reader) throw new Error("Нет потока ответа");
 
       const decoder = new TextDecoder();
-      let fullContent = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -321,11 +365,27 @@ export default function ChatInput({
       dispatch(bumpRequestsUsed());
     } catch (err) {
       typewriter.cancel(); // не оставляем таймер печати висеть
-      const message =
-        err instanceof Error ? err.message : "Произошла ошибка";
-      dispatch(setError(message));
-      dispatch(finalizeStreaming());
+      // Остановка пользователем — не ошибка: молча сохраняем то, что успело
+      // сгенерироваться, и НЕ списываем запрос (сервер тоже не спишет).
+      if (controller.signal.aborted) {
+        dispatch(finalizeStreaming());
+        if (fullContent.trim()) {
+          dispatch(
+            addMessage({
+              id: uuidv4(),
+              role: "assistant",
+              content: fullContent,
+              createdAt: new Date().toISOString(),
+            })
+          );
+        }
+      } else {
+        const message = err instanceof Error ? err.message : "Произошла ошибка";
+        dispatch(setError(message));
+        dispatch(finalizeStreaming());
+      }
     } finally {
+      abortRef.current = null;
       dispatch(setLoading(false));
     }
   }, [input, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch]);
@@ -389,18 +449,34 @@ export default function ChatInput({
           style={{ flex: 1 }}
           styles={{ input: { paddingTop: 6, paddingBottom: 6, paddingLeft: 6 } }}
         />
-        <ActionIcon
-          size="xl"
-          radius="xl"
-          variant="filled"
-          color="brand"
-          onClick={handleSend}
-          disabled={!input.trim() || isLoading}
-          loading={isLoading}
-          aria-label="Отправить"
-        >
-          <IconSend size={20} />
-        </ActionIcon>
+        {/* Во время генерации кнопка превращается в «стоп»: остановка рвёт стрим,
+            сохраняет напечатанное и НЕ тратит запрос из квоты. */}
+        {isLoading ? (
+          <Tooltip label="Остановить генерацию" withArrow>
+            <ActionIcon
+              size="xl"
+              radius="xl"
+              variant="filled"
+              color="gray"
+              onClick={handleStop}
+              aria-label="Остановить генерацию"
+            >
+              <IconPlayerStopFilled size={18} />
+            </ActionIcon>
+          </Tooltip>
+        ) : (
+          <ActionIcon
+            size="xl"
+            radius="xl"
+            variant="filled"
+            color="brand"
+            onClick={handleSend}
+            disabled={!input.trim()}
+            aria-label="Отправить"
+          >
+            <IconSend size={20} />
+          </ActionIcon>
+        )}
       </Group>
       )}
     </Box>

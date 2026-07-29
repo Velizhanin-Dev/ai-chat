@@ -34,6 +34,9 @@ interface ChatState {
   // Тик-сигнал «поставь фокус в поле ввода» (растёт при «Новый чат»). UI-only,
   // не персистится — ChatInput фокусирует textarea при изменении значения.
   inputFocusSignal: number;
+  // Подстановка текста в поле ввода извне (плитки стартового экрана «что я умею»).
+  // seq растёт на каждый клик — иначе повторный клик по той же плитке не сработал бы.
+  prefill: { text: string; seq: number };
   // Завершена ли загрузка списка диалогов с сервера. Пока false — сайдбар
   // показывает скелетоны вместо «Пока нет диалогов» (иначе мелькает ложное «пусто»).
   hydrated: boolean;
@@ -56,6 +59,7 @@ const initialState: ChatState = {
   error: null,
   messagesLoading: false,
   inputFocusSignal: 0,
+  prefill: { text: "", seq: 0 },
   hydrated: false,
 };
 
@@ -120,6 +124,10 @@ const chatSlice = createSlice({
     setLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
     },
+    // Клик по плитке стартового экрана — подставить текст в композер и сфокусировать.
+    prefillInput(state, action: PayloadAction<string>) {
+      state.prefill = { text: action.payload, seq: state.prefill.seq + 1 };
+    },
     setMessagesLoading(state, action: PayloadAction<boolean>) {
       state.messagesLoading = action.payload;
     },
@@ -178,6 +186,7 @@ export const {
   renameConversation,
   addMessage,
   setLoading,
+  prefillInput,
   setMessagesLoading,
   setConversationMessages,
   setStreamingContent,

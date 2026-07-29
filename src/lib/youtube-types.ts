@@ -41,10 +41,27 @@ export interface YouTubeVideo {
   viewCount: number;
   likeCount: number;
   commentCount: number;
+  // Дизлайки: публичного счётчика у YouTube с 2021 нет, но Analytics по своему
+  // каналу их отдаёт. undefined = аналитика недоступна (в ER не учитываем).
+  dislikeCount?: number;
   // Аналитика видео (best-effort, требует yt-analytics.readonly; может отсутствовать).
   avgViewPercentage?: number; // средний % досмотра (удержание) за всё время
   avgViewDuration?: number; // средняя длительность просмотра, секунды
   watchMinutes?: number; // суммарное время просмотра, минуты
+}
+
+// ER (вовлечённость) = действия / просмотры, где действия = лайки + дизлайки +
+// комментарии. null — считать не из чего (нет просмотров). Общий помощник:
+// используется и на карточке видео, и в модалке разбора.
+export function engagementRate(v: {
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+  dislikeCount?: number;
+}): number | null {
+  if (!v.viewCount) return null;
+  const actions = v.likeCount + (v.dislikeCount ?? 0) + v.commentCount;
+  return (actions / v.viewCount) * 100;
 }
 
 // Страница видео канала + курсор на следующую (null — дальше нет). Раздел «Канал»

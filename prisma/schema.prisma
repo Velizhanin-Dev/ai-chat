@@ -50,10 +50,47 @@ model Conversation {
   messages  Message[]
   // Пер-проектная интеграция YouTube (см. модель YouTubeIntegration ниже).
   youtube   YouTubeIntegration?
+  // Референсы и сгенерированные превью проекта (см. модель Thumbnail ниже).
+  thumbnails Thumbnail[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
   @@index([userId, updatedAt])
+}
+
+// Генератор превью: и загруженные референсы, и результаты генерации лежат одной
+// таблицей (различаются `kind`) — так генерация ссылается на свои референсы
+// (`refIds`) и вся история проекта читается одним запросом.
+// САМИ ФАЙЛЫ в БД не хранятся: пишутся на диск в UPLOAD_DIR (volume, см.
+// src/lib/uploads.ts), здесь только относительный путь + метаданные.
+model Thumbnail {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // Автор (для телеметрии/аудита). SetNull — историю проекта не теряем.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  kind           String // "reference" | "generation"
+  // Для kind="reference": роль в кадре — "speaker" | "object" | "style"
+  // (спикера переносим по личности, объект по форме, стиль — по композиции).
+  role           String       @default("speaker")
+  // Путь ОТНОСИТЕЛЬНО UPLOAD_DIR, напр. "thumbnails/<convId>/<cuid>.jpg".
+  filePath       String
+  mimeType       String
+  bytes          Int          @default(0)
+  // Подпись референса («спикер» / «объект») или заголовок генерации.
+  label          String       @default("")
+  // Для kind="generation": id референсов, ушедших в запрос (порядок = Image 1..N).
+  refIds         String[]     @default([])
+  // Спека арт-директора (ThumbnailSpec, src/lib/thumbnails.ts) — из чего собран промпт.
+  spec           Json?
+  // Финальный английский промпт, ушедший в image-модель (для отладки/повтора).
+  prompt         String?
+  model          String       @default("")
+  costUsd        Float        @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, kind, createdAt])
 }
 
 model Message {
@@ -109,6 +146,9 @@ model User {
   payments      Payment[]
   conversations Conversation[]
   stats         Stat[]
+  thumbnails    Thumbnail[]
+  // Черновое подключение YouTube на время прохождения брифа (см. модель ниже).
+  youtubePending YouTubePendingConnection?
 }
 
 // Интеграция с YouTube (Google OAuth + YouTube Data API v3 / Analytics API).
@@ -135,6 +175,29 @@ model YouTubeIntegration {
   scope          String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+}
+
+// Черновое подключение YouTube ДО создания проекта. На брифе нового проекта канал
+// предлагается подключить ПЕРВЫМ шагом — но проекта тогда ещё нет (он создаётся в
+// самом конце брифа), а YouTubeIntegration требует conversationId. Поэтому токены
+// временно висят на юзере (1 черновик на юзера, @unique userId), а при создании
+// проекта переезжают в YouTubeIntegration и черновик удаляется (attachPendingConnection
+// в src/lib/youtube.ts). Живут недолго — до конца брифа; висячие чистит тот же
+// upsert при следующем подключении. ⚠️ Токены как есть — TODO шифровать (как rebillId).
+model YouTubePendingConnection {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId      String
+  title          String
+  thumbnail      String?
+  customUrl      String?
+  accessToken    String
+  refreshToken   String?
+  tokenExpiresAt DateTime
+  scope          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 // Телеметрия каждого вызова модели (снимаем то, что раньше уходило только в логи).

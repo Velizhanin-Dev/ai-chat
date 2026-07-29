@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAppSelector } from "@/store/hooks";
-import { fetchActivePlans } from "@/lib/plans-client";
+import { fetchPlansView, findUserPlan } from "@/lib/plans-client";
 
 // Доступ к чату на клиенте: повторяет серверный гейт (/api/chat) для UX —
 // заблокировать ввод и показать модалку с тарифами. Истина всё равно на сервере
@@ -39,10 +39,12 @@ export function useChatAccess(): ChatAccess {
       return;
     }
     let active = true;
-    fetchActivePlans()
-      .then((plans) => {
+    // Тариф ищем и среди архивных (findUserPlan): подписка на снятый с витрины
+    // тариф продолжает действовать — лимиты берём его.
+    fetchPlansView()
+      .then((view) => {
         if (!active) return;
-        const p = plans.find((pl) => pl.id === plan);
+        const p = findUserPlan(view, plan);
         setLimit(p ? p.limits.requests : null);
         setProjectsLimit(p ? p.limits.projects : null);
         setReady(true);

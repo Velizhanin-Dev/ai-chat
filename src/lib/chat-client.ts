@@ -62,13 +62,20 @@ export type CreateProjectResult =
   | { ok: true; data: Conversation }
   | { ok: false; error: string; code?: string };
 
-export async function apiCreateProject(brief: Brief): Promise<CreateProjectResult> {
+// attachChannel — на первом шаге брифа юзер подключил YouTube-канал (черновик на
+// юзере): просим сервер перевесить его на созданный проект. Без флага черновик не
+// трогаем — иначе залипшее подключение от брошенного брифа молча прицепилось бы к
+// следующему проекту, даже если там канал не подключали.
+export async function apiCreateProject(
+  brief: Brief,
+  attachChannel = false
+): Promise<CreateProjectResult> {
   try {
     const id = newProjectId();
     const res = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, brief }),
+      body: JSON.stringify({ id, brief, attachChannel }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       conversation?: ConversationMeta;

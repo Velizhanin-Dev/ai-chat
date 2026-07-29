@@ -29,9 +29,9 @@ import {
   IconDeviceFloppy,
 } from "@tabler/icons-react";
 import { DISC_PROFILES, CAMERA_OPTIONS } from "@/lib/brief";
-import { PLAN_LABEL, PLAN_ORDER, type PlanId } from "@/store/authSlice";
+import { PLAN_LABEL, PLAN_ORDER } from "@/store/authSlice";
 import { PlanBadge, PaymentStatusBadge, PaymentProviderBadge } from "@/components/Admin/Badges";
-import { formatPrice } from "@/lib/plans";
+import { formatPrice, type PublicPlan } from "@/lib/plans";
 import type { AdminUserRow } from "@/app/api/admin/users/route";
 import type { AdminPaymentRow } from "@/app/api/admin/payments/route";
 import type { AdminProjectRow } from "@/app/api/admin/users/[id]/projects/route";
@@ -65,8 +65,10 @@ const BRIEF_FIELDS: { key: BriefTextKey; label: string }[] = [
   { key: "forbidden", label: "Запретные темы" },
 ];
 
-function planLabel(plan: string) {
-  return PLAN_LABEL[plan as PlanId] ?? plan;
+// Подпись тарифа: из загруженного списка тарифов (в т.ч. архивных), иначе —
+// легаси-карта исходных тарифов, иначе сам id.
+function planLabelFrom(plans: PublicPlan[], plan: string) {
+  return plans.find((p) => p.id === plan)?.label ?? PLAN_LABEL[plan] ?? plan;
 }
 
 // Способ входа → человекочитаемая подпись.
@@ -77,8 +79,17 @@ const AUTH_LABEL: Record<string, string> = {
 };
 const authLabel = (m: string) => AUTH_LABEL[m] ?? m;
 
-// Опции для Select тарифа/роли.
-const PLAN_OPTIONS = PLAN_ORDER.map((id) => ({ value: id, label: PLAN_LABEL[id] }));
+// Опции Select тарифа строятся из ЗАГРУЖЕННЫХ тарифов (тарифы заводятся в админке,
+// захардкоженной тройки больше нет). Архивные помечаем — назначать их можно
+// (например, вернуть человека на старые условия), но видно, что они сняты с витрин.
+function planOptions(plans: PublicPlan[]) {
+  if (plans.length === 0) return PLAN_ORDER.map((id) => ({ value: id, label: PLAN_LABEL[id] }));
+  return plans.map((p) => ({
+    value: p.id,
+    label: p.active ? p.label : `${p.label} (архивный)`,
+  }));
+}
+
 const ROLE_OPTIONS = [
   { value: "user", label: "Пользователь" },
   { value: "admin", label: "Администратор" },
@@ -112,6 +123,15 @@ export default function AdminUsersPage() {
   const [projects, setProjects] = useState<AdminProjectRow[] | null>(null);
   // Версия списка — бампаем после правок/удаления, чтобы перезагрузить таблицу.
   const [version, setVersion] = useState(0);
+  // Все тарифы (включая архивные) — подписи бейджей, фильтр и Select назначения.
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+
+  useEffect(() => {
+    fetch("/api/admin/plans", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d: { plans: PublicPlan[] }) => setPlans(d.plans))
+      .catch(() => {});
+  }, []);
 
   // ── Управление выбранным юзером (роль / тариф / срок подписки / удаление) ──
   const [editRole, setEditRole] = useState("user");
@@ -287,7 +307,7 @@ export default function AdminUsersPage() {
           onChange={(v) => setPlanFilter(v ?? "")}
           placeholder="Все тарифы"
           clearable
-          data={PLAN_ORDER.map((id) => ({ value: id, label: PLAN_LABEL[id] }))}
+          data={planOptions(plans)}
           w={{ base: "100%", xs: 200 }}
         />
       </Group>
@@ -350,7 +370,7 @@ export default function AdminUsersPage() {
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <PlanBadge plan={u.plan} />
+                      <PlanBadge plan={u.plan} label={planLabelFrom(plans, u.plan)} />
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm">{u.projectCount}</Text>
@@ -439,7 +459,7 @@ export default function AdminUsersPage() {
                   <Text size="xs" c="dimmed">
                     Тариф
                   </Text>
-                  <Text size="sm">{planLabel(selected.plan)}</Text>
+                  <Text size="sm">{planLabelFrom(plans, selected.plan)}</Text>
                 </div>
                 <div>
                   <Text size="xs" c="dimmed">
@@ -514,7 +534,7 @@ export default function AdminUsersPage() {
                 />
                 <Select
                   label="Тариф"
-                  data={PLAN_OPTIONS}
+                  data={planOptions(plans)}
                   value={editPlan}
                   onChange={(v) => v && setEditPlan(v)}
                   allowDeselect={false}

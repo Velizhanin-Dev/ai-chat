@@ -39,6 +39,25 @@ export interface Brief {
   isMixed: boolean; // тип «смешанный» (недостоверная перекрёстная тройка Q3/Q7/Q8)
 }
 
+// Поля брифа, которые умеет восстановить нейронка по подключённому YouTube-каналу
+// (POST /api/brief/autofill). Всё остальное (запретные темы, тип харизмы) из канала
+// не выводится — их заполняет сам пользователь.
+export type BriefAutofill = Pick<
+  Brief,
+  "channel" | "niche" | "product" | "audience" | "expertise" | "goal" | "cameraExp"
+>;
+
+// Ключи автозаполняемых полей — по ним UI подсвечивает «заполнено по каналу».
+export const AUTOFILL_KEYS: (keyof BriefAutofill)[] = [
+  "channel",
+  "niche",
+  "product",
+  "audience",
+  "expertise",
+  "goal",
+  "cameraExp",
+];
+
 export const EMPTY_BRIEF: Brief = {
   channel: "",
   niche: "",

@@ -46,6 +46,9 @@ export async function PATCH(req: Request) {
       .replace(/[^a-z0-9/_-]/g, "")
       .slice(0, 60);
   }
+  if (typeof input.imageModel === "string") {
+    patch.imageModel = input.imageModel.trim().slice(0, 120);
+  }
   if (input.routing === "smart" || input.routing === "full") {
     patch.routing = input.routing;
   }

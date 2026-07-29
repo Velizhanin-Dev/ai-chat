@@ -37,6 +37,10 @@ export interface AppSettings {
   // одному провайдеру (кэш греется), но с фолбэком на других при его сбое/недоступности
   // (иначе 404 "No endpoints found" / 429). "" = авто-балансировка (без пина).
   openrouterProvider: string;
+  // Модель генерации превью (раздел «Генератор превью»). Всегда OpenRouter —
+  // независимо от provider выше (чат может работать на Claude/GLM). Дефолт задаёт
+  // IMAGE_DEFAULT_MODEL в src/lib/llm/image.ts (Nano Banana Pro), "" = дефолт.
+  imageModel: string;
   // Режим «скоро запуск»: таймер в герое + скрытые тарифы на лендинге.
   launch: {
     countdownEnabled: boolean;
@@ -52,6 +56,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   routing: "smart",
   openrouterParams: {},
   openrouterProvider: "",
+  imageModel: "",
   launch: { countdownEnabled: false, targetAt: null },
 };
 
@@ -63,6 +68,7 @@ const KEY_OR_MODEL = "openrouter_model";
 const KEY_OR_PARAMS = "openrouter_params";
 const KEY_OR_PROVIDER = "openrouter_provider";
 const KEY_ROUTING = "routing";
+const KEY_IMAGE_MODEL = "image_model";
 
 function normalizeProviderValue(v: unknown): LlmProvider {
   return v === "glm" || v === "openrouter" ? v : "claude";
@@ -76,6 +82,7 @@ function normalize(map: Map<string, unknown>): AppSettings {
   const orParams = map.get(KEY_OR_PARAMS);
   const orProvider = map.get(KEY_OR_PROVIDER);
   const routing = map.get(KEY_ROUTING);
+  const imageModel = map.get(KEY_IMAGE_MODEL);
   const launch = map.get(KEY_LAUNCH) as
     | { countdownEnabled?: unknown; targetAt?: unknown }
     | undefined;
@@ -86,6 +93,7 @@ function normalize(map: Map<string, unknown>): AppSettings {
     openrouterModel: typeof orModel === "string" ? orModel : "",
     openrouterParams: normalizeOpenRouterParams(orParams),
     openrouterProvider: typeof orProvider === "string" ? orProvider : "",
+    imageModel: typeof imageModel === "string" ? imageModel : "",
     routing: routing === "full" ? "full" : "smart",
     launch: {
       countdownEnabled: Boolean(launch?.countdownEnabled),
@@ -141,6 +149,7 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       ? normalizeOpenRouterParams(input.openrouterParams)
       : cur.openrouterParams,
     openrouterProvider: input.openrouterProvider ?? cur.openrouterProvider,
+    imageModel: input.imageModel ?? cur.imageModel,
     routing: input.routing ?? cur.routing,
     launch: { ...cur.launch, ...(input.launch ?? {}) },
   };
@@ -172,6 +181,11 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_OR_PROVIDER },
       create: { key: KEY_OR_PROVIDER, value: next.openrouterProvider },
       update: { value: next.openrouterProvider },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_IMAGE_MODEL },
+      create: { key: KEY_IMAGE_MODEL, value: next.imageModel },
+      update: { value: next.imageModel },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_ROUTING },

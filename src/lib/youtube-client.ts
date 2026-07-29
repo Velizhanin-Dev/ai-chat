@@ -5,6 +5,7 @@ import type {
   VideoAnalysis,
   VideoPage,
 } from "./youtube-types";
+import type { BriefAutofill } from "./brief";
 
 // ── Клиентские обёртки над /api/integrations/youtube/* ──────────────────────
 
@@ -20,6 +21,50 @@ export async function apiYouTubeStatus(projectId: string): Promise<Result<YouTub
     const res = await fetch(`/api/integrations/youtube?${q(projectId)}`, { cache: "no-store" });
     if (!res.ok) return { ok: false, error: "Не удалось проверить подключение" };
     return { ok: true, data: (await res.json()) as YouTubeStatus };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Черновое подключение (шаг брифа, проекта ещё нет) — привязано к юзеру, без projectId.
+export async function apiYouTubePendingStatus(): Promise<Result<YouTubeStatus>> {
+  try {
+    const res = await fetch("/api/integrations/youtube/pending", { cache: "no-store" });
+    if (!res.ok) return { ok: false, error: "Не удалось проверить подключение" };
+    return { ok: true, data: (await res.json()) as YouTubeStatus };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+export async function apiYouTubePendingDisconnect(): Promise<Result<null>> {
+  try {
+    const res = await fetch("/api/integrations/youtube/pending", { method: "DELETE" });
+    if (!res.ok) return { ok: false, error: "Не удалось отключить" };
+    return { ok: true, data: null };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Автозаполнение брифа по подключённому каналу. Без projectId — по черновому
+// подключению (шаг брифа); с projectId — по каналу существующего проекта.
+export async function apiBriefAutofill(projectId?: string): Promise<Result<BriefAutofill>> {
+  try {
+    const res = await fetch("/api/brief/autofill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(projectId ? { projectId } : {}),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      autofill?: BriefAutofill;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.autofill) {
+      return { ok: false, error: data.error || "Не удалось разобрать канал", code: data.code };
+    }
+    return { ok: true, data: data.autofill };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
@@ -184,6 +229,12 @@ export function youtubeConnectHref(projectId: string, next: string): string {
   return `/api/integrations/youtube/connect?${q(projectId)}&next=${encodeURIComponent(next)}`;
 }
 
+// Подключение на шаге брифа: проекта ещё нет, токены лягут на юзера (черновик) и
+// переедут в проект, когда он создастся в конце брифа.
+export function youtubeDraftConnectHref(next: string): string {
+  return `/api/integrations/youtube/connect?draft=1&next=${encodeURIComponent(next)}`;
+}
+
 // ── Форматирование ──────────────────────────────────────────────────────────
 
 const compactFmt = new Intl.NumberFormat("ru-RU", {
@@ -226,6 +277,14 @@ export function durationToSeconds(iso: string): number {
 export function formatWatchTime(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)} мин`;
   return `${compactFmt.format(minutes / 60)} ч`;
+}
+
+// ER в процентах. Значения обычно единицы процентов, поэтому до 2 знаков на
+// маленьких и до 1 на крупных — иначе «5%» и «5%» выглядят одинаково при разнице
+// в разы. См. engagementRate в youtube-types.ts.
+export function formatEr(er: number): string {
+  const digits = er < 1 ? 2 : 1;
+  return `${er.toFixed(digits).replace(".", ",")}%`;
 }
 
 // Дельта роста в % между текущим и прошлым значением. null — прошлый недоступен

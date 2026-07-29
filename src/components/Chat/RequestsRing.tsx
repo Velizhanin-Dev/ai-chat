@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import { RingProgress, Tooltip } from "@mantine/core";
 import { useAppSelector } from "@/store/hooks";
-import { fetchActivePlans } from "@/lib/plans-client";
+import { fetchPlansView, findUserPlan } from "@/lib/plans-client";
 
 // Кружок остатка квоты запросов в шапке чата (как индикатор использования в
 // Claude Code). Заполняется по мере расхода лимита: бирюзовый → жёлтый на
 // середине → красный к концу. Тултип: «Запросы: used/X использовано».
 //
-// Лимит берём из активных тарифов (GET /api/plans) по текущему тарифу юзера;
+// Лимит берём по тарифу юзера из GET /api/plans — включая АРХИВНЫЙ тариф (снятый
+// с витрины, но действующий у тех, кто его купил; см. findUserPlan);
 // израсходованное — из снимка юзера (User.requestsUsed, инкрементится сервером,
 // оптимистично — bumpRequestsUsed на клиенте). Для безлимитного тарифа (-1)
 // ничего не рисуем. /chat — только для авторизованных (гейтит middleware), так что
@@ -25,10 +26,10 @@ export default function RequestsRing() {
       return;
     }
     let active = true;
-    fetchActivePlans()
-      .then((plans) => {
+    fetchPlansView()
+      .then((view) => {
         if (!active) return;
-        const plan = plans.find((p) => p.id === user.plan);
+        const plan = findUserPlan(view, user.plan);
         setLimit(plan ? plan.limits.requests : null);
       })
       .catch(() => active && setLimit(null));

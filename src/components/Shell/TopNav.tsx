@@ -22,9 +22,9 @@ import { useAppSelector } from "@/store/hooks";
 // (нет projectId) меню не рендерится.
 const ITEMS = [
   { label: "Чат", seg: "chat", adminOnly: false },
-  { label: "Канал", seg: "channel", adminOnly: false },
-  { label: "Генератор креативов", seg: "creatives", adminOnly: true },
-  { label: "Разборы", seg: "reviews", adminOnly: true },
+  { label: "Аналитика", seg: "channel", adminOnly: false },
+  { label: "Контент-план", seg: "creatives", adminOnly: true },
+  { label: "Генератор превью", seg: "thumbnails", adminOnly: true },
   { label: "Настройки", seg: "settings", adminOnly: false },
 ] as const;
 

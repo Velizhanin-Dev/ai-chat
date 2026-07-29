@@ -62,7 +62,13 @@ export default function Pricing({ plans }: { plans: PublicPlan[] }) {
           />
         </Reveal>
 
-        <SimpleGrid cols={{ base: 1, md: 3 }} spacing="lg" style={{ alignItems: "stretch" }}>
+        {/* Тарифы заводятся в админке — их может быть не три. Больше 3 в ряд не
+            ставим (карточки становятся нечитаемо узкими), остальные переносятся. */}
+        <SimpleGrid
+          cols={{ base: 1, md: Math.min(Math.max(plans.length, 1), 3) }}
+          spacing="lg"
+          style={{ alignItems: "stretch" }}
+        >
           {plans.map((p, i) => {
             const isFree = p.priceRub === 0;
             return (

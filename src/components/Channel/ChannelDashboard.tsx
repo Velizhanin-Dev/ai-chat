@@ -36,8 +36,7 @@ import {
   IconClock,
   IconUserPlus,
   IconChartArcs,
-  IconThumbUp,
-  IconMessageCircle,
+  IconHeartHandshake,
   IconRefresh,
   IconAlertCircle,
   IconPlugConnected,
@@ -67,12 +66,14 @@ import {
   formatShortDate,
   formatWatchTime,
   formatSeconds,
+  formatEr,
   growthPct,
   formatDeltaPct,
   formatDeltaPoints,
 } from "@/lib/youtube-client";
 import {
   PERIOD_DAYS,
+  engagementRate,
   type YouTubeData,
   type YouTubeVideo,
   type PeriodComparison,
@@ -98,6 +99,10 @@ const PERIOD_OPTIONS = PERIOD_DAYS.map((d) => ({
 
 // Время последнего реального обновления из YouTube (данные могут отдаваться из
 // кэша — тогда это время исходного запроса). Только клиент — SSR не рендерит.
+// Порог «это Shorts» по длительности. Флага «шортс» в API списка видео нет, а
+// лимит Shorts у YouTube сейчас 3 минуты — ориентируемся на длительность.
+const SHORTS_MAX_SECONDS = 180;
+
 const timeFmt = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -248,6 +253,19 @@ function Dashboard({ data }: { data: YouTubeData }) {
     obs.observe(el);
     return () => obs.disconnect();
   }, [nextToken, loadMore]);
+
+  // Фильтр ленты роликов. Тип определяем по длительности: YouTube не отдаёт
+  // признак «это Shorts» в списке видео, а лимит Shorts сейчас 3 минуты. Ролики
+  // без длительности (не загрузилась) считаем длинными, чтобы не прятать их.
+  const [videoKind, setVideoKind] = useState<"all" | "shorts" | "long">("all");
+  const shownVideos = useMemo(() => {
+    if (videoKind === "all") return videos;
+    return videos.filter((v) => {
+      const sec = durationToSeconds(v.duration);
+      const isShort = sec > 0 && sec <= SHORTS_MAX_SECONDS;
+      return videoKind === "shorts" ? isShort : !isShort;
+    });
+  }, [videos, videoKind]);
 
   // Выбранное видео для детальной панели (кривая удержания).
   const [selected, setSelected] = useState<YouTubeVideo | null>(null);
@@ -420,22 +438,46 @@ function Dashboard({ data }: { data: YouTubeData }) {
 
       {/* Видео канала — все ролики, догружаются постранично при доскролле */}
       <Box>
-        <Group justify="space-between" mb="md" wrap="nowrap" gap="sm">
-          <Text fw={600}>Видео канала</Text>
+        <Group justify="space-between" mb="md" wrap="wrap" gap="sm">
+          <Group gap="sm" wrap="nowrap">
+            <Text fw={600}>Видео канала</Text>
+            {videos.length > 0 && (
+              <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {videoKind === "all"
+                  ? `${formatCount(videos.length)}${
+                      ch.videoCount > videos.length ? ` из ${formatCount(ch.videoCount)}` : ""
+                    }`
+                  : `${formatCount(shownVideos.length)} из ${formatCount(videos.length)}`}
+              </Text>
+            )}
+          </Group>
           {videos.length > 0 && (
-            <Text size="sm" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
-              {formatCount(videos.length)}
-              {ch.videoCount > videos.length ? ` из ${formatCount(ch.videoCount)}` : ""}
-            </Text>
+            <SegmentedControl
+              size="xs"
+              radius="md"
+              value={videoKind}
+              onChange={(v) => setVideoKind(v as "all" | "shorts" | "long")}
+              data={[
+                { label: "Все", value: "all" },
+                { label: "Shorts", value: "shorts" },
+                { label: "Видео", value: "long" },
+              ]}
+            />
           )}
         </Group>
         {videos.length === 0 ? (
           <Text size="sm" c="dimmed">
             На канале пока нет опубликованных видео.
           </Text>
+        ) : shownVideos.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            {videoKind === "shorts"
+              ? "Среди загруженных роликов нет Shorts — пролистай ниже, чтобы подгрузить остальные."
+              : "Среди загруженных роликов нет длинных видео — пролистай ниже, чтобы подгрузить остальные."}
+          </Text>
         ) : (
           <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, lg: 4, xl: 5 }} spacing="md">
-            {videos.map((v) => (
+            {shownVideos.map((v) => (
               <VideoCard
                 key={v.id}
                 video={v}
@@ -1369,6 +1411,7 @@ function VideoCard({
   onOpen: (v: YouTubeVideo) => void;
   onPrefetch: () => void;
 }) {
+  const er = engagementRate(video);
   return (
     <Paper
       withBorder
@@ -1453,13 +1496,17 @@ function VideoCard({
           </Box>
         )}
 
+        {/* Лайки и комменты по отдельности сняли — они мало что говорят сами по
+            себе. Вместо них ER: действия (лайки+дизлайки+комменты) к просмотрам. */}
         <Group gap="md" wrap="wrap">
           <VideoStat icon={<IconEye size={14} />} value={formatCount(video.viewCount)} />
-          <VideoStat icon={<IconThumbUp size={14} />} value={formatCount(video.likeCount)} />
-          <VideoStat
-            icon={<IconMessageCircle size={14} />}
-            value={formatCount(video.commentCount)}
-          />
+          {er != null && (
+            <Tooltip label="Вовлечённость: (лайки + дизлайки + комменты) / просмотры" withArrow>
+              <span>
+                <VideoStat icon={<IconHeartHandshake size={14} />} value={formatEr(er)} />
+              </span>
+            </Tooltip>
+          )}
           {video.watchMinutes != null && video.watchMinutes > 0 && (
             <VideoStat
               icon={<IconClock size={14} />}
@@ -1554,11 +1601,19 @@ function VideoDetailModal({
               icon={<IconEye size={16} />}
               value={`${formatCount(video.viewCount)} просмотров`}
             />
-            <VideoStat icon={<IconThumbUp size={16} />} value={formatCount(video.likeCount)} />
-            <VideoStat
-              icon={<IconMessageCircle size={16} />}
-              value={formatCount(video.commentCount)}
-            />
+            {engagementRate(video) != null && (
+              <Tooltip
+                label="Вовлечённость: (лайки + дизлайки + комменты) / просмотры"
+                withArrow
+              >
+                <span>
+                  <VideoStat
+                    icon={<IconHeartHandshake size={16} />}
+                    value={`ER ${formatEr(engagementRate(video)!)}`}
+                  />
+                </span>
+              </Tooltip>
+            )}
             {video.avgViewPercentage != null && (
               <VideoStat
                 icon={<IconChartArcs size={16} />}

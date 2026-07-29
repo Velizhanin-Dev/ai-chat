@@ -48,10 +48,10 @@ import SettingsModal from "@/components/Settings/SettingsModal";
 import TopNav from "@/components/Shell/TopNav";
 
 // Обвязка приложения показывается на экране без проекта (/app) и на страницах
-// проекта (/{projectId}/chat|channel|creatives|reviews|settings). Всё остальное
+// проекта (/{projectId}/chat|channel|creatives|thumbnails|settings). Всё остальное
 // (лендинг, auth, /admin, /legal, /brief, /payment, 404/500) — «голое».
 const PROJECT_TAB_RE =
-  /^\/[^/]+\/(chat|channel|creatives|reviews|settings)(\/|$)/;
+  /^\/[^/]+\/(chat|channel|creatives|thumbnails|settings)(\/|$)/;
 
 function initials(name: string) {
   return name

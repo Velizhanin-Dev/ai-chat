@@ -52,6 +52,13 @@ services:
       - .env
     environment:
       POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/creative_chat
+      # Референсы и сгенерированные превью пишутся сюда (volume ниже), в БД —
+      # только пути. См. src/lib/uploads.ts.
+      UPLOAD_DIR: /app/data/uploads
+    volumes:
+      # Папка рядом с проектом на хосте. Контейнер работает под uid 1001 (nextjs),
+      # поэтому при первом деплое на хосте: mkdir -p data/uploads && chown -R 1001:1001 data/uploads
+      - ./data/uploads:/app/data/uploads
 
   caddy:
     image: caddy:2-alpine

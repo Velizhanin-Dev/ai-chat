@@ -7,7 +7,9 @@ import { Prisma } from "@prisma/client";
 // роняем запрос при ошибке (на ответ пользователю это не влияет).
 // getDashboardData агрегирует Stat (+ Conversation/User) для графиков.
 
-export type StatKind = "chat" | "title" | "router";
+// "image" — генерация превью (image-модель через OpenRouter). В «запросы»
+// дашборда не попадает (там kind=chat), но её стоимость входит в общие деньги.
+export type StatKind = "chat" | "title" | "router" | "image";
 
 export interface StatInput {
   kind: StatKind;

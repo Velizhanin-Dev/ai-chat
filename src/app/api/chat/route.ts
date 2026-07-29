@@ -234,8 +234,20 @@ export async function POST(request: NextRequest) {
 
     const stream = new ReadableStream({
       async start(controller) {
+        // Пользователь нажал «Остановить» (или закрыл вкладку) → fetch отменён,
+        // request.signal взводится. Прерываем генерацию, квоту НЕ списываем, но уже
+        // сгенерированный кусок сохраняем в историю (он остался на экране).
+        let closed = false;
+        const send = (chunk: string) => {
+          if (closed) return;
+          try {
+            controller.enqueue(encoder.encode(chunk));
+          } catch {
+            closed = true; // клиент отвалился между чанками
+          }
+        };
         try {
-          controller.enqueue(encoder.encode(": ping\n\n"));
+          send(": ping\n\n");
 
           // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
           // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
@@ -251,16 +263,23 @@ export async function POST(request: NextRequest) {
             orProvider: settings.openrouterProvider,
             meta: { userId: sessionUser.id, conversationId },
           })) {
+            if (request.signal.aborted) break;
             assistantText += token;
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
+            send(`data: ${JSON.stringify({ token })}\n\n`);
+          }
+
+          const stopped = request.signal.aborted;
+          if (stopped) {
+            console.log(
+              `[chat] stopped by user after ${assistantText.length} chars — квота не списана`
             );
           }
 
           // Успешный ответ — списываем 1 единицу квоты (kind=chat = 1 запрос).
-          // Атомарный increment; админам не списываем (гейт их и не проверяет).
+          // Остановленную генерацию не тарифицируем (см. выше). Атомарный
+          // increment; админам не списываем (гейт их и не проверяет).
           // Fire-and-forget: сбой счётчика не должен ронять уже отданный ответ.
-          if (assistantText.trim() && !isAdmin(sessionUser)) {
+          if (!stopped && assistantText.trim() && !isAdmin(sessionUser)) {
             prisma.user
               .update({
                 where: { id: sessionUser.id },
@@ -288,17 +307,21 @@ export async function POST(request: NextRequest) {
               .catch((err) => console.error("[chat] persist messages error:", err));
           }
 
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
+          send("data: [DONE]\n\n");
+          try {
+            controller.close();
+          } catch {
+            /* уже закрыт обрывом клиента */
+          }
         } catch (err) {
           console.error("Stream error:", err);
           // Проект существует независимо от ответа (его создал бриф) — чистить нечего.
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ error: "Ошибка генерации ответа" })}\n\n`
-            )
-          );
-          controller.close();
+          send(`data: ${JSON.stringify({ error: "Ошибка генерации ответа" })}\n\n`);
+          try {
+            controller.close();
+          } catch {
+            /* ignore */
+          }
         }
       },
     });

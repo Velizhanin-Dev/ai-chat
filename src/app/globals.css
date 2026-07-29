@@ -170,6 +170,38 @@ section[id] {
   outline-offset: 1px;
 }
 
+/* Плитки стартового экрана чата («что я умею», components/Chat/ChatWelcome.tsx).
+   Клик подставляет готовый запрос в композер. Поверхность — как у композера,
+   на ховере подсвечиваем бренд-акцентом. */
+.chat-suggestion {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-gray-0);
+  border: 1px solid transparent;
+  transition: border-color 150ms ease, transform 150ms ease, background 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .chat-suggestion {
+  background: var(--mantine-color-dark-6);
+}
+.chat-suggestion:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  transform: translateY(-1px);
+}
+.chat-suggestion:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-suggestion {
+    transition: none;
+  }
+  .chat-suggestion:hover {
+    transform: none;
+  }
+}
+
 /* Markdown-ответы нейронки в чате (см. components/Chat/Markdown.tsx).
    Поджимаем внешние отступы, чтобы текст плотно сидел в баббле, и держим
    компактный кегль уровня "size sm". */

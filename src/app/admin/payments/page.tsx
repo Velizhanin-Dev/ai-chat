@@ -145,7 +145,7 @@ export default function AdminPaymentsPage() {
                     </Group>
                   </Table.Td>
                   <Table.Td>
-                    <PlanBadge plan={p.planId} />
+                    <PlanBadge plan={p.planId} label={p.planLabel} />
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm" fw={500}>

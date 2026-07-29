@@ -18,10 +18,12 @@ import {
   SimpleGrid,
   Divider,
 } from "@mantine/core";
-import { IconCheck, IconAlertCircle, IconCurrencyRubel } from "@tabler/icons-react";
-import { formatPrice, type PublicPlan } from "@/lib/plans";
+import { IconCheck, IconAlertCircle, IconCurrencyRubel, IconPlus } from "@tabler/icons-react";
+import { formatPrice, PLAN_ID_RE, type PublicPlan } from "@/lib/plans";
 
 type Editable = PublicPlan & { _featuresText: string };
+
+const EMPTY_NEW = { id: "", label: "", priceRub: 0, period: "в месяц" };
 
 export default function AdminPlansPage() {
   const [plans, setPlans] = useState<Editable[] | null>(null);
@@ -29,6 +31,10 @@ export default function AdminPlansPage() {
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  // Форма нового тарифа (сворачиваемая).
+  const [adding, setAdding] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState(EMPTY_NEW);
 
   useEffect(() => {
     fetch("/api/admin/plans", { cache: "no-store" })
@@ -80,20 +86,134 @@ export default function AdminPlansPage() {
     }
   };
 
+  const create = async () => {
+    const id = draft.id.trim().toLowerCase();
+    if (!PLAN_ID_RE.test(id)) {
+      setError("id: латиница, цифры, дефис или подчёркивание, 2–31 символ (например blogger-2026)");
+      return;
+    }
+    if (!draft.label.trim()) {
+      setError("Укажите название тарифа");
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          label: draft.label.trim(),
+          priceRub: draft.priceRub,
+          period: draft.period,
+          features: [],
+          limits: { requests: 0, projects: 0 },
+          active: false, // заводим скрытым: сперва настроить лимиты, потом показать
+        }),
+      });
+      const d = (await res.json()) as { plan?: PublicPlan; error?: string };
+      if (!res.ok || !d.plan) throw new Error(d.error || "Не удалось создать тариф");
+      setPlans((ps) => [...(ps ?? []), { ...d.plan!, _featuresText: d.plan!.features.join("\n") }]);
+      setDraft(EMPTY_NEW);
+      setAdding(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось создать тариф");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <Stack gap="lg">
-      <div>
-        <Title order={2}>Тарифы</Title>
-        <Text c="dimmed" size="sm" mt={4}>
-          Цены, описание и лимиты. Изменения сразу видны на лендинге и в биллинге.
-          В лимитах <code>-1</code> — без лимита, <code>0</code> — не применимо.
-        </Text>
-      </div>
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <div>
+          <Title order={2}>Тарифы</Title>
+          <Text c="dimmed" size="sm" mt={4}>
+            Цены, описание и лимиты. Изменения сразу видны на лендинге и в биллинге.
+            В лимитах <code>-1</code> — без лимита, <code>0</code> — не применимо.
+            Выключенный тариф пропадает с витрин, но у тех, кто на нём сидит, продолжает
+            работать до конца оплаченного срока.
+          </Text>
+        </div>
+        <Button
+          color="brand"
+          radius="md"
+          leftSection={<IconPlus size={16} />}
+          onClick={() => setAdding((v) => !v)}
+          style={{ flexShrink: 0 }}
+        >
+          Новый тариф
+        </Button>
+      </Group>
 
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />}>
           {error}
         </Alert>
+      )}
+
+      {adding && (
+        <Paper withBorder radius="md" p="lg">
+          <Title order={4} mb={4}>
+            Новый тариф
+          </Title>
+          <Text c="dimmed" size="sm" mb="md">
+            Создаётся выключенным — задайте лимиты и фичи, потом включите «Активен».
+            <b> id менять нельзя</b>: он попадает в подписки и платежи.
+          </Text>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md" mb="md">
+            {/* ⚠️ Значение читаем СРАЗУ в обработчике, а не внутри updater-функции
+                setDraft: к моменту ленивого вызова updater React уже обнуляет
+                e.currentTarget, и страница падала на первом введённом символе. */}
+            <TextInput
+              label="id (латиницей)"
+              placeholder="blogger-2026"
+              value={draft.id}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setDraft((d) => ({ ...d, id: v }));
+              }}
+              maxLength={31}
+            />
+            <TextInput
+              label="Название"
+              placeholder="Базовый 2026"
+              value={draft.label}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setDraft((d) => ({ ...d, label: v }));
+              }}
+              maxLength={80}
+            />
+            <NumberInput
+              label="Цена, ₽"
+              value={draft.priceRub}
+              onChange={(v) => setDraft((d) => ({ ...d, priceRub: typeof v === "number" ? v : 0 }))}
+              min={0}
+              step={500}
+              thousandSeparator=" "
+              leftSection={<IconCurrencyRubel size={14} />}
+            />
+            <TextInput
+              label="Период / подпись"
+              value={draft.period}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setDraft((d) => ({ ...d, period: v }));
+              }}
+              maxLength={80}
+            />
+          </SimpleGrid>
+          <Group justify="flex-end" gap="sm">
+            <Button variant="subtle" color="gray" radius="md" onClick={() => setAdding(false)}>
+              Отмена
+            </Button>
+            <Button color="brand" radius="md" onClick={create} loading={creating}>
+              Создать
+            </Button>
+          </Group>
+        </Paper>
       )}
 
       {loading || !plans ? (
@@ -116,7 +236,7 @@ export default function AdminPlansPage() {
                 )}
                 {!p.active && (
                   <Badge color="gray" variant="light" radius="sm" size="sm">
-                    скрыт
+                    архивный — скрыт с витрин
                   </Badge>
                 )}
               </Group>
@@ -156,6 +276,7 @@ export default function AdminPlansPage() {
                 />
                 <Switch
                   label="Активен"
+                  description="Выкл. — тариф исчезает с витрин, но действующие подписки на него работают"
                   color="brand"
                   checked={p.active}
                   onChange={(e) => update(p.id, { active: e.currentTarget.checked })}

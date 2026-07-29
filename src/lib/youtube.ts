@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import type { YouTubeIntegration } from "@prisma/client";
+import type { YouTubeIntegration, YouTubePendingConnection } from "@prisma/client";
 import { prisma } from "./prisma";
 import type {
   YouTubeChannelInfo,
@@ -271,16 +271,90 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
 // и сохраняем новый в БД. Бросает "no_refresh_token"/"token_refresh_failed", если
 // обновить нельзя (нет refresh или Google его отозвал) → UI просит переподключить.
 export async function getValidAccessToken(integ: YouTubeIntegration): Promise<string> {
-  const stillValid = integ.tokenExpiresAt.getTime() - Date.now() > 60_000;
-  if (stillValid) return integ.accessToken;
-  if (!integ.refreshToken) throw new Error("no_refresh_token");
-  const t = await refreshAccessToken(integ.refreshToken);
+  return validToken(integ, (accessToken, tokenExpiresAt) =>
+    prisma.youTubeIntegration.update({
+      where: { id: integ.id },
+      data: { accessToken, tokenExpiresAt },
+    })
+  );
+}
+
+// Общая логика «дай живой токен» для интеграции проекта и для черновика брифа
+// (таблицы разные, поведение одинаковое) — куда сохранять обновлённый токен,
+// решает вызывающий через persist.
+type TokenRecord = {
+  accessToken: string;
+  refreshToken: string | null;
+  tokenExpiresAt: Date;
+};
+
+async function validToken(
+  rec: TokenRecord,
+  persist: (accessToken: string, tokenExpiresAt: Date) => Promise<unknown>
+): Promise<string> {
+  const stillValid = rec.tokenExpiresAt.getTime() - Date.now() > 60_000;
+  if (stillValid) return rec.accessToken;
+  if (!rec.refreshToken) throw new Error("no_refresh_token");
+  const t = await refreshAccessToken(rec.refreshToken);
   const tokenExpiresAt = new Date(Date.now() + t.expires_in * 1000);
-  await prisma.youTubeIntegration.update({
-    where: { id: integ.id },
-    data: { accessToken: t.access_token, tokenExpiresAt },
-  });
+  await persist(t.access_token, tokenExpiresAt);
   return t.access_token;
+}
+
+// ── Черновое подключение канала (до создания проекта) ───────────────────────
+// На брифе нового проекта канал подключают ПЕРВЫМ шагом, когда проекта ещё нет.
+// Токены живут на юзере (YouTubePendingConnection, 1 на юзера) и переезжают в
+// YouTubeIntegration при создании проекта.
+
+export async function getPendingConnection(userId: string) {
+  return prisma.youTubePendingConnection.findUnique({ where: { userId } });
+}
+
+export async function getPendingAccessToken(
+  pending: YouTubePendingConnection
+): Promise<string> {
+  return validToken(pending, (accessToken, tokenExpiresAt) =>
+    prisma.youTubePendingConnection.update({
+      where: { id: pending.id },
+      data: { accessToken, tokenExpiresAt },
+    })
+  );
+}
+
+// Переносит черновик на созданный проект: черновик → YouTubeIntegration, черновик
+// удаляем. Идемпотентно и best-effort: нет черновика — ничего не делаем; на ошибке
+// не роняем создание проекта (канал всегда можно подключить в настройках).
+// Возвращает true, если канал реально прицепился.
+export async function attachPendingConnection(
+  userId: string,
+  conversationId: string
+): Promise<boolean> {
+  try {
+    const pending = await prisma.youTubePendingConnection.findUnique({ where: { userId } });
+    if (!pending) return false;
+    const data = {
+      channelId: pending.channelId,
+      title: pending.title,
+      thumbnail: pending.thumbnail,
+      customUrl: pending.customUrl,
+      accessToken: pending.accessToken,
+      refreshToken: pending.refreshToken,
+      tokenExpiresAt: pending.tokenExpiresAt,
+      scope: pending.scope,
+    };
+    await prisma.$transaction([
+      prisma.youTubeIntegration.upsert({
+        where: { conversationId },
+        create: { conversationId, ...data },
+        update: data,
+      }),
+      prisma.youTubePendingConnection.delete({ where: { id: pending.id } }),
+    ]);
+    return true;
+  } catch (err) {
+    console.error("[youtube] attach pending error:", err);
+    return false;
+  }
 }
 
 // Best-effort отзыв токена в Google при отключении интеграции (не критично).
@@ -564,20 +638,37 @@ export async function fetchDailyAnalytics(
   }
 }
 
+// Строка аналитики по одному видео (за всё время). likes/dislikes/comments —
+// best-effort: их отдаёт только Analytics API и только по своему каналу.
+interface VideoAnalyticsRow {
+  avgViewPercentage: number;
+  avgViewDuration: number;
+  watchMinutes: number;
+  likes?: number;
+  dislikes?: number;
+  comments?: number;
+}
+
 // Аналитика по конкретным видео за всё время (удержание/ср. досмотр/время просмотра).
 // dimensions=video + filters=video==id1,id2,... Возвращает запись id → метрики.
 // best-effort: при ошибке пусто (карточки покажут только лайфтайм-счётчики Data API).
 export async function fetchVideoAnalytics(
   accessToken: string,
   videoIds: string[]
-): Promise<Record<string, { avgViewPercentage: number; avgViewDuration: number; watchMinutes: number }>> {
+): Promise<Record<string, VideoAnalyticsRow>> {
   if (videoIds.length === 0) return {};
-  try {
+  // dislikes публичный Data API больше не отдаёт (YouTube убрал счётчик в 2021),
+  // но в Analytics по СВОЕМУ каналу метрика есть — берём её здесь же, без лишнего
+  // запроса: ER считается как (лайки + дизлайки + комменты) / просмотры.
+  const withActions = "estimatedMinutesWatched,averageViewPercentage,averageViewDuration,likes,dislikes,comments";
+  const base = "estimatedMinutesWatched,averageViewPercentage,averageViewDuration";
+
+  const run = async (metrics: string): Promise<Record<string, VideoAnalyticsRow>> => {
     const p = new URLSearchParams({
       ids: "channel==MINE",
       startDate: "2005-02-14", // старт YouTube — по факту клампится к первым данным
       endDate: ymd(new Date()),
-      metrics: "estimatedMinutesWatched,averageViewPercentage,averageViewDuration",
+      metrics,
       dimensions: "video",
       filters: `video==${videoIds.join(",")}`,
       maxResults: "200",
@@ -586,17 +677,35 @@ export async function fetchVideoAnalytics(
       `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
       accessToken
     );
-    const out: Record<string, { avgViewPercentage: number; avgViewDuration: number; watchMinutes: number }> = {};
+    const hasActions = metrics === withActions;
+    const out: Record<string, VideoAnalyticsRow> = {};
     for (const r of data.rows ?? []) {
       out[String(r[0])] = {
         watchMinutes: Number(r[1] ?? 0),
         avgViewPercentage: Number(r[2] ?? 0),
         avgViewDuration: Number(r[3] ?? 0),
+        ...(hasActions
+          ? {
+              likes: Number(r[4] ?? 0),
+              dislikes: Number(r[5] ?? 0),
+              comments: Number(r[6] ?? 0),
+            }
+          : {}),
       };
     }
     return out;
+  };
+
+  try {
+    return await run(withActions);
   } catch {
-    return {};
+    // Расширенный набор метрик мог не пройти (права/квота/изменения в API) —
+    // не теряем из-за этого удержание, которое и так работало: повторяем базовым.
+    try {
+      return await run(base);
+    } catch {
+      return {};
+    }
   }
 }
 
@@ -624,6 +733,12 @@ export async function fetchRecentVideosWithAnalytics(
           avgViewPercentage: a.avgViewPercentage,
           avgViewDuration: a.avgViewDuration,
           watchMinutes: a.watchMinutes,
+          // Дизлайки есть только в Analytics; лайки/комменты оттуда же берём как
+          // пару к ним, чтобы ER считался из одного источника (иначе смешали бы
+          // лайфтайм-счётчики Data API с аналитикой).
+          ...(a.dislikes != null ? { dislikeCount: a.dislikes } : {}),
+          ...(a.likes != null ? { likeCount: a.likes } : {}),
+          ...(a.comments != null ? { commentCount: a.comments } : {}),
         }
       : v;
   });

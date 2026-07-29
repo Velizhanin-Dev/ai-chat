@@ -26,9 +26,16 @@ export async function GET(req: NextRequest) {
   const withStatus = (path: string, status: string) =>
     new URL(`${path}${path.includes("?") ? "&" : "?"}yt=${status}`, base);
 
-  const projectId = req.nextUrl.searchParams.get("projectId") || "";
-  const owned = await assertOwnedProject(user.id, projectId);
-  if (!owned) return NextResponse.redirect(withStatus(next, "noproject"));
+  // Режим «черновик» (?draft=1) — подключение на шаге брифа, когда проекта ещё
+  // НЕТ: токены лягут на юзера (YouTubePendingConnection) и переедут в проект,
+  // когда он создастся в конце брифа. Иначе — обычный режим с projectId.
+  const draft = req.nextUrl.searchParams.get("draft") === "1";
+  let owned: string | null = null;
+  if (!draft) {
+    const projectId = req.nextUrl.searchParams.get("projectId") || "";
+    owned = await assertOwnedProject(user.id, projectId);
+    if (!owned) return NextResponse.redirect(withStatus(next, "noproject"));
+  }
 
   // Нет Google-ключей на сервере → нечем подключать.
   if (!youtubeConfigured()) {
@@ -39,7 +46,7 @@ export async function GET(req: NextRequest) {
   const res = NextResponse.redirect(buildYouTubeAuthUrl(state));
   res.cookies.set({
     name: YT_STATE_COOKIE,
-    value: JSON.stringify({ state, next, projectId: owned }),
+    value: JSON.stringify({ state, next, projectId: owned, draft }),
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",

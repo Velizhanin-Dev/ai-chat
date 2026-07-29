@@ -209,6 +209,10 @@ export interface BriefFlowProps {
   // По нему родитель расширяет контейнер под полноэкранный reveal и прячет
   // свой заголовок брифа.
   onResultChange?: (disc: DiscType | null) => void;
+  // Поля, заполненные нейронкой по YouTube-каналу (см. /api/brief/autofill): под
+  // ними подсказка «заполнил по каналу — поправь». Подсказка гаснет, как только
+  // юзер правит поле руками.
+  autofilledKeys?: string[];
 }
 
 export default function BriefFlow({
@@ -220,6 +224,7 @@ export default function BriefFlow({
   resultActions,
   onAtStartChange,
   onResultChange,
+  autofilledKeys,
 }: BriefFlowProps) {
   // step: 0 — о проекте, 1 — о себе (DISC), 2 — результат (тип харизмы).
   const [step, setStep] = useState(0);
@@ -315,8 +320,17 @@ export default function BriefFlow({
     onResultChange?.(step === 2 ? result : null);
   }, [step, result, onResultChange]);
 
-  const setField = (key: keyof Brief, value: string) =>
+  // Поля, которые ещё показывают пометку «заполнено по каналу»: как только юзер
+  // правит поле руками, пометка с него снимается.
+  const [autofilled, setAutofilled] = useState<string[]>(() => autofilledKeys ?? []);
+  useEffect(() => {
+    if (autofilledKeys) setAutofilled(autofilledKeys);
+  }, [autofilledKeys]);
+
+  const setField = (key: keyof Brief, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
+    setAutofilled((a) => (a.includes(key) ? a.filter((k) => k !== key) : a));
+  };
 
   // current определён только на шаге «о проекте».
   const current = step === 0 ? PROJECT_ITEMS[sub] : null;
@@ -328,6 +342,13 @@ export default function BriefFlow({
       : String(form[it.key] ?? "").trim().length > 0;
 
   const isLastQuestion = sub === DISC_TOTAL - 1;
+
+  // Показывать ли на текущем вопросе пометку «заполнил по каналу» (только если
+  // поле реально непустое — пустое автозаполнение помечать не за что).
+  const isAutofilled = (it: ProjectItem) => {
+    const key = it.kind === "camera" ? "cameraExp" : it.key;
+    return autofilled.includes(key) && itemFilled(it);
+  };
 
   // ── Навигация ──────────────────────────────────────────────────────────────
   const goBack = () => {
@@ -553,7 +574,19 @@ export default function BriefFlow({
         <Stack gap="lg">
           <div>
             <Title order={4}>{current.label}</Title>
-            {current.hint ? (
+            {/* Поле заполнила нейронка по каналу — говорим об этом прямо, чтобы
+                юзер проверил, а не принял выдумку за свои слова. */}
+            {isAutofilled(current) ? (
+              <Group gap={6} mt={6} wrap="nowrap">
+                <IconSparkles
+                  size={14}
+                  style={{ color: "var(--mantine-color-brand-filled)", flexShrink: 0 }}
+                />
+                <Text size="sm" c="dimmed">
+                  Заполнил по твоему каналу — поправь, если не так.
+                </Text>
+              </Group>
+            ) : current.hint ? (
               <Text size="sm" c="dimmed" mt={6}>
                 {current.hint}
               </Text>

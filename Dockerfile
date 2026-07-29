@@ -43,6 +43,10 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 # Утилитные скрипты (напр. scripts/make-admin.mjs) — чтобы их можно было гонять
 # на проде через `docker compose exec app node scripts/make-admin.mjs <email>`.
 COPY --from=builder /app/scripts ./scripts
+# Папка загрузок (референсы + сгенерированные превью). В проде поверх неё
+# монтируется volume ./data/uploads — тогда владельцем становится хостовая папка
+# (на хосте нужен chown 1001:1001). Без volume (локальный запуск) пишем сюда.
+RUN mkdir -p /app/data/uploads && chown -R 1001:1001 /app/data
 
 USER nextjs
 EXPOSE 3000

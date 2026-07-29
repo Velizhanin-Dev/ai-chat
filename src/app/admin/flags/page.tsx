@@ -25,6 +25,7 @@ import {
   IconCheck,
   IconAlertCircle,
   IconCpu,
+  IconPhoto,
 } from "@tabler/icons-react";
 import type { AppSettings } from "@/lib/settings";
 import {
@@ -77,6 +78,12 @@ export default function AdminFlagsPage() {
   const [orProviders, setOrProviders] = useState<OrProvider[]>([]);
   const [orProvidersLoading, setOrProvidersLoading] = useState(false);
 
+  // Каталог image-моделей (для генератора превью) — отдельный список, грузим
+  // один раз при открытии страницы: он нужен независимо от движка чата.
+  const [imgModels, setImgModels] = useState<OrModel[]>([]);
+  const [imgModelsLoading, setImgModelsLoading] = useState(false);
+  const [imgModelsError, setImgModelsError] = useState<string | null>(null);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -113,6 +120,27 @@ export default function AdminFlagsPage() {
       }
     })();
   }, [settings?.provider, orModels.length, orModelsLoading]);
+
+  // Каталог моделей, которые ОТДАЮТ картинки (для селектора превью).
+  useEffect(() => {
+    setImgModelsLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/openrouter/models?output=image", {
+          cache: "no-store",
+        });
+        const data = (await res.json()) as { models?: OrModel[]; error?: string };
+        if (!res.ok || !data.models) throw new Error(data.error || "Ошибка");
+        setImgModels(data.models);
+      } catch (e) {
+        setImgModelsError(
+          e instanceof Error ? e.message : "Не удалось загрузить список image-моделей"
+        );
+      } finally {
+        setImgModelsLoading(false);
+      }
+    })();
+  }, []);
 
   // Провайдеры конкретной модели — перезагружаем при смене модели.
   const orModel = settings?.provider === "openrouter" ? settings.openrouterModel : "";
@@ -412,6 +440,49 @@ export default function AdminFlagsPage() {
                 </div>
               </Stack>
             )}
+          </Paper>
+
+          {/* Модель генерации превью — всегда OpenRouter, независимо от движка чата */}
+          <Paper withBorder radius="md" p="lg">
+            <Group gap="sm" wrap="nowrap" align="flex-start" mb="md">
+              <ThemeIcon color="brand" variant="light" radius="md" size="lg">
+                <IconPhoto size={18} />
+              </ThemeIcon>
+              <div>
+                <Text fw={600}>Модель генерации превью</Text>
+                <Text size="sm" c="dimmed">
+                  Раздел «Генератор превью» в проекте. Всегда идёт в OpenRouter —
+                  независимо от движка чата выше. По умолчанию Nano Banana Pro
+                  (<code>google/gemini-3-pro-image</code>): держит личность спикера с
+                  референсов и нормально рендерит кириллицу на превью.
+                </Text>
+              </div>
+            </Group>
+            <Select
+              label="Модель"
+              placeholder={imgModelsLoading ? "Загружаю каталог…" : "google/gemini-3-pro-image"}
+              searchable
+              clearable
+              nothingFoundMessage="Ничего не найдено"
+              disabled={imgModelsLoading}
+              value={settings.imageModel || null}
+              onChange={(v) => patch({ imageModel: v ?? "" })}
+              data={(() => {
+                const opts = imgModels.map((m) => ({ value: m.id, label: m.name }));
+                // Сохранённая модель могла исчезнуть из каталога — показываем как есть,
+                // иначе Select молча покажет пусто и «съест» настройку при сохранении.
+                if (settings.imageModel && !opts.some((o) => o.value === settings.imageModel)) {
+                  opts.unshift({ value: settings.imageModel, label: settings.imageModel });
+                }
+                return opts;
+              })()}
+              description={
+                imgModelsError
+                  ? imgModelsError
+                  : "Пусто — берётся дефолт из кода (Nano Banana Pro)."
+              }
+              error={imgModelsError ?? undefined}
+            />
           </Paper>
 
           {/* Режим «скоро запуск» */}

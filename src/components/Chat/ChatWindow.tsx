@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Paper, Text, Stack, ScrollArea, Box, ThemeIcon, Loader, Center } from "@mantine/core";
-import { IconUser, IconRobot } from "@tabler/icons-react";
+import {
+  Paper,
+  Text,
+  Stack,
+  ScrollArea,
+  Box,
+  ThemeIcon,
+  Loader,
+  Center,
+  ActionIcon,
+} from "@mantine/core";
+import { IconUser, IconRobot, IconArrowDown } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
 import { splitConnectCta } from "@/lib/chat-markers";
@@ -10,6 +20,7 @@ import { apiYouTubeStatus } from "@/lib/youtube-client";
 import Markdown from "./Markdown";
 import ThinkingIndicator from "./ThinkingIndicator";
 import ConnectYouTubeCta from "./ConnectYouTubeCta";
+import ChatWelcome from "./ChatWelcome";
 
 const STICK_THRESHOLD = 80;
 const EMPTY: ChatMessage[] = [];
@@ -48,30 +59,107 @@ export default function ChatWindow() {
   }, [activeId]);
   const showCta = ytConnected === false && !!activeId;
 
+  // Показывать ли кнопку «вниз» (автоскролл отключён, а внизу что-то происходит).
+  const [atBottom, setAtBottom] = useState(true);
+
+  const distanceFromBottom = (el: HTMLDivElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight;
+
+  // Позиция скролла меняется и программно, и руками — здесь только ВОЗВРАЩАЕМ
+  // прилипание, когда пользователь сам довёл ленту до низа. Отключается оно не
+  // тут, а по явному жесту вверх (см. wheel/touch/клавиши ниже): иначе наш же
+  // программный скролл во время стрима гасил бы сам себя.
   const handleScroll = () => {
     const el = viewport.current;
     if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottom.current = distanceFromBottom <= STICK_THRESHOLD;
+    const near = distanceFromBottom(el) <= STICK_THRESHOLD;
+    if (near) stickToBottom.current = true;
+    setAtBottom(near);
   };
 
-  // При переключении диалога — прыжком в самый низ.
+  // Жест «листаю вверх» → немедленно отпускаем ленту. Это и есть лечение
+  // «дёрганья»: раньше во время стрима каждый новый токен утаскивал обратно вниз,
+  // и прочитать написанное выше было невозможно.
   useEffect(() => {
-    stickToBottom.current = true;
-    viewport.current?.scrollTo({ top: viewport.current.scrollHeight });
-  }, [activeId]);
+    const el = viewport.current;
+    if (!el) return;
+    const release = () => {
+      stickToBottom.current = false;
+      setAtBottom(distanceFromBottom(el) <= STICK_THRESHOLD);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) release();
+    };
+    let touchY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      touchY = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY ?? 0;
+      if (y > touchY + 4) release(); // палец вниз = контент едет вверх
+      touchY = y;
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Home") release();
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("keydown", onKeyDown);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
+  const scrollToBottom = (smooth = false) => {
+    const el = viewport.current;
+    if (!el) return;
+    stickToBottom.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    setAtBottom(true);
+  };
+
+  // Открытие диалога (в т.ч. после F5) и переключение проекта — СРАЗУ внизу, без
+  // анимации. `behavior:"smooth"` тут давал ту самую «прокрутку сверху вниз» на
+  // глазах у пользователя. messagesLoaded в зависимостях: сообщения приезжают
+  // лениво уже после смены activeId, и высота ленты меняется только тогда.
+  const messagesLoaded = active?.messagesLoaded ?? false;
   useEffect(() => {
-    if (!viewport.current || !stickToBottom.current) return;
-    viewport.current.scrollTo({
-      top: viewport.current.scrollHeight,
-      behavior: "smooth",
+    if (!activeId) return;
+    stickToBottom.current = true;
+    // Двойной кадр: к первому ещё не сверстан markdown подгруженных сообщений.
+    const raf1 = requestAnimationFrame(() => {
+      scrollToBottom();
+      requestAnimationFrame(() => scrollToBottom());
     });
+    return () => cancelAnimationFrame(raf1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, messagesLoaded]);
+
+  // Отправил вопрос — возвращаемся вниз, даже если до этого листали историю
+  // (явное действие пользователя, в отличие от прилетевшего токена стрима).
+  const prevLoading = useRef(isLoading);
+  useEffect(() => {
+    if (isLoading && !prevLoading.current) scrollToBottom();
+    prevLoading.current = isLoading;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
+  // Во время стрима держим низ БЕЗ smooth: анимированная прокрутка не успевает
+  // доехать до конца между токенами и выглядит как рывки.
+  useEffect(() => {
+    const el = viewport.current;
+    if (!el || !stickToBottom.current) return;
+    el.scrollTo({ top: el.scrollHeight });
   }, [messages, streamingContent]);
 
   return (
+    <Box style={{ flex: 1, minHeight: 0, position: "relative" }}>
     <ScrollArea
-      style={{ flex: 1, minHeight: 0 }}
+      style={{ height: "100%" }}
       viewportRef={viewport}
       onScrollPositionChange={handleScroll}
     >
@@ -84,16 +172,7 @@ export default function ChatWindow() {
         )}
 
         {messages.length === 0 && !isLoading && !messagesLoading && (
-          <Box ta="center" py={60}>
-            <IconRobot size={48} stroke={1.2} color="var(--mantine-color-dimmed)" />
-            <Text c="dimmed" size="lg" mt="md">
-              Добро пожаловать в чат!
-            </Text>
-            <Text c="dimmed" size="sm" mt={4}>
-              Спроси меня сгенерировать сценарий для видео или дать совет по
-              YouTube-продвижению
-            </Text>
-          </Box>
+          <ChatWelcome projectId={activeId} ytConnected={ytConnected} />
         )}
 
         {messages.map((msg) => {
@@ -192,5 +271,29 @@ export default function ChatWindow() {
         )}
       </Stack>
     </ScrollArea>
+
+      {/* Кнопка возврата вниз — появляется, когда автоскролл отпущен. Без неё
+          после ручной прокрутки вверх во время стрима непонятно, как вернуться. */}
+      {!atBottom && messages.length > 0 && (
+        <ActionIcon
+          onClick={() => scrollToBottom(true)}
+          aria-label="Вниз"
+          variant="filled"
+          color="brand"
+          radius="xl"
+          size="lg"
+          style={{
+            position: "absolute",
+            bottom: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            boxShadow: "var(--mantine-shadow-md)",
+            zIndex: 5,
+          }}
+        >
+          <IconArrowDown size={18} />
+        </ActionIcon>
+      )}
+    </Box>
   );
 }

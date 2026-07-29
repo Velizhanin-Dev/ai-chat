@@ -1,16 +1,30 @@
 "use client";
 
 import { Badge } from "@mantine/core";
-import { PLAN_LABEL, PLAN_BADGE_COLOR, type PlanId } from "@/store/authSlice";
+import { PLAN_LABEL, PLAN_BADGE_COLOR } from "@/store/authSlice";
 
 // Общие бейджи для админки (список пользователей + страница платежей).
+
+// Цвет бейджа тарифа. У исходных тарифов он закреплён (PLAN_BADGE_COLOR), у
+// заведённых в админке — детерминированный из id, чтобы тарифы визуально
+// различались и цвет не «прыгал» между рендерами.
+const EXTRA_COLORS = ["blue", "violet", "orange", "cyan", "pink", "lime", "indigo"];
+
+export function planBadgeColor(plan: string): string {
+  const fixed = PLAN_BADGE_COLOR[plan];
+  if (fixed) return fixed;
+  let hash = 0;
+  for (let i = 0; i < plan.length; i++) hash = (hash * 31 + plan.charCodeAt(i)) >>> 0;
+  return EXTRA_COLORS[hash % EXTRA_COLORS.length];
+}
 
 // Бейдж тарифа: цвет по тарифу + БЕЗ обрезки текста (на мобиле раньше «ПРО…»).
 // minWidth:max-content держит бейдж не уже текста; label overflow visible гасит
 // ellipsis, который Mantine вешает по умолчанию.
-export function PlanBadge({ plan }: { plan: string }) {
-  const label = PLAN_LABEL[plan as PlanId] ?? plan;
-  const color = PLAN_BADGE_COLOR[plan as PlanId] ?? "gray";
+// label — подпись из БД (Plan.label); без неё падаем на легаси-карту, затем на id.
+export function PlanBadge({ plan, label: labelProp }: { plan: string; label?: string }) {
+  const label = labelProp || PLAN_LABEL[plan] || plan;
+  const color = planBadgeColor(plan);
   return (
     <Badge
       color={color}

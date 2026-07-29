@@ -47,7 +47,7 @@ export async function middleware(req: NextRequest) {
 }
 
 // Гейтим приложение: экран без проекта (/app) и разделы проекта
-// (/{projectId}/chat|channel|creatives|reviews|settings). Гость → /login.
+// (/{projectId}/chat|channel|creatives|thumbnails|settings). Гость → /login.
 // Не-админа на закрытых разделах дополнительно отсекает серверный гвард
 // route-group (locked) (404). Лендинг и auth-страницы остаются открытыми.
 export const config = {
@@ -59,8 +59,8 @@ export const config = {
     "/:projectId/channel/:path*",
     "/:projectId/creatives",
     "/:projectId/creatives/:path*",
-    "/:projectId/reviews",
-    "/:projectId/reviews/:path*",
+    "/:projectId/thumbnails",
+    "/:projectId/thumbnails/:path*",
     "/:projectId/settings",
     "/:projectId/settings/:path*",
   ],

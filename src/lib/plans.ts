@@ -24,6 +24,14 @@ export interface PublicPlan {
   active: boolean;
 }
 
+// Что отдаёт GET /api/plans клиенту: витрина (активные) + собственный тариф юзера,
+// если он архивный. Архивный тариф не продаётся, но обязан работать у тех, у кого
+// он уже куплен, — поэтому его лимиты клиенту всё равно нужны.
+export interface PlansView {
+  plans: PublicPlan[];
+  currentPlan: PublicPlan | null;
+}
+
 const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0 };
 
 // Дефолты = текущие захардкоженные тарифы (start/blogger/studio). Используются для
@@ -108,6 +116,10 @@ async function ensureSeeded(): Promise<void> {
   });
 }
 
+// id тарифа — slug (латиница/цифры/дефис/подчёркивание). Он попадает в User.plan
+// и в платежи, поэтому после создания НЕ меняется (переименовать можно label).
+export const PLAN_ID_RE = /^[a-z0-9][a-z0-9_-]{1,30}$/;
+
 // Все тарифы по порядку (для админки). При сбое БД — дефолты, чтобы не падать.
 export async function getPlans(): Promise<PublicPlan[]> {
   try {
@@ -120,9 +132,72 @@ export async function getPlans(): Promise<PublicPlan[]> {
   }
 }
 
-// Только активные — для витрин (лендинг, биллинг).
+// Только активные — для ВИТРИН (лендинг, биллинг): что сейчас можно купить.
+// ⚠️ Для проверки прав/лимитов конкретного юзера это использовать НЕЛЬЗЯ — у него
+// может быть архивный (неактивный) тариф, который обязан продолжать работать.
+// Для этого есть getPlans()/getPlanById().
 export async function getActivePlans(): Promise<PublicPlan[]> {
   return (await getPlans()).filter((p) => p.active);
+}
+
+// Тариф по id — ВКЛЮЧАЯ архивные (active=false). Именно так резолвятся лимиты
+// действующей подписки: тариф сняли с витрины, но у купивших он работает.
+export async function getPlanById(id: string): Promise<PublicPlan | null> {
+  return (await getPlans()).find((p) => p.id === id) ?? null;
+}
+
+// Создание нового тарифа из админки. id задаётся руками (slug) и потом не меняется.
+// Возвращает ошибку строкой, если id занят/кривой.
+export async function createPlan(input: {
+  id: string;
+  label: string;
+  priceRub?: number;
+  period?: string;
+  features?: string[];
+  limits?: Partial<PlanLimits>;
+  highlighted?: boolean;
+  active?: boolean;
+}): Promise<{ ok: true; plan: PublicPlan } | { ok: false; error: string }> {
+  const id = String(input.id ?? "").trim().toLowerCase();
+  if (!PLAN_ID_RE.test(id)) {
+    return {
+      ok: false,
+      error: "id: латиница, цифры, дефис или подчёркивание, 2–31 символ (например blogger-2026)",
+    };
+  }
+  const label = String(input.label ?? "").trim().slice(0, 80);
+  if (!label) return { ok: false, error: "Укажите название тарифа" };
+
+  try {
+    await ensureSeeded();
+    const exists = await prisma.plan.findUnique({ where: { id }, select: { id: true } });
+    if (exists) return { ok: false, error: `Тариф с id «${id}» уже есть` };
+
+    // Новый тариф встаёт в конец витрины.
+    const last = await prisma.plan.aggregate({ _max: { order: true } });
+    const order = (last._max.order ?? -1) + 1;
+
+    const created = await prisma.plan.create({
+      data: {
+        id,
+        label,
+        priceRub: Math.max(0, Math.trunc(input.priceRub ?? 0)),
+        period: String(input.period ?? "в месяц").trim().slice(0, 80),
+        features: (input.features ?? [])
+          .map((f) => String(f).trim().slice(0, 120))
+          .filter(Boolean)
+          .slice(0, 8),
+        limits: normalizeLimits(input.limits) as unknown as Prisma.InputJsonValue,
+        order,
+        highlighted: Boolean(input.highlighted),
+        active: input.active ?? true,
+      },
+    });
+    return { ok: true, plan: toPublic(created) };
+  } catch (err) {
+    console.error("[plans] create failed:", err);
+    return { ok: false, error: "Не удалось создать тариф" };
+  }
 }
 
 // Обновление одного тарифа из админки (только редактируемые поля).

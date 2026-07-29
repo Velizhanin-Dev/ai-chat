@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   };
 
   const raw = req.cookies.get(YT_STATE_COOKIE)?.value;
-  let saved: { state?: string; next?: string; projectId?: string } = {};
+  let saved: { state?: string; next?: string; projectId?: string; draft?: boolean } = {};
   try {
     if (raw) saved = JSON.parse(raw);
   } catch {
@@ -48,9 +48,11 @@ export async function GET(req: NextRequest) {
   if (sp.get("error") || !code || !stateParam) return back("denied");
   if (!saved.state || saved.state !== stateParam) return back("state");
 
+  // Черновик (подключение на шаге брифа) — проекта ещё нет, привязываем к юзеру.
+  const draft = Boolean(saved.draft);
   // Проект должен по-прежнему существовать и принадлежать юзеру.
-  const owned = await assertOwnedProject(user.id, saved.projectId || "");
-  if (!owned) return back("noproject");
+  const owned = draft ? null : await assertOwnedProject(user.id, saved.projectId || "");
+  if (!draft && !owned) return back("noproject");
 
   try {
     const tokens = await exchangeCode(code);
@@ -58,12 +60,34 @@ export async function GET(req: NextRequest) {
     if (!channel) return back("nochannel");
 
     const tokenExpiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+
+    if (draft) {
+      const fields = {
+        channelId: channel.channelId,
+        title: channel.title,
+        thumbnail: channel.thumbnail,
+        customUrl: channel.customUrl,
+        accessToken: tokens.access_token,
+        tokenExpiresAt,
+        scope: tokens.scope ?? null,
+      };
+      await prisma.youTubePendingConnection.upsert({
+        where: { userId: user.id },
+        create: { userId: user.id, refreshToken: tokens.refresh_token ?? null, ...fields },
+        update: {
+          ...fields,
+          ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+        },
+      });
+      return back("connected");
+    }
+
     // refresh_token Google отдаёт только при первом согласии (мы просим
     // prompt=consent всегда, но подстрахуемся): сохраняем, только если пришёл.
     await prisma.youTubeIntegration.upsert({
-      where: { conversationId: owned },
+      where: { conversationId: owned! },
       create: {
-        conversationId: owned,
+        conversationId: owned!,
         channelId: channel.channelId,
         title: channel.title,
         thumbnail: channel.thumbnail,

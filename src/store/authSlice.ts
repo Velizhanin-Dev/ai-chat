@@ -6,25 +6,25 @@ import type { Brief } from "@/lib/brief";
 // В Redux держим только «снимок» пользователя для UI; он гидратируется через
 // GET /api/auth/me при загрузке приложения (см. StoreProvider).
 
-// id'шники исторические (start/blogger/studio) и оставлены как есть, чтобы не
-// мигрировать БД (User.plan, default "start") и localStorage. Витрина тарифов
-// переопределена: start → Пробный (бесплатный день), blogger → Базовый (месяц),
-// studio → Максимальный (месяц). См. Pricing.tsx и SettingsModal.tsx.
-export type PlanId = "start" | "blogger" | "studio";
+// ⚠️ Тарифы заводятся в админке (таблица Plan) — id произвольный slug, а НЕ union
+// из трёх значений, как было раньше. Поэтому тип — обычная строка; источник правды
+// по названию/лимитам — БД (getPlans / GET /api/plans), а не константы ниже.
+export type PlanId = string;
 
-export const PLAN_LABEL: Record<PlanId, string> = {
+// Легаси-фолбэк для ПЕРВОНАЧАЛЬНЫХ тарифов: подписи и цвета бейджей, пока не
+// подгрузился список из БД. Для новых тарифов подпись берётся из Plan.label,
+// цвет — детерминированно из id (см. planBadgeColor в components/Admin/Badges).
+export const PLAN_LABEL: Record<string, string> = {
   start: "Пробный",
   blogger: "Базовый",
   studio: "Максимальный",
 };
 
-// Порядок тарифов по возрастанию — чтобы понять, какой «выше» текущего
-// (для заглушки перехода на план выше в биллинге).
-export const PLAN_ORDER: PlanId[] = ["start", "blogger", "studio"];
+// Порядок исходных тарифов по возрастанию (легаси; актуальный порядок витрины —
+// поле Plan.order из админки).
+export const PLAN_ORDER: string[] = ["start", "blogger", "studio"];
 
-// Цвет бейджа тарифа (Mantine-палитра) — чтобы тарифы визуально различались в
-// админке: пробный приглушённый, платные — по возрастанию «ценности».
-export const PLAN_BADGE_COLOR: Record<PlanId, string> = {
+export const PLAN_BADGE_COLOR: Record<string, string> = {
   start: "gray",
   blogger: "teal",
   studio: "grape",
