@@ -798,6 +798,268 @@ section[id] {
   }
 }
 
+/* ── Круг разбора канала (ParamWheel) ─────────────────────────────────────────
+   Секторы = параметры продвижения, заполнение растёт из центра. Токены темы
+   держим здесь: внутри SVG media-query по схеме не применить. */
+.pw-wrap {
+  --pw-track: var(--mantine-color-gray-2);
+  --pw-grid: var(--mantine-color-gray-4);
+  --pw-core: var(--mantine-color-white);
+  --pw-label: var(--mantine-color-gray-7);
+}
+[data-mantine-color-scheme="dark"] .pw-wrap {
+  --pw-track: var(--mantine-color-dark-5);
+  --pw-grid: var(--mantine-color-dark-3);
+  --pw-core: var(--mantine-color-dark-7);
+  --pw-label: var(--mantine-color-dark-1);
+}
+.pw-hit {
+  cursor: pointer;
+  outline: none;
+}
+.pw-hit:focus-visible {
+  stroke: var(--mantine-color-brand-6);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--mantine-color-brand-6) 12%, transparent);
+}
+.pw-sector path:not(.pw-hit) {
+  transition: opacity 140ms ease;
+}
+.pw-sector:hover path:not(.pw-hit) {
+  opacity: 0.86;
+}
+.pw-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--pw-label);
+  cursor: pointer;
+}
+.pw-label-sel {
+  fill: var(--mantine-color-brand-6);
+}
+.pw-label-score {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.pw-overall {
+  font-size: 30px;
+  font-weight: 700;
+  fill: var(--mantine-color-text);
+}
+.pw-overall-cap {
+  font-size: 10px;
+  font-weight: 500;
+  fill: var(--mantine-color-dimmed);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pw-sector path:not(.pw-hit) {
+    transition: none;
+  }
+  .pw-sector:hover path:not(.pw-hit) {
+    opacity: 1;
+  }
+}
+
+/* Тултип сектора: идёт за курсором, поэтому не перехватывает события мыши —
+   иначе моргал бы на границе собственной карточки. */
+.pw-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  width: 250px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-md);
+}
+.pw-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.pw-tip-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.pw-tip-badge {
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--mantine-color-white);
+}
+.pw-tip-good {
+  background: var(--mantine-color-teal-6);
+}
+.pw-tip-ok {
+  background: var(--mantine-color-brand-6);
+}
+.pw-tip-bad {
+  background: var(--mantine-color-red-6);
+}
+.pw-tip-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.pw-tip-norm,
+.pw-tip-about,
+.pw-tip-hint {
+  font-size: 0.6875rem;
+  color: var(--mantine-color-dimmed);
+  line-height: 1.35;
+}
+.pw-tip-norm {
+  margin-bottom: 6px;
+}
+.pw-tip-fact {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.pw-tip-about {
+  margin-bottom: 6px;
+}
+.pw-tip-hint {
+  padding-top: 6px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  color: var(--mantine-color-brand-6);
+}
+
+/* ── Раздел «Канал»: flat-поверхности ─────────────────────────────────────────
+   Вместо карточек с обводкой — плоские блоки на лёгком оттенке от фона. Границы
+   держим только там, где без них не читается (таблицы, инпуты). */
+.an-surface {
+  background: var(--mantine-color-gray-0);
+  border-radius: 14px;
+}
+[data-mantine-color-scheme="dark"] .an-surface {
+  background: var(--mantine-color-dark-6);
+}
+.an-acc-item {
+  background: var(--mantine-color-gray-0);
+  border: none;
+  border-radius: 14px;
+}
+[data-mantine-color-scheme="dark"] .an-acc-item {
+  background: var(--mantine-color-dark-6);
+}
+
+/* ── Матрица «упаковка ↔ содержание» ──────────────────────────────────────── */
+.pm-wrap {
+  --pm-median: var(--mantine-color-gray-4);
+  --pm-tick: var(--mantine-color-gray-6);
+}
+[data-mantine-color-scheme="dark"] .pm-wrap {
+  --pm-median: var(--mantine-color-dark-3);
+  --pm-tick: var(--mantine-color-dark-2);
+}
+.pm-q {
+  opacity: 0.055;
+}
+.pm-q-works {
+  fill: var(--mantine-color-teal-6);
+}
+.pm-q-packaging {
+  fill: var(--mantine-color-brand-6);
+}
+.pm-q-bait {
+  fill: var(--mantine-color-grape-6);
+}
+.pm-q-fail {
+  fill: var(--mantine-color-red-6);
+}
+.pm-median {
+  stroke: var(--pm-median);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.pm-qlabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+.pm-t-works {
+  fill: var(--mantine-color-teal-7);
+}
+.pm-t-packaging {
+  fill: var(--mantine-color-brand-7);
+}
+.pm-t-bait {
+  fill: var(--mantine-color-grape-7);
+}
+.pm-t-fail {
+  fill: var(--mantine-color-red-7);
+}
+[data-mantine-color-scheme="dark"] .pm-t-works {
+  fill: var(--mantine-color-teal-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-packaging {
+  fill: var(--mantine-color-brand-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-bait {
+  fill: var(--mantine-color-grape-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-fail {
+  fill: var(--mantine-color-red-4);
+}
+.pm-tick,
+.pm-axis {
+  font-size: 10px;
+  fill: var(--pm-tick);
+}
+.pm-axis {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pm-dot {
+  cursor: pointer;
+  stroke: var(--mantine-color-body);
+  stroke-width: 2;
+  transition: r 120ms ease, opacity 120ms ease;
+}
+.pm-dot:hover,
+.pm-dot:focus-visible {
+  r: 10;
+  outline: none;
+}
+.pm-dot-works {
+  fill: var(--mantine-color-teal-6);
+}
+.pm-dot-packaging {
+  fill: var(--mantine-color-brand-6);
+}
+.pm-dot-bait {
+  fill: var(--mantine-color-grape-6);
+}
+.pm-dot-fail {
+  fill: var(--mantine-color-red-6);
+}
+.pm-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  width: 240px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-md);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-dot {
+    transition: none;
+  }
+}
+
 /* Кликабельное превью внутри «липкого» тултипа графика роста. */
 .yt-tip-thumb {
   transition: transform 140ms ease, filter 140ms ease;

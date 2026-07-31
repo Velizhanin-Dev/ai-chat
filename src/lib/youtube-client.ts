@@ -4,6 +4,8 @@ import type {
   VideoDetail,
   VideoAnalysis,
   VideoPage,
+  ChannelAnalysisRow,
+  DiagnoseKind,
 } from "./youtube-types";
 import type { BriefAutofill } from "./brief";
 
@@ -185,13 +187,15 @@ export function prefetchVideoDetail(projectId: string, videoId: string, publishe
 // ИИ-разбор видео (тратит 1 запрос квоты). Возвращает summary + варианты упаковки.
 export async function apiAnalyzeVideo(
   projectId: string,
-  videoId: string
+  videoId: string,
+  // CTR превью из YouTube Studio (API его не отдаёт); null — не вводили.
+  manualCtr?: number | null
 ): Promise<Result<VideoAnalysis>> {
   try {
     const res = await fetch("/api/integrations/youtube/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, videoId }),
+      body: JSON.stringify({ projectId, videoId, manualCtr: manualCtr ?? null }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       analysis?: VideoAnalysis;
@@ -200,6 +204,58 @@ export async function apiAnalyzeVideo(
     };
     if (!res.ok || !data.analysis) {
       return { ok: false, error: data.error || "Не удалось разобрать видео", code: data.code };
+    }
+    return { ok: true, data: data.analysis };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// ── Разбор канала по параметрам продвижения ──────────────────────────────────
+
+// История разборов проекта (свежие сверху). Квоту не тратит.
+export async function apiChannelAnalyses(
+  projectId: string
+): Promise<Result<ChannelAnalysisRow[]>> {
+  try {
+    const res = await fetch(`/api/integrations/youtube/diagnose?${q(projectId)}`, {
+      cache: "no-store",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      analyses?: ChannelAnalysisRow[];
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.analyses) {
+      return { ok: false, error: data.error || "Не удалось загрузить разборы", code: data.code };
+    }
+    return { ok: true, data: data.analyses };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Новый разбор канала — ТРАТИТ 1 запрос квоты. manualCtr — цифра из YouTube Studio
+// (API её не отдаёт), null/undefined = не вводили.
+export async function apiDiagnoseChannel(args: {
+  projectId: string;
+  kind: DiagnoseKind;
+  periodDays: number;
+  manualCtr?: number | null;
+}): Promise<Result<ChannelAnalysisRow>> {
+  try {
+    const res = await fetch("/api/integrations/youtube/diagnose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      analysis?: ChannelAnalysisRow;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.analysis) {
+      return { ok: false, error: data.error || "Не удалось разобрать канал", code: data.code };
     }
     return { ok: true, data: data.analysis };
   } catch {

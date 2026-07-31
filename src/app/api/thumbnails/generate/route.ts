@@ -40,6 +40,19 @@ export async function POST(req: Request) {
     return apiError("Опишите, что показать на превью");
   }
 
+  // Перегенерация из редактора — вариация исходного превью. Корнем группы
+  // считаем самое первое превью: цепочки «вариация вариации» не плодим, иначе
+  // галерея не сможет схлопнуть группу в одну карточку.
+  const rawParent = typeof body?.parentId === "string" ? body.parentId : "";
+  let parentId: string | null = null;
+  if (rawParent) {
+    const parent = await prisma.thumbnail.findFirst({
+      where: { id: rawParent, conversationId: access.conversationId, kind: "generation" },
+      select: { id: true, parentId: true },
+    });
+    parentId = parent ? parent.parentId ?? parent.id : null;
+  }
+
   // Референсы: берём ТОЛЬКО те, что реально принадлежат этому проекту, и в том
   // порядке, в каком их прислал клиент (порядок = Image 1..N в промпте).
   const wantIds = Array.isArray(body?.refIds)
@@ -98,6 +111,7 @@ export async function POST(req: Request) {
         mimeType: mime,
         bytes: image.data.length,
         refIds: ordered.map((r) => r.id),
+        parentId,
         spec: spec as unknown as object,
         prompt,
         model: image.model,

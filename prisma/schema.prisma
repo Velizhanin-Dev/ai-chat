@@ -52,6 +52,8 @@ model Conversation {
   youtube   YouTubeIntegration?
   // Референсы и сгенерированные превью проекта (см. модель Thumbnail ниже).
   thumbnails Thumbnail[]
+  // История разборов канала по параметрам продвижения (см. ChannelAnalysis ниже).
+  analyses  ChannelAnalysis[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -82,6 +84,13 @@ model Thumbnail {
   label          String       @default("")
   // Для kind="generation": id референсов, ушедших в запрос (порядок = Image 1..N).
   refIds         String[]     @default([])
+  // Вариации одного превью: перегенерация из редактора ссылается на исходную
+  // картинку. null = самостоятельное превью (корень группы). В галерее группа
+  // показывается одной карточкой — последней версией.
+  parentId       String?
+  // Для kind="reference": «применять всегда». Так стиль-референс держит единый
+  // вид превью для всех роликов канала, не выбирая его заново каждый раз.
+  pinned         Boolean      @default(false)
   // Спека арт-директора (ThumbnailSpec, src/lib/thumbnails.ts) — из чего собран промпт.
   spec           Json?
   // Финальный английский промпт, ушедший в image-модель (для отладки/повтора).
@@ -91,6 +100,7 @@ model Thumbnail {
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, kind, createdAt])
+  @@index([conversationId, parentId])
 }
 
 model Message {
@@ -99,6 +109,37 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String // "user" | "assistant"
   content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// Разбор канала по параметрам органического продвижения (раздел «Канал» → кнопка
+// «Разобрать канал»). Храним ВСЮ историю разборов: по ней видно прогресс канала
+// «было/стало» и не тратится квота на повторный просмотр уже сделанного.
+// Ключ выборки — (проект, срез): kind + periodDays.
+model ChannelAnalysis {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // Автор разбора (для телеметрии). SetNull — историю проекта не теряем.
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  // Что разбирали: "all" | "long" | "shorts". У шортсов свой набор параметров
+  // (6 параметров конверсии), у лонгов — 7 параметров продвижения.
+  kind           String       @default("all")
+  // Окно аналитики в днях; 0 = за всё время жизни канала.
+  periodDays     Int          @default(28)
+  // Снимок собранных цифр (ChannelDiagnostics) — чтобы старый разбор в истории
+  // читался сам по себе, без повторного похода в YouTube.
+  metrics        Json
+  // Результат модели (ChannelAnalysisResult): параметры со score 0-100 + вывод.
+  result         Json
+  // Общий балл 0-100 (среднее по параметрам) — для сравнения разборов в истории.
+  overallScore   Int          @default(0)
+  // CTR, введённый руками из YouTube Studio (API его не отдаёт). null — не вводили.
+  manualCtr      Float?
+  model          String       @default("")
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
@@ -147,6 +188,7 @@ model User {
   conversations Conversation[]
   stats         Stat[]
   thumbnails    Thumbnail[]
+  analyses      ChannelAnalysis[]
   // Черновое подключение YouTube на время прохождения брифа (см. модель ниже).
   youtubePending YouTubePendingConnection?
 }

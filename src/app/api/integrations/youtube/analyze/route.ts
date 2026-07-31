@@ -81,6 +81,10 @@ export async function POST(req: Request) {
   const projectId = typeof body?.projectId === "string" ? body.projectId : "";
   const videoId = typeof body?.videoId === "string" ? body.videoId : "";
   if (!videoId) return apiError("Не указан videoId");
+  // CTR превью публичный Analytics API не отдаёт (он есть только в Studio) —
+  // юзер может ввести его руками, тогда разбираем кликабельность по цифре.
+  const rawCtr = Number(body?.manualCtr);
+  const manualCtr = Number.isFinite(rawCtr) && rawCtr > 0 && rawCtr <= 100 ? rawCtr : null;
 
   const owned = await assertOwnedProject(user.id, projectId);
   if (!owned) return apiError("Проект не найден", 404);
@@ -164,6 +168,11 @@ export async function POST(req: Request) {
 «${video.description ? video.description.slice(0, 1500) : "(пустое)"}»
 Теги: ${video.tags.length ? video.tags.join(", ") : "(нет)"}
 Метрики: просмотров ${video.viewCount}, лайков ${video.likeCount}, комментов ${video.commentCount}.
+${
+  manualCtr != null
+    ? `CTR превью (из YouTube Studio, ввёл сам): ${String(manualCtr).replace(".", ",")} %. Норма ~5%, хорошо ~10%; в ЗОЖ/стиле бывает 10–15%. Разбери кликабельность по этой цифре: если ниже нормы — проблема в превью и названии, а не в содержании.`
+    : "CTR превью неизвестен (по API он не отдаётся, только в Studio). Не выдумывай его: про кликабельность говори по косвенным признакам и скажи, что точную цифру видно в Studio."
+}
 ${retLine}
 
 Верни СТРОГО валидный JSON без markdown и без текста вокруг:

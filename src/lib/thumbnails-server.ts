@@ -10,10 +10,10 @@ import { apiError } from "./http";
 import { prisma } from "./prisma";
 
 // ── Общий гейт для всех роутов генератора превью ────────────────────────────
-// Раздел пока АДМИН-ОНЛИ (как и страница — она лежит в route-group (locked)).
-// Открыть всем = снять этот флаг И вынести страницу из (locked); остальная
-// логика (квота, гейт тарифа) уже готова и включится сама.
-export const THUMBNAILS_ADMIN_ONLY = true;
+// Раздел открыт всем залогиненным (страница вынесена из route-group (locked),
+// в меню помечена бетой). Флаг оставлен как рубильник: поставить true — раздел
+// снова станет админ-онли (тогда и страницу вернуть в (locked)).
+export const THUMBNAILS_ADMIN_ONLY = false;
 
 // Сколько единиц квоты стоит одна сгенерированная картинка. Картинка у Nano
 // Banana Pro дороже обычного ответа чата (~$0.13-0.15 против центов), но
@@ -37,6 +37,8 @@ export function toRow(t: Thumbnail): ThumbnailRow {
     spec: t.spec ? sanitizeSpec(t.spec) : null,
     model: t.model,
     createdAt: t.createdAt.toISOString(),
+    parentId: t.parentId,
+    pinned: t.pinned,
   };
 }
 

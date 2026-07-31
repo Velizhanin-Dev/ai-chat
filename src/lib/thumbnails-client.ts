@@ -47,15 +47,34 @@ export async function apiDeleteThumbnail(projectId: string, id: string): Promise
   if (!res.ok) await fail(res);
 }
 
+// parentId — если это перегенерация из редактора: новая картинка станет
+// вариацией исходной и не заведёт отдельную карточку в галерее.
 export async function apiGenerateThumbnail(
   projectId: string,
   spec: ThumbnailSpec,
-  refIds: string[]
+  refIds: string[],
+  parentId?: string | null
 ): Promise<ThumbnailRow> {
   const res = await fetch("/api/thumbnails/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, spec, refIds }),
+    body: JSON.stringify({ projectId, spec, refIds, parentId: parentId ?? null }),
+  });
+  if (!res.ok) await fail(res);
+  const data = (await res.json()) as { item: ThumbnailRow };
+  return data.item;
+}
+
+// «Применять всегда» у референса: закреплённый стиль идёт во все новые генерации.
+export async function apiPinReference(
+  projectId: string,
+  id: string,
+  pinned: boolean
+): Promise<ThumbnailRow> {
+  const res = await fetch(`/api/thumbnails/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, pinned }),
   });
   if (!res.ok) await fail(res);
   const data = (await res.json()) as { item: ThumbnailRow };

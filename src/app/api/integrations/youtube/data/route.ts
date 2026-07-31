@@ -12,6 +12,8 @@ import {
   fetchSubscriberVideos,
   fetchSubscriberTimeline,
   fetchAudience,
+  fetchVideoSubs,
+  fetchContentSplit,
   periodRanges,
   assertOwnedProject,
   statsCacheKey,
@@ -61,18 +63,31 @@ export async function GET(req: Request) {
     const channel = await fetchChannelInfo(accessToken);
     if (!channel) return apiError("Канал не найден", 502, "YT_ERROR");
 
-    const [videosPage, daily, curSummary, prevSummary, traffic, subVideos, audience] =
-      await Promise.all([
-        channel.uploadsPlaylistId
-          ? fetchRecentVideosWithAnalytics(accessToken, channel.uploadsPlaylistId)
-          : Promise.resolve<VideoPage>({ videos: [], nextPageToken: null }),
-        fetchDailyAnalytics(accessToken, ranges.current.start, ranges.current.end),
-        fetchPeriodSummary(accessToken, ranges.current.start, ranges.current.end),
-        fetchPeriodSummary(accessToken, ranges.previous.start, ranges.previous.end),
-        fetchTrafficSources(accessToken, ranges.current.start, ranges.current.end),
-        fetchSubscriberVideos(accessToken, ranges.current.start, ranges.current.end),
-        fetchAudience(accessToken, ranges.current.start, ranges.current.end),
-      ]);
+    const [
+      videosPage,
+      daily,
+      curSummary,
+      prevSummary,
+      traffic,
+      subVideos,
+      audience,
+      subsByVideo,
+      contentSplit,
+    ] = await Promise.all([
+      channel.uploadsPlaylistId
+        ? fetchRecentVideosWithAnalytics(accessToken, channel.uploadsPlaylistId)
+        : Promise.resolve<VideoPage>({ videos: [], nextPageToken: null }),
+      fetchDailyAnalytics(accessToken, ranges.current.start, ranges.current.end),
+      fetchPeriodSummary(accessToken, ranges.current.start, ranges.current.end),
+      fetchPeriodSummary(accessToken, ranges.previous.start, ranges.previous.end),
+      fetchTrafficSources(accessToken, ranges.current.start, ranges.current.end),
+      fetchSubscriberVideos(accessToken, ranges.current.start, ranges.current.end),
+      fetchAudience(accessToken, ranges.current.start, ranges.current.end),
+      // Диагностика: конверсия в подписку по каждому ролику + кто приводит
+      // подписчиков — шортсы или лонги. Два лёгких запроса, оба best-effort.
+      fetchVideoSubs(accessToken, ranges.current.start, ranges.current.end),
+      fetchContentSplit(accessToken, ranges.current.start, ranges.current.end),
+    ]);
     const videos = videosPage.videos;
 
     // Сравнение периодов — только если получили текущий агрегат.
@@ -118,6 +133,8 @@ export async function GET(req: Request) {
       traffic,
       subscribers,
       audience,
+      subsByVideo,
+      contentSplit,
       fetchedAt: new Date().toISOString(),
     };
     setCachedStats(cacheKey, payload);

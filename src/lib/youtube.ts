@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import type { YouTubeIntegration, YouTubePendingConnection } from "@prisma/client";
 import { prisma } from "./prisma";
 import type {
+  ContentSplit,
   YouTubeChannelInfo,
   YouTubeVideo,
   DailyPoint,
@@ -392,7 +393,7 @@ const YT_FETCH_TIMEOUT_MS = 10_000;
 // GET к API YouTube с Bearer-токеном. На не-2xx бросает ошибку с .status (401/403
 // = токен протух/отозван → переподключение). По таймауту — AbortError (ловится
 // best-effort-обёртками, вернут null/[]; на дашборде — обычная ошибка загрузки).
-async function ytGet<T>(url: string, accessToken: string): Promise<T> {
+export async function ytGet<T>(url: string, accessToken: string): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), YT_FETCH_TIMEOUT_MS);
   try {
@@ -845,6 +846,84 @@ export async function fetchSubscriberVideos(
   }
 }
 
+// Подписчики по КАЖДОМУ ролику за период (не только топ-10) — из этого считается
+// конверсия в подписку на ролик, которой нет в Studio: там абсолютные подписчики,
+// а правило одного процента работает только в процентах. Один запрос на 200 строк.
+export async function fetchVideoSubs(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<Record<string, { gained: number; lost: number }>> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "subscribersGained,subscribersLost",
+      dimensions: "video",
+      sort: "-subscribersGained",
+      maxResults: "200",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const out: Record<string, { gained: number; lost: number }> = {};
+    for (const r of data.rows ?? []) {
+      out[String(r[0])] = { gained: Number(r[1] ?? 0), lost: Number(r[2] ?? 0) };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Разрез «шортсы против лонгов» за период (dimensions=creatorContentType): кто
+// реально приводит подписчиков. В Studio это разнесено по разным экранам.
+export async function fetchContentSplit(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<ContentSplit | null> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "views,subscribersGained,averageViewPercentage",
+      dimensions: "creatorContentType",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const rows = data.rows ?? [];
+    if (rows.length === 0) return null;
+    const zero = () => ({ views: 0, subscribersGained: 0, avgViewPercentage: 0 });
+    const acc = { shorts: zero(), long: zero() };
+    let hasShorts = false;
+    let hasLong = false;
+    for (const r of rows) {
+      const isShorts = String(r[0]) === "SHORTS";
+      const target = isShorts ? acc.shorts : acc.long;
+      const views = Number(r[1] ?? 0);
+      // Проценты складываем взвешенно по просмотрам (иначе редкий тип перекосит).
+      const total = target.views + views;
+      target.avgViewPercentage =
+        total > 0
+          ? (target.avgViewPercentage * target.views + Number(r[3] ?? 0) * views) / total
+          : 0;
+      target.views = total;
+      target.subscribersGained += Number(r[2] ?? 0);
+      if (isShorts) hasShorts = true;
+      else hasLong = true;
+    }
+    return { shorts: hasShorts ? acc.shorts : null, long: hasLong ? acc.long : null };
+  } catch {
+    return null;
+  }
+}
+
 // ── Таймлайн роста: прирост подписчиков по видео + релизы по отрезкам времени ──
 
 // Гранулярность отрезков под период: короткие окна — по дням, длинные — крупнее,
@@ -931,7 +1010,7 @@ export async function fetchSubscriberTimeline(
   const ensure = (key: string): SubscriberTimelineBucket => {
     let b = buckets.get(key);
     if (!b) {
-      b = { key, views: 0, totalGained: 0, gainedByVideo: {}, other: 0, releases: [] };
+      b = { key, views: 0, totalGained: 0, totalLost: 0, gainedByVideo: {}, other: 0, releases: [] };
       buckets.set(key, b);
       order.push(key);
     }
@@ -941,6 +1020,7 @@ export async function fetchSubscriberTimeline(
     const b = ensure(bucketKeyFor(dp.date, gran));
     b.views += dp.views;
     b.totalGained += dp.subscribersGained;
+    b.totalLost += dp.subscribersLost;
   }
 
   // Разложить прирост по драйверам и посчитать суммарный вклад каждого.

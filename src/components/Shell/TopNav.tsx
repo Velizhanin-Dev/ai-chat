@@ -20,13 +20,34 @@ import { useAppSelector } from "@/store/hooks";
 // dropdown выбора страницы. Новые разделы (adminOnly) для не-админов задизейблены
 // («Будет доступно позже»); роуты прикрыты серверным гвардом ((locked)). На /app
 // (нет projectId) меню не рендерится.
+// `beta` — раздел открыт всем, но ещё обкатывается: рядом с названием бренд-акцентом
+// стоит β, чтобы человек понимал, что тут возможны шероховатости.
 const ITEMS = [
-  { label: "Чат", seg: "chat", adminOnly: false },
-  { label: "Аналитика", seg: "channel", adminOnly: false },
-  { label: "Контент-план", seg: "creatives", adminOnly: true },
-  { label: "Генератор превью", seg: "thumbnails", adminOnly: true },
-  { label: "Настройки", seg: "settings", adminOnly: false },
+  { label: "Чат", seg: "chat", adminOnly: false, beta: false },
+  { label: "Аналитика", seg: "channel", adminOnly: false, beta: false },
+  { label: "Контент-план", seg: "creatives", adminOnly: true, beta: false },
+  { label: "Генератор превью", seg: "thumbnails", adminOnly: false, beta: true },
+  { label: "Настройки", seg: "settings", adminOnly: false, beta: false },
 ] as const;
+
+// Значок беты. title/aria — чтобы «β» не читалась скринридером как мусор.
+function BetaMark() {
+  return (
+    <Text
+      component="span"
+      aria-label="бета-версия"
+      title="Бета-версия: раздел ещё обкатываем"
+      style={{
+        color: "var(--mantine-color-brand-filled)",
+        fontWeight: 700,
+        fontSize: "0.9em",
+        lineHeight: 1,
+      }}
+    >
+      β
+    </Text>
+  );
+}
 
 const TAB_BASE: React.CSSProperties = {
   display: "inline-flex",
@@ -116,6 +137,7 @@ export default function TopNav() {
                 }}
               >
                 {item.label}
+                {item.beta && <BetaMark />}
               </Box>
             );
           })}
@@ -219,6 +241,7 @@ export default function TopNav() {
                     }}
                   >
                     {item.label}
+                    {item.beta && <BetaMark />}
                   </Box>
                 );
               })}

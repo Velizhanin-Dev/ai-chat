@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  Accordion,
   ActionIcon,
   Alert,
   Anchor,
@@ -11,11 +12,13 @@ import {
   Badge,
   Box,
   Button,
+  Grid,
   CopyButton,
   Divider,
   Group,
   Loader,
   Modal,
+  NumberInput,
   Paper,
   Progress,
   SegmentedControl,
@@ -26,8 +29,9 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
-import { AreaChart, BarChart, DonutChart } from "@mantine/charts";
+import { AreaChart, DonutChart, LineChart } from "@mantine/charts";
 import {
   IconBrandYoutube,
   IconUsers,
@@ -48,7 +52,15 @@ import {
   IconCopy,
   IconCircleCheck,
   IconAlertTriangle,
+  IconChartRadar,
 } from "@tabler/icons-react";
+import ChannelDiagnostics from "./ChannelDiagnostics";
+import AnalysisSummaryCard from "./AnalysisSummaryCard";
+import PackagingMatrix, {
+  buildMatrix,
+  QUADRANT_META,
+  type MatrixPoint,
+} from "./PackagingMatrix";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import {
@@ -86,6 +98,7 @@ import {
   type TimelineRelease,
   type Granularity,
   type AudienceData,
+  type ContentSplit,
 } from "@/lib/youtube-types";
 
 // Подпись периода для заголовков/капшенов.
@@ -124,6 +137,9 @@ export default function ChannelDashboard() {
   const [phase, setPhase] = useState<Phase>({ s: "loading" });
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<number>(28);
+  // Разбор канала по параметрам продвижения — отдельная модалка (см. ChannelDiagnostics).
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagVersion, setDiagVersion] = useState(0);
 
   const load = useCallback(
     async (soft: boolean, force = false) => {
@@ -165,6 +181,29 @@ export default function ChannelDashboard() {
                   обновлено {formatTime(phase.data.fetchedAt)}
                 </Text>
               )}
+              <Button
+                color="brand"
+                size="sm"
+                radius="md"
+                leftSection={<IconChartRadar size={16} />}
+                onClick={() => setDiagOpen(true)}
+                visibleFrom="sm"
+              >
+                Разобрать канал
+              </Button>
+              <Tooltip label="Разобрать канал по параметрам продвижения" withArrow>
+                <ActionIcon
+                  variant="filled"
+                  color="brand"
+                  size="lg"
+                  radius="md"
+                  onClick={() => setDiagOpen(true)}
+                  hiddenFrom="sm"
+                  aria-label="Разобрать канал по параметрам продвижения"
+                >
+                  <IconChartRadar size={18} />
+                </ActionIcon>
+              </Tooltip>
               <SegmentedControl
                 size="sm"
                 radius="md"
@@ -198,15 +237,41 @@ export default function ChannelDashboard() {
           <Reauth settingsHref={settingsHref} onRetry={() => load(false)} />
         )}
         {phase.s === "error" && <ErrorState msg={phase.msg} onRetry={() => load(false)} />}
-        {phase.s === "ready" && <Dashboard data={phase.data} />}
+        {phase.s === "ready" && (
+          <Dashboard
+            data={phase.data}
+            onOpenDiagnostics={() => setDiagOpen(true)}
+            diagRefreshKey={diagVersion}
+          />
+        )}
       </Box>
+
+      {projectId && (
+        <ChannelDiagnostics
+          projectId={projectId}
+          opened={diagOpen}
+          onClose={() => {
+            setDiagOpen(false);
+            // Могли сделать новый разбор — карточка на первой строке перечитает его.
+            setDiagVersion((v) => v + 1);
+          }}
+        />
+      )}
     </Box>
   );
 }
 
 // ── Загруженный дашборд ───────────────────────────────────────────────────────
 
-function Dashboard({ data }: { data: YouTubeData }) {
+function Dashboard({
+  data,
+  onOpenDiagnostics,
+  diagRefreshKey,
+}: {
+  data: YouTubeData;
+  onOpenDiagnostics: () => void;
+  diagRefreshKey: number;
+}) {
   const params = useParams();
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
   const ch = data.channel;
@@ -292,82 +357,43 @@ function Dashboard({ data }: { data: YouTubeData }) {
     [videosById]
   );
 
+  // Матрица «упаковка ↔ содержание» и очередь «что чинить» — из уже загруженных
+  // роликов (нужны удержание и просмотры) + подписки по роликам из payload.
+  const matrix = useMemo(() => buildMatrix(videos, data.subsByVideo), [videos, data.subsByVideo]);
+  // Порядок очереди: сперва то, где теряем больше всего — «кликнули и ушли» на
+  // хорошем охвате, потом непроданный хороший контент, потом провалы.
+  const fixQueue = useMemo(() => {
+    const rank: Record<string, number> = { bait: 0, packaging: 1, fail: 2, works: 3 };
+    return matrix.points
+      .filter((p) => p.quadrant !== "works")
+      .sort((a, b) => rank[a.quadrant] - rank[b.quadrant] || b.video.viewCount - a.video.viewCount)
+      .slice(0, 6);
+  }, [matrix.points]);
+
   if (!ch) return null;
 
   return (
     <Stack gap="lg">
-      {/* Шапка канала */}
-      <Paper withBorder radius="lg" style={{ overflow: "hidden" }}>
-        <Box
-          style={{
-            height: 132,
-            background: ch.banner
-              ? `center / cover no-repeat url("${ch.banner}=w1280")`
-              : "linear-gradient(120deg, var(--mantine-color-brand-6), var(--mantine-color-brand-8))",
-          }}
-        />
-        <Group
-          gap="md"
-          wrap="nowrap"
-          align="flex-end"
-          px={{ base: "md", sm: "lg" }}
-          pb="md"
-          style={{ marginTop: -36 }}
-        >
-          <Avatar
-            src={ch.thumbnail}
-            size={88}
-            radius="50%"
-            color="red"
-            style={{ border: "4px solid var(--mantine-color-body)", flexShrink: 0 }}
-          >
-            <IconBrandYoutube size={44} />
-          </Avatar>
-          <Box style={{ minWidth: 0, paddingBottom: 4 }}>
-            <Title order={3} fz={{ base: "1.15rem", sm: "1.4rem" }} lineClamp={1}>
-              {ch.title}
-            </Title>
-            <Group gap="xs" wrap="wrap">
-              {ch.customUrl && (
-                <Anchor
-                  href={`https://www.youtube.com/${ch.customUrl}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="sm"
-                  c="dimmed"
-                >
-                  <Group gap={4} wrap="nowrap">
-                    {ch.customUrl}
-                    <IconExternalLink size={12} />
-                  </Group>
-                </Anchor>
-              )}
-              {!ch.hiddenSubscriberCount && (
-                <Text size="sm" c="dimmed">
-                  {formatCount(ch.subscriberCount)} подписчиков
-                </Text>
-              )}
-              <Text size="sm" c="dimmed">
-                · {formatCount(ch.viewCount)} просмотров
-              </Text>
-              <Text size="sm" c="dimmed">
-                · {formatCount(ch.videoCount)} видео
-              </Text>
-            </Group>
-          </Box>
-        </Group>
-        {ch.description && (
-          <Text size="sm" c="dimmed" px={{ base: "md", sm: "lg" }} pb="md" lineClamp={2}>
-            {ch.description}
-          </Text>
-        )}
-      </Paper>
+      {/* Строка 1: канал + последний разбор (3 к 5 по сетке из восьми колонок) */}
+      <Grid columns={8} gutter="md">
+        <Grid.Col span={{ base: 8, md: 3 }}>
+          <ChannelCard ch={ch} />
+        </Grid.Col>
+        <Grid.Col span={{ base: 8, md: 5 }}>
+          {projectId && (
+            <AnalysisSummaryCard
+              projectId={projectId}
+              onOpen={onOpenDiagnostics}
+              refreshKey={diagRefreshKey}
+            />
+          )}
+        </Grid.Col>
+      </Grid>
 
-      {/* KPI-карточки: метрики за период с дельтой роста vs прошлый период */}
+      {/* Строка 2: метрики за период */}
       {period ? (
         <PeriodKpis period={period} />
       ) : (
-        // Аналитика недоступна — показываем лайфтайм-тоталы без дельт.
         <SimpleGrid cols={{ base: 2, md: 3 }} spacing="md">
           <StatCard
             icon={<IconUsers size={20} />}
@@ -393,48 +419,84 @@ function Dashboard({ data }: { data: YouTubeData }) {
         </SimpleGrid>
       )}
 
-      {/* Рост канала: просмотры + прирост подписчиков по видео-драйверам + релизы.
-          Основной блок — таймлайн (2 синхронных графика); если он недоступен, но
-          есть дневной ряд — фолбэк на простой график просмотров. */}
-      {data.subscribers?.timeline && data.subscribers.timeline.buckets.length > 0 ? (
-        <GrowthSection
-          sub={data.subscribers}
-          days={period?.days ?? 28}
-          onOpenVideo={openDriver}
-        />
-      ) : (
-        daily &&
-        daily.length > 0 && (
-          <Paper withBorder radius="lg" p="md">
-            <Text fw={600} mb="md">
-              Просмотры {periodLabel(period?.days ?? 28)}
-            </Text>
-            <AreaChart
-              h={240}
-              data={daily.map((d) => ({
-                date: formatShortDate(d.date),
-                Просмотры: d.views,
-              }))}
-              dataKey="date"
-              series={[{ name: "Просмотры", color: "brand.6" }]}
-              curveType="monotone"
-              withGradient
-              withDots={false}
-              valueFormatter={(v) => formatFull(v)}
-              gridAxis="y"
-              tickLine="none"
-            />
-          </Paper>
-        )
+      {/* Строка 3: диагностика — матрица + очередь «что чинить» */}
+      {matrix.points.length >= 3 && (
+        <Grid columns={8} gutter="md">
+          <Grid.Col span={{ base: 8, lg: 5 }}>
+            <Box className="an-surface" p="md">
+              <Text fw={600}>Что чинить</Text>
+              <Text size="xs" c="dimmed" mb="sm">
+                Точка — ролик. Правее — больше просмотров, выше — дольше смотрят. Нажми на точку,
+                чтобы открыть разбор.
+              </Text>
+              <PackagingMatrix
+                points={matrix.points}
+                medianRetention={matrix.medianRetention}
+                onOpenVideo={setSelected}
+              />
+            </Box>
+          </Grid.Col>
+          <Grid.Col span={{ base: 8, lg: 3 }}>
+            <FixQueue items={fixQueue} onOpen={setSelected} split={data.contentSplit ?? null} />
+          </Grid.Col>
+        </Grid>
       )}
 
-      {/* Источники трафика */}
-      {data.traffic && data.traffic.length > 0 && (
-        <TrafficSources traffic={data.traffic} days={period?.days ?? 28} />
-      )}
-
-      {/* Аудитория */}
-      {data.audience && <AudienceSection a={data.audience} days={period?.days ?? 28} />}
+      {/* Подробности: то, что нужно не каждый раз — под сворачиванием */}
+      <Accordion variant="separated" radius="lg" multiple classNames={{ item: "an-acc-item" }}>
+        {(data.subscribers?.timeline || (daily && daily.length > 0)) && (
+          <Accordion.Item value="growth">
+            <Accordion.Control icon={<IconChartArcs size={18} />}>Рост канала</Accordion.Control>
+            <Accordion.Panel>
+              {data.subscribers?.timeline && data.subscribers.timeline.buckets.length > 0 ? (
+                <GrowthSection
+                  sub={data.subscribers}
+                  days={period?.days ?? 28}
+                  subscribersNow={ch.subscriberCount}
+                  hiddenSubscribers={ch.hiddenSubscriberCount}
+                  onOpenVideo={openDriver}
+                />
+              ) : (
+                daily && (
+                  <AreaChart
+                    h={240}
+                    data={daily.map((d) => ({
+                      date: formatShortDate(d.date),
+                      Просмотры: d.views,
+                    }))}
+                    dataKey="date"
+                    series={[{ name: "Просмотры", color: "brand.6" }]}
+                    curveType="monotone"
+                    withGradient
+                    withDots={false}
+                    valueFormatter={(v) => formatFull(v)}
+                    gridAxis="y"
+                    tickLine="none"
+                  />
+                )
+              )}
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+        {data.traffic && data.traffic.length > 0 && (
+          <Accordion.Item value="traffic">
+            <Accordion.Control icon={<IconChartArcs size={18} />}>
+              Источники трафика
+            </Accordion.Control>
+            <Accordion.Panel>
+              <TrafficSources traffic={data.traffic} days={period?.days ?? 28} />
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+        {data.audience && (
+          <Accordion.Item value="audience">
+            <Accordion.Control icon={<IconUsers size={18} />}>Аудитория</Accordion.Control>
+            <Accordion.Panel>
+              <AudienceSection a={data.audience} days={period?.days ?? 28} />
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+      </Accordion>
 
       {/* Видео канала — все ролики, догружаются постранично при доскролле */}
       <Box>
@@ -512,6 +574,185 @@ function Dashboard({ data }: { data: YouTubeData }) {
   );
 }
 
+// Карточка канала — первая колонка первой строки. Компактная: тонкий баннер,
+// аватар, счётчики и описание в две строки.
+function ChannelCard({ ch }: { ch: NonNullable<YouTubeData["channel"]> }) {
+  return (
+    <Box className="an-surface" style={{ overflow: "hidden", height: "100%" }}>
+      <Box
+        style={{
+          height: 72,
+          background: ch.banner
+            ? `center / cover no-repeat url("${ch.banner}=w1280")`
+            : "linear-gradient(120deg, var(--mantine-color-brand-6), var(--mantine-color-brand-8))",
+        }}
+      />
+      <Box px="md" pb="md" style={{ marginTop: -28 }}>
+        <Avatar
+          src={ch.thumbnail}
+          size={64}
+          radius="50%"
+          color="red"
+          style={{ border: "4px solid var(--mantine-color-body)" }}
+        >
+          <IconBrandYoutube size={32} />
+        </Avatar>
+        <Title order={3} fz="1.15rem" mt="xs" lineClamp={1}>
+          {ch.title}
+        </Title>
+        {ch.customUrl && (
+          <Anchor
+            href={`https://www.youtube.com/${ch.customUrl}`}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            c="dimmed"
+          >
+            <Group gap={4} wrap="nowrap">
+              {ch.customUrl}
+              <IconExternalLink size={12} />
+            </Group>
+          </Anchor>
+        )}
+        <Group gap="lg" mt="sm" wrap="wrap">
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {ch.hiddenSubscriberCount ? "—" : formatCount(ch.subscriberCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              подписчиков
+            </Text>
+          </Box>
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {formatCount(ch.viewCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              просмотров
+            </Text>
+          </Box>
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {formatCount(ch.videoCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              видео
+            </Text>
+          </Box>
+        </Group>
+        {ch.description && (
+          <Text size="xs" c="dimmed" mt="sm" lineClamp={2}>
+            {ch.description}
+          </Text>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+// Очередь «что чинить»: ролики из проблемных углов матрицы + разрез «шортсы
+// против лонгов» (кто на самом деле приводит подписчиков).
+function FixQueue({
+  items,
+  split,
+  onOpen,
+}: {
+  items: MatrixPoint[];
+  split: ContentSplit | null;
+  onOpen: (v: YouTubeVideo) => void;
+}) {
+  const subsPer1k = (row: { views: number; subscribersGained: number } | null) =>
+    row && row.views > 0 ? (row.subscribersGained / row.views) * 1000 : null;
+  const sh = subsPer1k(split?.shorts ?? null);
+  const lo = subsPer1k(split?.long ?? null);
+
+  return (
+    <Stack gap="md" style={{ height: "100%" }}>
+      <Box className="an-surface" p="md">
+        <Text fw={600} mb={4}>
+          Очередь на переделку
+        </Text>
+        {items.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            Проблемных роликов не вижу — по охвату и досмотру всё в норме канала.
+          </Text>
+        ) : (
+          <Stack gap={2}>
+            {items.map((p) => {
+              const meta = QUADRANT_META[p.quadrant];
+              return (
+                <UnstyledButton
+                  key={p.video.id}
+                  className="yt-driver-row"
+                  onClick={() => onOpen(p.video)}
+                >
+                  <Group gap={8} wrap="nowrap" align="flex-start">
+                    <Box
+                      w={8}
+                      h={8}
+                      mt={6}
+                      style={{
+                        borderRadius: 2,
+                        flexShrink: 0,
+                        background: `var(--mantine-color-${meta.color}-6)`,
+                      }}
+                    />
+                    <Box style={{ minWidth: 0, flex: 1 }}>
+                      <Text size="sm" lineClamp={1}>
+                        {p.video.title}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {meta.label} · {formatCount(p.video.viewCount)} просмотров ·{" "}
+                        {Math.round(p.retention)}% досмотр
+                      </Text>
+                    </Box>
+                  </Group>
+                </UnstyledButton>
+              );
+            })}
+          </Stack>
+        )}
+      </Box>
+
+      {(sh != null || lo != null) && (
+        <Box className="an-surface" p="md">
+          <Text fw={600} mb={4}>
+            Кто приводит подписчиков
+          </Text>
+          <Text size="xs" c="dimmed" mb="sm">
+            Подписчиков на 1000 просмотров — в Studio такой цифры нет.
+          </Text>
+          <Stack gap="xs">
+            {lo != null && (
+              <Group justify="space-between" gap="xs" wrap="nowrap">
+                <Text size="sm">Обычные видео</Text>
+                <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {lo.toFixed(1)}
+                </Text>
+              </Group>
+            )}
+            {sh != null && (
+              <Group justify="space-between" gap="xs" wrap="nowrap">
+                <Text size="sm">Шортсы</Text>
+                <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {sh.toFixed(1)}
+                </Text>
+              </Group>
+            )}
+          </Stack>
+          {sh != null && lo != null && (
+            <Text size="xs" c="dimmed" mt="sm">
+              {sh > lo
+                ? "Шортсы конвертируют лучше лонгов — есть смысл вести с них на длинные ролики."
+                : "Лонги конвертируют лучше шортсов: шортсы дают охват, а подписку закрывают длинные."}
+            </Text>
+          )}
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
 function StatCard({
   icon,
   label,
@@ -529,7 +770,7 @@ function StatCard({
 }) {
   return (
     <Tooltip label={full} withArrow openDelay={200}>
-      <Paper withBorder radius="lg" p="md">
+      <Paper className="an-surface" radius="lg" p="md">
         <Group gap="xs" mb={10} wrap="nowrap">
           <ThemeIcon variant="light" color={color} radius="md" size={32}>
             {icon}
@@ -691,7 +932,7 @@ function TrafficSources({ traffic, days }: { traffic: TrafficSource[]; days: num
   const donutData = withColor.map((t) => ({ name: t.label, value: t.views, color: t.color }));
 
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Text fw={600} mb="md">
         Источники трафика {periodLabel(days)}
       </Text>
@@ -768,32 +1009,95 @@ function bucketLabel(key: string, gran: Granularity): string {
 function GrowthSection({
   sub,
   days,
+  subscribersNow,
+  hiddenSubscribers,
   onOpenVideo,
 }: {
   sub: SubscriberDynamicsData;
   days: number;
+  // Текущее число подписчиков — точка отсчёта для кривой «всего подписчиков»
+  // (историю общего счётчика YouTube не отдаёт, восстанавливаем её назад по приросту).
+  subscribersNow: number;
+  hiddenSubscribers: boolean;
   onOpenVideo: (v: SubscriberTimelineVideo) => void;
 }) {
   const tl = sub.timeline as SubscriberTimeline;
   const gran = tl.granularity;
   const drivers = tl.videos;
-  const colorById = new Map(drivers.map((v, i) => [v.id, VIDEO_COLORS[i % VIDEO_COLORS.length]]));
+  // Мемо, потому что обе карты уходят в зависимости showTip (useCallback) — без
+  // этого он пересобирался бы на каждый рендер.
+  const colorById = useMemo(
+    () => new Map(drivers.map((v, i) => [v.id, VIDEO_COLORS[i % VIDEO_COLORS.length]])),
+    [drivers]
+  );
 
   const hasOther = tl.buckets.some((b) => b.other > 0);
   const hasSubs = tl.buckets.some((b) => b.totalGained > 0);
   const hasViews = tl.buckets.some((b) => b.views > 0);
   const hasReleases = tl.buckets.some((b) => b.releases.length > 0);
 
+  // Кривая «всего подписчиков»: YouTube отдаёт только приросты по дням, истории
+  // самого счётчика нет — восстанавливаем её назад от текущего числа, вычитая
+  // net (пришло − ушло) каждого следующего отрезка. totals[i] = сколько было на
+  // конец отрезка i. ⚠️ У каналов больше 1000 подписчиков YouTube округляет
+  // subscriberCount, поэтому абсолютные значения — оценка, а форма кривой точная.
+  const canCumulative = subscribersNow > 0 && !hiddenSubscribers;
+  const totals = useMemo(() => {
+    if (!canCumulative) return [] as number[];
+    const out: number[] = [];
+    let acc = subscribersNow;
+    for (let i = tl.buckets.length - 1; i >= 0; i--) {
+      out[i] = acc;
+      acc -= tl.buckets[i].totalGained - tl.buckets[i].totalLost;
+    }
+    return out;
+  }, [canCumulative, subscribersNow, tl.buckets]);
+
   // Общая сетка отрезков для обоих графиков: одна строка = один отрезок времени.
-  const rows = tl.buckets.map((b) => {
-    const row: Record<string, number | string> = {
-      label: bucketLabel(b.key, gran),
-      Просмотры: b.views,
-    };
-    for (const v of drivers) row[v.id] = b.gainedByVideo[v.id] ?? 0;
-    if (hasOther) row[OTHER_KEY] = b.other;
-    return row;
-  });
+  // Подписчики — одной линией; раскладка по видео живёт в тултипе и лидерборде,
+  // чтобы линия читалась, а не превращалась в спагетти из шести серий.
+  const rows = tl.buckets.map((b, i) => ({
+    label: bucketLabel(b.key, gran),
+    Просмотры: b.views,
+    Подписчики: canCumulative ? totals[i] : b.totalGained,
+  }));
+
+  // Ось Y для накопленной кривой не должна начинаться с нуля — иначе рост в
+  // сотню подписчиков на канале с десятками тысяч выглядит прямой линией.
+  const subMin = Math.min(...rows.map((r) => r.Подписчики));
+  const subMax = Math.max(...rows.map((r) => r.Подписчики));
+  const subPad = Math.max(1, Math.round((subMax - subMin) * 0.2));
+  const subDomain: [number, number] = canCumulative
+    ? [Math.max(0, subMin - subPad), subMax + subPad]
+    : [0, subMax + subPad];
+
+  // Отрезок по подписи — тултипу нужна раскладка прироста по видео, а линия её
+  // в payload не несёт (в отличие от прежнего стека).
+  const bucketByLabel = useMemo(
+    () => new Map(tl.buckets.map((b) => [bucketLabel(b.key, gran), b])),
+    [tl.buckets, gran]
+  );
+  const labelIndex = useMemo(
+    () => new Map(tl.buckets.map((b, i) => [bucketLabel(b.key, gran), i])),
+    [tl.buckets, gran]
+  );
+
+  // Главный драйвер отрезка — им красим точку на линии, чтобы цвет ролика
+  // остался считываемым и без столбцов.
+  const topDriverByLabel = new Map<string, string | null>(
+    tl.buckets.map((b) => {
+      let top: string | null = null;
+      let max = 0;
+      for (const v of drivers) {
+        const g = b.gainedByVideo[v.id] ?? 0;
+        if (g > max) {
+          max = g;
+          top = v.id;
+        }
+      }
+      return [bucketLabel(b.key, gran), top];
+    })
+  );
 
   // Релизы по подписи отрезка — для рейки превью под нижним графиком.
   const releasesByLabel: Record<string, TimelineRelease[]> = {};
@@ -801,10 +1105,6 @@ function GrowthSection({
     if (b.releases.length) releasesByLabel[bucketLabel(b.key, gran)] = b.releases;
   }
 
-  const subSeries = [
-    ...drivers.map((v) => ({ name: v.id, color: colorById.get(v.id) as string })),
-    ...(hasOther ? [{ name: OTHER_KEY, color: OTHER_COLOR }] : []),
-  ];
   const titleById = new Map<string, string>([
     ...drivers.map((v) => [v.id, v.title] as const),
     [OTHER_KEY, "Другое"],
@@ -853,22 +1153,67 @@ function GrowthSection({
     }, 500);
   }, [clearHide]);
   const showTip = useCallback(
-    (x: number, y: number, label: string, payload: TooltipItem[]) => {
+    (x: number, y: number, label: string) => {
       clearHide();
-      const items = payload
-        .filter((p) => (p.value ?? 0) > 0)
-        .map((p) => ({ key: String(p.dataKey ?? ""), value: p.value ?? 0, color: p.color ?? "" }));
+      // Раскладку по видео берём из самого отрезка: у линии в payload лежит только
+      // суммарный прирост.
+      const b = bucketByLabel.get(label);
+      const items = b
+        ? [
+            ...drivers
+              .map((v) => ({
+                key: v.id,
+                value: b.gainedByVideo[v.id] ?? 0,
+                color: cssVar(colorById.get(v.id) as string),
+              }))
+              .filter((i) => i.value > 0),
+            ...(b.other > 0
+              ? [{ key: OTHER_KEY, value: b.other, color: cssVar(OTHER_COLOR) }]
+              : []),
+          ].sort((a, c) => c.value - a.value)
+        : [];
       // Клампим X, чтобы карточка не уезжала за края графика.
       const w = wrapRef.current?.offsetWidth ?? 600;
       const cx = Math.min(Math.max(x, 160), w - 160);
-      setTip((prev) => (prev && prev.label === label ? prev : { x: cx, y, label, items }));
+      const idx = labelIndex.get(label) ?? -1;
+      const next: TipState = {
+        x: cx,
+        y,
+        label,
+        total: canCumulative && idx >= 0 ? totals[idx] : null,
+        gained: b?.totalGained ?? 0,
+        lost: b?.totalLost ?? 0,
+        items,
+      };
+      setTip((prev) => (prev && prev.label === label ? prev : next));
     },
-    [clearHide]
+    [bucketByLabel, canCumulative, clearHide, colorById, drivers, labelIndex, totals]
   );
   useEffect(() => clearHide, [clearHide]);
 
+  // Точка линии в цвете главного драйвера отрезка: цвет ролика остаётся
+  // считываемым и без столбцов (кольцо цветом фона отделяет точку от линии).
+  const renderDot = (props: { cx?: number; cy?: number; payload?: { label?: string } }) => {
+    const { cx, cy, payload } = props;
+    const label = payload?.label ?? "";
+    if (cx == null || cy == null) return <g key={`dot-${label}`} />;
+    const top = topDriverByLabel.get(label);
+    const color = top ? cssVar(colorById.get(top) as string) : "var(--mantine-color-teal-6)";
+    return (
+      <circle
+        key={`dot-${label}`}
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill={color}
+        stroke="var(--mantine-color-body)"
+        strokeWidth={2}
+      />
+    );
+  };
+
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Group justify="space-between" mb="md" wrap="nowrap" gap="sm">
         <Text fw={600}>Рост канала {periodLabel(days)}</Text>
         <Group gap="sm" wrap="nowrap">
@@ -908,23 +1253,31 @@ function GrowthSection({
         </Box>
       )}
 
-      {/* Нижний график — прирост подписчиков, столбец разложен по видео-драйверам. */}
+      {/* Нижний график — прирост подписчиков линией, под осью строчкой идут ролики,
+          вышедшие в этот отрезок. Точка на линии красится в цвет главного драйвера
+          отрезка, полная раскладка — в тултипе. */}
       {hasSubs ? (
         <Box ref={wrapRef} style={{ position: "relative" }} onMouseLeave={scheduleHide}>
           <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            Новые подписчики — по видео-драйверам
+            {canCumulative ? "Всего подписчиков" : "Новые подписчики"}
           </Text>
-          <BarChart
+          <LineChart
             h={210}
             data={rows}
             dataKey="label"
-            type="stacked"
-            series={subSeries}
+            series={[{ name: "Подписчики", color: "teal.6" }]}
+            curveType="monotone"
             withLegend={false}
             gridAxis="y"
             tickLine="none"
             valueFormatter={(v) => formatFull(v)}
-            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
+            yAxisProps={{
+              width: 52,
+              domain: subDomain,
+              allowDecimals: false,
+              tickFormatter: (v: number) => formatCount(v),
+            }}
+            lineProps={{ dot: renderDot, activeDot: { r: 6, strokeWidth: 2 } }}
             xAxisProps={{
               interval: 0,
               height: xAxisHeight,
@@ -1012,8 +1365,12 @@ function GrowthSection({
       )}
 
       <Text size="xs" c="dimmed" mt="md">
-        Цвет столбца = ролик, который привёл этих подписчиков. Внизу — когда вышли ролики. Клик по
-        видео открывает разбор упаковки.
+        {canCumulative
+          ? "Линия — сколько всего подписчиков было на канале в этот момент (восстановлена от текущего числа по приросту, поэтому абсолютные значения — оценка)."
+          : "Линия — сколько подписчиков пришло за отрезок."}{" "}
+        Цвет точки = ролик, который привёл большинство из них. Внизу строчкой — когда какие ролики
+        вышли. Наведи на линию, чтобы увидеть раскладку по видео; клик по видео открывает разбор
+        упаковки.
       </Text>
     </Paper>
   );
@@ -1111,6 +1468,11 @@ type TipState = {
   x: number;
   y: number;
   label: string;
+  // Накопленное число подписчиков на конец отрезка; null — кривую строим по
+  // приросту (счётчик канала скрыт), тогда шапка тултипа показывает только его.
+  total: number | null;
+  gained: number;
+  lost: number;
   items: { key: string; value: number; color: string }[];
 };
 
@@ -1128,12 +1490,12 @@ function TooltipSensor({
   payload?: TooltipItem[];
   label?: string | number;
   coordinate?: { x?: number; y?: number };
-  onShow: (x: number, y: number, label: string, payload: TooltipItem[]) => void;
+  onShow: (x: number, y: number, label: string) => void;
   onHide: () => void;
 }) {
   useEffect(() => {
     if (active && payload && payload.length && coordinate?.x != null) {
-      onShow(coordinate.x, coordinate.y ?? 0, String(label ?? ""), payload);
+      onShow(coordinate.x, coordinate.y ?? 0, String(label ?? ""));
     } else {
       onHide();
     }
@@ -1157,7 +1519,6 @@ function GrowthTipCard({
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
-  const total = tip.items.reduce((s, i) => s + i.value, 0);
   return (
     <Paper
       withBorder
@@ -1177,11 +1538,30 @@ function GrowthTipCard({
         pointerEvents: "auto",
       }}
     >
-      <Text fw={600} size="sm">
-        {tip.label}
-      </Text>
+      <Group justify="space-between" gap="xs" wrap="nowrap">
+        <Text fw={600} size="sm">
+          {tip.label}
+        </Text>
+        {tip.total != null && (
+          <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
+            {formatFull(tip.total)}
+          </Text>
+        )}
+      </Group>
       <Text size="xs" c="dimmed" mb="xs">
-        Новых подписчиков: <b>+{formatFull(total)}</b>
+        {tip.total != null ? "всего подписчиков · " : ""}
+        <Text span c="teal" fw={700} inherit>
+          +{formatFull(tip.gained)}
+        </Text>
+        {tip.lost > 0 && (
+          <>
+            {" / "}
+            <Text span c="red" fw={700} inherit>
+              −{formatFull(tip.lost)}
+            </Text>
+          </>
+        )}{" "}
+        за отрезок
       </Text>
       <Stack gap={8}>
         {tip.items.map((it) => {
@@ -1355,7 +1735,7 @@ function AudienceSection({ a, days }: { a: AudienceData; days: number }) {
   ].filter((b) => b.items.length > 0);
 
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Text fw={600} mb="md">
         Аудитория {periodLabel(days)}
       </Text>
@@ -1414,9 +1794,8 @@ function VideoCard({
   const er = engagementRate(video);
   return (
     <Paper
-      withBorder
       radius="lg"
-      className="yt-video-card"
+      className="an-surface yt-video-card"
       role="button"
       tabIndex={0}
       onClick={() => onOpen(video)}
@@ -1665,10 +2044,13 @@ type AnalyzeState =
 function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: string }) {
   const dispatch = useAppDispatch();
   const [st, setSt] = useState<AnalyzeState>({ s: "idle" });
+  // CTR превью: API его не отдаёт, поэтому берём цифрой из Studio, если юзер ввёл.
+  const [ctr, setCtr] = useState<string | number>("");
 
   const run = async () => {
     setSt({ s: "loading" });
-    const res = await apiAnalyzeVideo(projectId, videoId);
+    const num = typeof ctr === "number" ? ctr : ctr ? Number(String(ctr).replace(",", ".")) : NaN;
+    const res = await apiAnalyzeVideo(projectId, videoId, Number.isFinite(num) ? num : null);
     if (res.ok) {
       dispatch(bumpRequestsUsed()); // остаток квоты в шапке/биллинге не отстаёт
       setSt({ s: "ready", data: res.data });
@@ -1680,15 +2062,37 @@ function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: str
   if (st.s === "idle") {
     return (
       <Box>
-        <Button
-          fullWidth
-          color="brand"
-          leftSection={<IconSparkles size={18} />}
-          onClick={run}
-        >
-          Разобрать видео с ИИ
-        </Button>
-        <Text size="xs" c="dimmed" ta="center" mt={6}>
+        <Group gap="xs" wrap="nowrap" mb="xs">
+          <Tooltip
+            multiline
+            w={260}
+            withArrow
+            label="CTR превью YouTube по API не отдаёт — он есть только в Studio. Введи цифру оттуда, и я разберу кликабельность по ней."
+          >
+            <NumberInput
+              size="sm"
+              w={150}
+              min={0}
+              max={100}
+              step={0.1}
+              decimalScale={1}
+              placeholder="CTR из Studio"
+              suffix=" %"
+              value={ctr}
+              onChange={setCtr}
+              aria-label="CTR превью из YouTube Studio, проценты"
+            />
+          </Tooltip>
+          <Button
+            style={{ flex: 1 }}
+            color="brand"
+            leftSection={<IconSparkles size={18} />}
+            onClick={run}
+          >
+            Разобрать видео с ИИ
+          </Button>
+        </Group>
+        <Text size="xs" c="dimmed" ta="center">
           Разберу название, описание и удержание по методике и предложу улучшения. Тратит 1 запрос.
         </Text>
       </Box>

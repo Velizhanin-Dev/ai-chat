@@ -27,6 +27,11 @@ export interface ThumbnailRow {
   spec: ThumbnailSpec | null;
   model: string;
   createdAt: string;
+  // Вариации: перегенерация из редактора ссылается на исходное превью.
+  // null — корень группы (или референс).
+  parentId: string | null;
+  // Референс с «применять всегда» — держит единый стиль превью на канале.
+  pinned: boolean;
 }
 
 // Что нейронка предлагает по методике (шаг «Предложить заголовки»).

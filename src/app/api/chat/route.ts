@@ -62,12 +62,22 @@ async function resolveChannelContext(
       );
       return { channelBlock: null, nudge: alreadyNudged ? "gentle" : "active" };
     }
-    const snap = await withTimeout(
-      getChannelSnapshotCached(conversationId, integ),
-      CHANNEL_SNAPSHOT_TIMEOUT_MS,
-      null
-    );
-    return { channelBlock: snap ? buildChannelBlock(snap) : null, nudge: "off" };
+    const [snap, lastCtr] = await Promise.all([
+      withTimeout(getChannelSnapshotCached(conversationId, integ), CHANNEL_SNAPSHOT_TIMEOUT_MS, null),
+      // CTR превью API не отдаёт; берём последнюю цифру, которую юзер сам ввёл в
+      // разборе канала — чтобы в чате можно было говорить о кликабельности предметно.
+      prisma.channelAnalysis
+        .findFirst({
+          where: { conversationId, manualCtr: { not: null } },
+          orderBy: { createdAt: "desc" },
+          select: { manualCtr: true, createdAt: true },
+        })
+        .catch(() => null),
+    ]);
+    return {
+      channelBlock: snap ? buildChannelBlock(snap, lastCtr?.manualCtr ?? null) : null,
+      nudge: "off",
+    };
   } catch (err) {
     console.error("[chat] channel context error:", err);
     return { channelBlock: null, nudge: "off" };
