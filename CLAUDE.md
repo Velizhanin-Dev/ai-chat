@@ -918,6 +918,18 @@ AI-ассистент Велижанина (методика КМК) в форм
     (корневые скаляры + `Password`, сортировка по ключу, SHA-256 — выверена по эталону
     из доков), `verifyNotificationToken` (проверка Token вебхука), типы чека `Receipt`.
     База `securepay.tinkoff.ru/v2` (env `TBANK_API_URL`).
+    - ⚠️ **Российский корневой CA обязателен.** `securepay.tinkoff.ru` отдаёт TLS-цепочку
+      под корнем **«Russian Trusted Root CA» (Минцифры)**, которого нет в стандартном
+      CA-бандле Node → без него `Init`/`GetState` (обычный `fetch`) падает с
+      `SELF_SIGNED_CERT_IN_CHAIN` («Нет связи с ТБанк» в UI), при этом код подписи/логики
+      исправен. Бандл (root + sub) лежит в репо
+      [deploy/certs/russian-trusted-ca.pem](deploy/certs/russian-trusted-ca.pem) и
+      подключается в образе через `NODE_EXTRA_CA_CERTS` (Dockerfile, стадия runner) —
+      только доп. доверие, штатные CA сохраняются (Anthropic/Google/CloudPayments не
+      затронуты; CloudPayments-эндпоинту тот же корень тоже на пользу). **Локально вне
+      Docker** (`npm run dev`) для теста ТБанк задать
+      `NODE_EXTRA_CA_CERTS=deploy/certs/russian-trusted-ca.pem` в окружении. Sub CA
+      действует до 2029 — при протухании перевыпустить из живой цепочки сервера.
   - **Домен** — `src/lib/billing.ts`: `createPayment` (строка `Payment(NEW)` → `Init` →
     `PaymentURL`), `handleNotification` (вебхук), `syncPayment` (GetState на возврате,
     идемпотентный `markPaid` ставит `User.plan` + `planExpiresAt`+30д + `rebillId`). Чек

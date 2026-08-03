@@ -43,6 +43,13 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 # Утилитные скрипты (напр. scripts/make-admin.mjs) — чтобы их можно было гонять
 # на проде через `docker compose exec app node scripts/make-admin.mjs <email>`.
 COPY --from=builder /app/scripts ./scripts
+# Российский корневой CA (Минцифры). ТБанк (securepay.tinkoff.ru) отдаёт TLS-цепочку
+# под корнем «Russian Trusted Root CA», которого нет в стандартном CA-бандле Node →
+# без него fetch на эквайринг падает с SELF_SIGNED_CERT_IN_CHAIN. Кладём бандл в образ
+# и указываем на него Node через NODE_EXTRA_CA_CERTS (только доп. доверие, штатные CA
+# сохраняются — Anthropic/Google/остальной аутбаунд не затрагивается).
+COPY deploy/certs/russian-trusted-ca.pem /app/certs/russian-trusted-ca.pem
+ENV NODE_EXTRA_CA_CERTS=/app/certs/russian-trusted-ca.pem
 # Папка загрузок (референсы + сгенерированные превью). В проде поверх неё
 # монтируется volume ./data/uploads — тогда владельцем становится хостовая папка
 # (на хосте нужен chown 1001:1001). Без volume (локальный запуск) пишем сюда.
