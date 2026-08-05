@@ -14,7 +14,12 @@ import {
   fetchAudience,
   fetchVideoSubs,
   fetchContentSplit,
+  fetchDailySplit,
+  fetchPeriodVideos,
   periodRanges,
+  periodRangesFor,
+  daysBetween,
+  isValidYmd,
   assertOwnedProject,
   statsCacheKey,
   getCachedStats,
@@ -39,14 +44,35 @@ export async function GET(req: Request) {
   const owned = await assertOwnedProject(user.id, projectId);
   if (!owned) return apiError("Проект не найден", 404);
 
-  // Валидируем период: только из белого списка, иначе 28.
+  // Период: либо пресет из белого списка (?period=7|28|90|365, дефолт 28), либо
+  // произвольный диапазон календаря (?start=&end=, обе даты YYYY-MM-DD).
+  // Диапазон с перевёрнутыми границами молча разворачиваем — пользователь мог
+  // выбрать «до» раньше «от».
+  const qsStart = url.searchParams.get("start");
+  const qsEnd = url.searchParams.get("end");
+  const custom =
+    isValidYmd(qsStart) && isValidYmd(qsEnd)
+      ? qsStart <= qsEnd
+        ? { start: qsStart, end: qsEnd }
+        : { start: qsEnd, end: qsStart }
+      : null;
+
   const reqDays = Number(url.searchParams.get("period"));
-  const days = (PERIOD_DAYS as readonly number[]).includes(reqDays) ? reqDays : 28;
-  const ranges = periodRanges(days);
+  const days = custom
+    ? daysBetween(custom.start, custom.end)
+    : (PERIOD_DAYS as readonly number[]).includes(reqDays)
+      ? reqDays
+      : 28;
+  const ranges = custom ? periodRangesFor(custom.start, custom.end) : periodRanges(days);
 
   // Кэш дашборда: повторные заходы и переключение периода отдаём из памяти (экономим
   // квоту YouTube API). `?refresh=1` (кнопка «Обновить») форсит свежую выборку.
-  const cacheKey = statsCacheKey(owned, days);
+  // У произвольного диапазона свой ключ — иначе два разных диапазона одинаковой
+  // длины (например, по 30 дней) затирали бы друг друга в кэше.
+  const cacheKey = statsCacheKey(
+    owned,
+    custom ? `${custom.start}_${custom.end}` : String(days)
+  );
   const forceRefresh = url.searchParams.get("refresh") === "1";
   if (!forceRefresh) {
     const cached = getCachedStats(cacheKey);
@@ -73,6 +99,8 @@ export async function GET(req: Request) {
       audience,
       subsByVideo,
       contentSplit,
+      dailySplit,
+      periodVideos,
     ] = await Promise.all([
       channel.uploadsPlaylistId
         ? fetchRecentVideosWithAnalytics(accessToken, channel.uploadsPlaylistId)
@@ -87,6 +115,11 @@ export async function GET(req: Request) {
       // подписчиков — шортсы или лонги. Два лёгких запроса, оба best-effort.
       fetchVideoSubs(accessToken, ranges.current.start, ranges.current.end),
       fetchContentSplit(accessToken, ranges.current.start, ranges.current.end),
+      // Дневная динамика отдельно по шортсам и лонгам — под два графика раздела.
+      fetchDailySplit(accessToken, ranges.current.start, ranges.current.end),
+      // Все ролики периода с удержанием — под матрицу «что чинить» (лента видео
+      // ниже грузится по скроллу и для матрицы не годится).
+      fetchPeriodVideos(accessToken, ranges.current.start, ranges.current.end),
     ]);
     const videos = videosPage.videos;
 
@@ -135,6 +168,8 @@ export async function GET(req: Request) {
       audience,
       subsByVideo,
       contentSplit,
+      dailySplit,
+      periodVideos,
       fetchedAt: new Date().toISOString(),
     };
     setCachedStats(cacheKey, payload);

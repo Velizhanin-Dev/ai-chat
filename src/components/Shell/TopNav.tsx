@@ -151,19 +151,24 @@ export default function TopNav() {
           onClick={toggleMobile}
           style={{
             width: "100%",
-            padding: "12px 16px",
+            // Узкая полоса: на телефоне над ней уже есть шапка приложения, и
+            // высокий бар съедал ленту сообщений. lineHeight у подписи задан
+            // явно — чтобы текст и иконка стояли на одной оптической линии.
+            padding: "9px 16px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             gap: 8,
           }}
         >
-          <Text fw={600} fz="lg" truncate>
+          {/* Шрифт мельче десктопных вкладок (на телефоне шапка и так плотная),
+              но чуть крупнее токена sm — иначе подпись раздела терялась. */}
+          <Text fw={600} fz="1rem" truncate lh={1.2}>
             {current.label}
           </Text>
           <IconMenu2
-            size={20}
-            style={{ flexShrink: 0, color: "var(--mantine-color-text)" }}
+            size={18}
+            style={{ flexShrink: 0, display: "block", color: "var(--mantine-color-text)" }}
           />
         </UnstyledButton>
 
@@ -194,8 +199,8 @@ export default function TopNav() {
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
-                  padding: "14px 16px",
-                  fontSize: "var(--mantine-font-size-md)",
+                  padding: "12px 16px",
+                  fontSize: "var(--mantine-font-size-sm)",
                   fontWeight: 500,
                   textDecoration: "none",
                 };

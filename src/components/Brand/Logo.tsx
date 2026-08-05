@@ -11,9 +11,13 @@ import LogoMark from "./LogoMark";
 export default function Logo({
   href = "/",
   onClick,
+  iconOnly = false,
 }: {
   href?: string;
   onClick?: () => void;
+  // Только знак-логотип, без текста «VELIZHANIN AI» (используем в мобильной
+  // шапке, где рядом со знаком показываем название текущего проекта).
+  iconOnly?: boolean;
 }) {
   return (
     <Link
@@ -24,9 +28,11 @@ export default function Logo({
     >
       <Group gap="xs" wrap="nowrap">
         <LogoMark box="lg" glyph={32} />
-        <Text fw={600} fz="lg" style={{ letterSpacing: "-0.02em" }}>
-          VELIZHANIN&nbsp;AI
-        </Text>
+        {!iconOnly && (
+          <Text fw={600} fz="lg" style={{ letterSpacing: "-0.02em" }}>
+            VELIZHANIN&nbsp;AI
+          </Text>
+        )}
       </Group>
     </Link>
   );

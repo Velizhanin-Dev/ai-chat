@@ -82,14 +82,21 @@ export async function apiYouTubeDisconnect(projectId: string): Promise<Result<nu
   }
 }
 
+// Период: пресет (число дней) ИЛИ произвольный диапазон из календаря.
+export type PeriodSelection = number | { start: string; end: string };
+
 export async function apiYouTubeData(
   projectId: string,
-  period: number,
+  period: PeriodSelection,
   refresh = false
 ): Promise<Result<YouTubeData>> {
   try {
+    const range =
+      typeof period === "number"
+        ? `period=${period}`
+        : `start=${encodeURIComponent(period.start)}&end=${encodeURIComponent(period.end)}`;
     const res = await fetch(
-      `/api/integrations/youtube/data?${q(projectId)}&period=${period}${refresh ? "&refresh=1" : ""}`,
+      `/api/integrations/youtube/data?${q(projectId)}&${range}${refresh ? "&refresh=1" : ""}`,
       { cache: "no-store" }
     );
     const data = (await res.json().catch(() => ({}))) as YouTubeData & {

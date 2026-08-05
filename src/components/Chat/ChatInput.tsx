@@ -26,6 +26,7 @@ import {
 import type { ChatMessage } from "@/store/chatSlice";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import { ymGoal } from "@/lib/metrika";
+import QuickActions from "./QuickActions";
 import { v4 as uuidv4 } from "uuid";
 
 const EMPTY: ChatMessage[] = [];
@@ -403,6 +404,11 @@ export default function ChatInput({
     // Textarea — unstyled, сливается с поверхностью; фокус показываем кольцом
     // на самой поверхности (:focus-within), чтобы не терять видимость фокуса.
     <Box px={{ base: 4, sm: "md" }} pb="md" pt="xs" style={{ flexShrink: 0 }}>
+      {/* Быстрые действия — те же готовые запросы, что на стартовом экране, но
+          лентой над полем ввода: после первого сообщения стартовый экран
+          пропадает, и функционал иначе становится недоступен. При исчерпанном
+          доступе не показываем — там CTA на тариф, писать всё равно нельзя. */}
+      {!locked && <QuickActions />}
       {locked ? (
         // Доступ исчерпан — вместо поля ввода CTA на оформление тарифа. История
         // чатов остаётся доступной (скролл выше), писать нельзя.

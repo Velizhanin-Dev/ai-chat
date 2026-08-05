@@ -191,6 +191,14 @@ export const SPEC_LIMITS: Record<keyof ThumbnailSpec, number> = {
 export const MAX_REFERENCES = 6;
 export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 
+// Стоимость операций генератора превью в единицах квоты запросов.
+// Одна сгенерированная картинка — тяжёлая операция (Nano Banana Pro ~$0.13-0.15),
+// поэтому списывает 10 запросов; «Предложить по методике» — обычный текстовый
+// вызов, 1 запрос. Чистые константы, общие клиенту (оптимистичное списание в
+// шапке) и серверу (реальное списание в quota).
+export const THUMBNAIL_GENERATE_QUOTA_COST = 10;
+export const THUMBNAIL_SPEC_QUOTA_COST = 1;
+
 export function sanitizeSpec(input: unknown): ThumbnailSpec {
   const o = (input ?? {}) as Record<string, unknown>;
   const str = (key: keyof ThumbnailSpec): string => {

@@ -371,6 +371,16 @@ export interface ContentSplit {
   long: ContentSplitRow | null;
 }
 
+// Дневной ряд ОТДЕЛЬНО по шортсам и лонгам (dimensions=day,creatorContentType).
+// Нужен, чтобы рисовать динамику двумя разными графиками: у шортсов и лонгов
+// разная природа охвата, и в одном графике общий ряд их смешивает — всплеск
+// шортса читается как «канал вырос», хотя лонги могли просесть.
+// null у ветки — такого контента за период не было (график не рисуем).
+export interface DailySplit {
+  shorts: DailyPoint[] | null;
+  long: DailyPoint[] | null;
+}
+
 // Ответ GET /api/integrations/youtube/data (дашборд «Канал»).
 export interface YouTubeData {
   connected: boolean;
@@ -394,6 +404,14 @@ export interface YouTubeData {
   subsByVideo?: Record<string, { gained: number; lost: number }> | null;
   // Разрез «шортсы против лонгов» за период; null — API не разделил контент.
   contentSplit?: ContentSplit | null;
+  // Дневная динамика ОТДЕЛЬНО по шортсам и лонгам (два графика в разделе);
+  // null — API не отдал разбивку по типу контента.
+  dailySplit?: DailySplit | null;
+  // ВСЕ ролики, набравшие просмотры за период (до 200), с удержанием — источник
+  // для матрицы «что чинить» и очереди на переделку. Отдельно от `videos`: та
+  // лента грузится постранично по скроллу, и матрица на ней зависела бы от того,
+  // сколько пользователь докрутил. Пусто — Analytics не отдал разрез по видео.
+  periodVideos?: YouTubeVideo[];
   // Когда данные реально дёрнуты из YouTube (ISO). При отдаче из кэша — время
   // исходного запроса, а не текущее. UI показывает «обновлено …».
   fetchedAt?: string;

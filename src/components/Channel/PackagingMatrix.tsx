@@ -2,8 +2,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Box, Group, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import type { YouTubeVideo } from "@/lib/youtube-types";
-import { formatCount, formatDate } from "@/lib/youtube-client";
+import { formatCount, formatDate, durationToSeconds } from "@/lib/youtube-client";
 
 // Матрица «упаковка ↔ содержание» — главный диагностический экран раздела.
 // Каждый ролик — точка: по горизонтали сколько он собрал просмотров ОТНОСИТЕЛЬНО
@@ -22,10 +23,26 @@ const PAD = { top: 26, right: 18, bottom: 34, left: 46 };
 // Горизонтальная шкала — во сколько раз ролик разошёлся против медианы канала.
 // Кламп на 8× в обе стороны, чтобы один залетевший ролик не сплющил остальные.
 const X_MAX = 3; // log2, то есть 8×
+// Радиус видимой точки и НЕВИДИМОЙ зоны тапа (в координатах viewBox). На узком
+// экране SVG ужимается примерно вдвое, поэтому там обе величины крупнее — иначе
+// в точку не попасть пальцем.
+const DOT_R = 7;
+const DOT_HIT = 13;
+const DOT_R_MOBILE = 9;
+const DOT_HIT_MOBILE = 22;
 
 export type MatrixQuadrant = "works" | "packaging" | "bait" | "fail";
+// Тип контента, под который считается матрица. Лечение у лонга и шортса разное:
+// у лонга проблема чаще в упаковке и монтаже, у шортса — в хуке и эмоции.
+export type MatrixKind = "long" | "shorts";
 
-export const QUADRANT_META: Record<
+// Ролики короче этого — шортсы. YouTube поднял планку до 3 минут (раньше 60 с).
+export const SHORTS_MAX_SECONDS = 180;
+
+// Подписи углов ЗАВИСЯТ от типа контента: это не украшение, а инструкция «что
+// чинить». Для лонга «провал» = теги/описание (не находят), для шортса тот же
+// угол — «долина смерти», где спасать нечего.
+const QUADRANT_META_LONG: Record<
   MatrixQuadrant,
   { label: string; color: string; hint: string }
 > = {
@@ -35,21 +52,51 @@ export const QUADRANT_META: Record<
     hint: "И кликают, и досматривают. Разбирай, что сработало, и повторяй.",
   },
   packaging: {
-    label: "Слабая упаковка",
+    label: "Меняй превью и название",
     color: "brand",
     hint: "Контент держит, но заходят мало — вопрос к превью и названию.",
   },
   bait: {
-    label: "Кликнули и ушли",
+    label: "Меняй монтаж, вырезай воду",
     color: "grape",
-    hint: "Зашли хорошо, но не досмотрели — превью обещает не то или проседает хук.",
+    hint: "Зашли хорошо, но не досмотрели: провисает монтаж, много воды.",
   },
   fail: {
-    label: "Провал",
+    label: "Меняй теги и описание",
     color: "red",
-    hint: "Не заходят и не досматривают. Тут переделывать и упаковку, и содержание.",
+    hint: "Ролик не находят: правь теги, описание и заголовок под запросы.",
   },
 };
+
+const QUADRANT_META_SHORTS: Record<
+  MatrixQuadrant,
+  { label: string; color: string; hint: string }
+> = {
+  works: {
+    label: "Работает",
+    color: "teal",
+    hint: "И залетает, и досматривают. Разбирай, что сработало, и повторяй.",
+  },
+  packaging: {
+    label: "Не вызвал эмоций",
+    color: "brand",
+    hint: "Досматривают, но нет лайков и комментов — пересними с эмоцией.",
+  },
+  bait: {
+    label: "Слабый хук",
+    color: "grape",
+    hint: "Заходят, но отваливаются в первые секунды — слабый хук и начало.",
+  },
+  fail: {
+    label: "Долина смерти",
+    color: "red",
+    hint: "Не смотрят и не досматривают. Тут не спасти — переснимай заново.",
+  },
+};
+
+export function quadrantMeta(kind: MatrixKind) {
+  return kind === "shorts" ? QUADRANT_META_SHORTS : QUADRANT_META_LONG;
+}
 
 export interface MatrixPoint {
   video: YouTubeVideo;
@@ -59,13 +106,28 @@ export interface MatrixPoint {
   quadrant: MatrixQuadrant;
 }
 
+// Шортс ли ролик (по длительности).
+export function isShort(v: YouTubeVideo): boolean {
+  const sec = durationToSeconds(v.duration);
+  return sec > 0 && sec <= SHORTS_MAX_SECONDS;
+}
+
 // Раскладка роликов по матрице. Границы — медианы САМОГО канала: сравниваем ролик
 // не с абстрактной нормой, а с тем, что канал обычно выдаёт.
+//
+// `kind` фильтрует ролики по типу и — что важнее — считает медианы ВНУТРИ типа:
+// у шортсов охваты и досмотры на порядок другие, и в общей матрице они сдвигали
+// медиану так, что все лонги оказывались «провалом» (и наоборот).
 export function buildMatrix(
   videos: YouTubeVideo[],
-  subsByVideo?: Record<string, { gained: number; lost: number }> | null
+  subsByVideo?: Record<string, { gained: number; lost: number }> | null,
+  kind?: MatrixKind
 ): { points: MatrixPoint[]; medianViews: number; medianRetention: number } {
-  const usable = videos.filter((v) => v.viewCount > 0 && v.avgViewPercentage != null);
+  const byKind =
+    kind === undefined
+      ? videos
+      : videos.filter((v) => (kind === "shorts" ? isShort(v) : !isShort(v)));
+  const usable = byKind.filter((v) => v.viewCount > 0 && v.avgViewPercentage != null);
   if (usable.length < 3) return { points: [], medianViews: 0, medianRetention: 0 };
 
   const median = (arr: number[]): number => {
@@ -97,11 +159,25 @@ interface Props {
   points: MatrixPoint[];
   medianRetention: number;
   onOpenVideo: (v: YouTubeVideo) => void;
+  // Тип контента, под который посчитаны точки: от него зависят подписи углов
+  // («что чинить» у лонга и шортса разное).
+  kind?: MatrixKind;
 }
 
-export default function PackagingMatrix({ points, medianRetention, onOpenVideo }: Props) {
+export default function PackagingMatrix({
+  points,
+  medianRetention,
+  onOpenVideo,
+  kind = "long",
+}: Props) {
+  const META = quadrantMeta(kind);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ p: MatrixPoint; x: number; y: number } | null>(null);
+  // На телефоне точки крупнее и с широкой зоной тапа: SVG сжимается по ширине
+  // экрана, и обычный r=7 из viewBox даёт на деле ~4 физических пикселя.
+  const isMobile = useMediaQuery("(max-width: 48em)");
+  const dotR = isMobile ? DOT_R_MOBILE : DOT_R;
+  const hitR = isMobile ? DOT_HIT_MOBILE : DOT_HIT;
 
   // Верхняя граница удержания — по данным, но не ниже 50%, иначе точки липнут к потолку.
   const yMax = useMemo(
@@ -147,16 +223,16 @@ export default function PackagingMatrix({ points, medianRetention, onOpenVideo }
 
         {/* Подписи углов */}
         <text x={W - PAD.right - 8} y={PAD.top + 14} textAnchor="end" className="pm-qlabel pm-t-works">
-          {QUADRANT_META.works.label}
+          {META.works.label}
         </text>
         <text x={PAD.left + 8} y={PAD.top + 14} className="pm-qlabel pm-t-packaging">
-          {QUADRANT_META.packaging.label}
+          {META.packaging.label}
         </text>
         <text x={W - PAD.right - 8} y={H - PAD.bottom - 8} textAnchor="end" className="pm-qlabel pm-t-bait">
-          {QUADRANT_META.bait.label}
+          {META.bait.label}
         </text>
         <text x={PAD.left + 8} y={H - PAD.bottom - 8} className="pm-qlabel pm-t-fail">
-          {QUADRANT_META.fail.label}
+          {META.fail.label}
         </text>
 
         {/* Шкала охвата: словами, без кратностей — точная цифра есть в подсказке
@@ -192,28 +268,43 @@ export default function PackagingMatrix({ points, medianRetention, onOpenVideo }
         </text>
 
         {points.map((p) => (
-          <circle
-            key={p.video.id}
-            cx={px(p.ratio)}
-            cy={py(p.retention)}
-            r={7}
-            className={`pm-dot pm-dot-${p.quadrant}`}
-            tabIndex={0}
-            role="button"
-            aria-label={`${p.video.title}: досмотр ${Math.round(p.retention)}%, ${formatCount(
-              p.video.viewCount
-            )} просмотров`}
-            onPointerEnter={track(p)}
-            onPointerMove={track(p)}
-            onPointerLeave={() => setHover((h) => (h?.p.video.id === p.video.id ? null : h))}
-            onClick={() => onOpenVideo(p.video)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onOpenVideo(p.video);
-              }
-            }}
-          />
+          // Две окружности на точку: видимая и НЕВИДИМАЯ мишень под палец.
+          // SVG масштабируется по ширине контейнера, поэтому на телефоне точка
+          // r=7 из системы координат viewBox превращается в ~4 физических
+          // пикселя — попасть невозможно. Мишень (r=DOT_HIT) даёт зону тапа
+          // около рекомендованных 44px, при этом визуально ничего не меняется.
+          <g key={p.video.id}>
+            <circle
+              cx={px(p.ratio)}
+              cy={py(p.retention)}
+              r={dotR}
+              className={`pm-dot pm-dot-${p.quadrant}`}
+              // Все события — на мишени, иначе они конкурируют между собой.
+              style={{ pointerEvents: "none" }}
+            />
+            <circle
+              cx={px(p.ratio)}
+              cy={py(p.retention)}
+              r={hitR}
+              fill="transparent"
+              className="pm-hit"
+              tabIndex={0}
+              role="button"
+              aria-label={`${p.video.title}: досмотр ${Math.round(p.retention)}%, ${formatCount(
+                p.video.viewCount
+              )} просмотров`}
+              onPointerEnter={track(p)}
+              onPointerMove={track(p)}
+              onPointerLeave={() => setHover((h) => (h?.p.video.id === p.video.id ? null : h))}
+              onClick={() => onOpenVideo(p.video)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenVideo(p.video);
+                }
+              }}
+            />
+          </g>
         ))}
       </svg>
 
@@ -261,7 +352,7 @@ export default function PackagingMatrix({ points, medianRetention, onOpenVideo }
             )}
           </Box>
           <Text size="xs" c="dimmed" mt={6}>
-            {QUADRANT_META[hover.p.quadrant].hint}
+            {META[hover.p.quadrant].hint}
           </Text>
         </Box>
       )}

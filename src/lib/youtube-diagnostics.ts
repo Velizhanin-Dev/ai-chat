@@ -7,7 +7,13 @@
 // value:null + строка в notes — модель про это честно пишет «данных нет», а не
 // придумывает цифру.
 
-import { ytGet, fetchChannelInfo, fetchTrafficSources, periodRanges } from "./youtube";
+import {
+  ytGet,
+  fetchChannelInfo,
+  fetchTrafficSources,
+  periodRanges,
+  contentTypeOf,
+} from "./youtube";
 import { paramsFor } from "./channel-params";
 import type {
   ChannelDiagnostics,
@@ -148,11 +154,14 @@ async function fetchTotals(
     let long: Totals | null = null;
     let all: Totals | null = null;
     for (const r of rows) {
-      const type = String(r[0]);
+      // ⚠️ Регистр значений — нижний ("shorts"), см. contentTypeOf в youtube.ts:
+      // прямое сравнение с "SHORTS" молча уводило весь трафик шортсов в лонги.
+      const kind = contentTypeOf(r[0]);
       const t = rowToTotals(r, 1);
-      if (type === "SHORTS") shorts = shorts ? mergeTotals(shorts, t) : t;
       // Лонгом считаем обычные видео; трансляции и истории туда же — это не шортсы.
-      else long = long ? mergeTotals(long, t) : t;
+      if (kind === "shorts") shorts = shorts ? mergeTotals(shorts, t) : t;
+      else if (kind === "long") long = long ? mergeTotals(long, t) : t;
+      // "unspecified" в срезы не идёт, но в итог по каналу (all) — да.
       all = all ? mergeTotals(all, t) : t;
     }
     return { shorts, long, all: all ?? EMPTY_TOTALS, split: true };

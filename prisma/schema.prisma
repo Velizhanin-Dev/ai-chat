@@ -191,6 +191,28 @@ model User {
   analyses      ChannelAnalysis[]
   // Черновое подключение YouTube на время прохождения брифа (см. модель ниже).
   youtubePending YouTubePendingConnection?
+  // Переписка с техподдержкой (см. модель SupportMessage ниже).
+  supportMessages SupportMessage[]
+}
+
+// ── Чат техподдержки ───────────────────────────────────────────────────────
+// Один сквозной тред на пользователя (как в интеркоме), отдельных тикетов нет:
+// человек пишет из сайдбара («Нужна помощь?»), админ отвечает в /admin/support.
+// role: "user" (написал клиент) | "admin" (ответила поддержка).
+// readAt — когда сообщение увидела ПРОТИВОПОЛОЖНАЯ сторона: по нему считаем
+// непрочитанные (юзеру — ответы админа, админу — вопросы юзеров).
+// Каждое сообщение юзера дублируется уведомлением в Telegram (src/lib/telegram.ts).
+model SupportMessage {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([role, readAt])
 }
 
 // Интеграция с YouTube (Google OAuth + YouTube Data API v3 / Analytics API).

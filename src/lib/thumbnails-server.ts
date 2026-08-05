@@ -1,6 +1,12 @@
 import type { Thumbnail, User } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { normalizeRefRole, sanitizeSpec, type ThumbnailRow } from "./thumbnails";
+import {
+  normalizeRefRole,
+  sanitizeSpec,
+  THUMBNAIL_GENERATE_QUOTA_COST,
+  THUMBNAIL_SPEC_QUOTA_COST,
+  type ThumbnailRow,
+} from "./thumbnails";
 import { getSessionUser } from "./auth";
 import { isAdmin } from "./admin";
 import { getSettings, isLaunchLocked } from "./settings";
@@ -15,10 +21,8 @@ import { prisma } from "./prisma";
 // снова станет админ-онли (тогда и страницу вернуть в (locked)).
 export const THUMBNAILS_ADMIN_ONLY = false;
 
-// Сколько единиц квоты стоит одна сгенерированная картинка. Картинка у Nano
-// Banana Pro дороже обычного ответа чата (~$0.13-0.15 против центов), но
-// считаем как один запрос — так понятнее пользователю.
-export const THUMBNAIL_QUOTA_COST = 1;
+// Стоимость операций генератора превью — в ./thumbnails (общий клиент/сервер).
+export { THUMBNAIL_GENERATE_QUOTA_COST, THUMBNAIL_SPEC_QUOTA_COST };
 
 type Denied = { ok: false; res: NextResponse };
 type Allowed = { ok: true; user: User; conversationId: string };
@@ -111,7 +115,7 @@ export async function checkQuota(user: User): Promise<Denied | null> {
 }
 
 // Списание после УСПЕШНОЙ генерации (провал квоту не тратит). Fire-and-forget.
-export async function spendQuota(user: User, cost = THUMBNAIL_QUOTA_COST): Promise<void> {
+export async function spendQuota(user: User, cost = THUMBNAIL_SPEC_QUOTA_COST): Promise<void> {
   if (isAdmin(user)) return;
   await prisma.user
     .update({ where: { id: user.id }, data: { requestsUsed: { increment: cost } } })

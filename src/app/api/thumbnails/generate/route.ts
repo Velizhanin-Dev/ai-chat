@@ -16,6 +16,7 @@ import {
   checkQuota,
   spendQuota,
   toRow,
+  THUMBNAIL_GENERATE_QUOTA_COST,
 } from "@/lib/thumbnails-server";
 
 // Генерация превью. Тратит 1 запрос квоты (как ИИ-разбор видео) — списываем
@@ -119,7 +120,7 @@ export async function POST(req: Request) {
       },
     });
 
-    await spendQuota(access.user);
+    await spendQuota(access.user, THUMBNAIL_GENERATE_QUOTA_COST);
 
     return NextResponse.json({ item: toRow(row) });
   } catch (err) {

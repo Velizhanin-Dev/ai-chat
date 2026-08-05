@@ -22,6 +22,7 @@ import {
   IconReceipt,
   IconArrowLeft,
   IconShieldLock,
+  IconHeadset,
 } from "@tabler/icons-react";
 import LogoMark from "@/components/Brand/LogoMark";
 
@@ -32,10 +33,11 @@ type NavItem = {
   soon?: boolean;
 };
 
-// Главная админки — дашборд; далее пользователи, тарифы, флаги.
+// Главная админки — дашборд; далее пользователи, поддержка, платежи, тарифы, флаги.
 const NAV: NavItem[] = [
   { href: "/admin", label: "Дашборд", icon: IconLayoutDashboard },
   { href: "/admin/users", label: "Пользователи", icon: IconUsers },
+  { href: "/admin/support", label: "Поддержка", icon: IconHeadset },
   { href: "/admin/payments", label: "Платежи", icon: IconReceipt },
   { href: "/admin/plans", label: "Тарифы", icon: IconCurrencyRubel },
   { href: "/admin/flags", label: "Флаги и настройки", icon: IconToggleRight },

@@ -49,8 +49,8 @@ export default function RequestsRing() {
   return (
     <Tooltip label={`Запросы: ${used}/${limit} использовано`} withArrow openDelay={150}>
       <RingProgress
-        size={34}
-        thickness={4}
+        size={22}
+        thickness={3}
         roundCaps
         sections={[{ value: pct, color }]}
         aria-label={`Запросы: ${used} из ${limit} использовано`}

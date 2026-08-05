@@ -729,14 +729,19 @@ section[id] {
 }
 
 /* Мобильное верхнее меню (TopNav) внутри колонки контента: тянем «в край»,
-   гася горизонтальный padding обёртки контента (base xs, sm+ md), чтобы меню и
-   его выпадашка были во всю ширину экрана. Только < lg (где меню и рендерится). */
+   гася padding обёртки контента (base xs, sm+ md), чтобы меню и его выпадашка
+   были во всю ширину экрана. Только < lg (где меню и рендерится).
+   margin-top гасим тоже: иначе между шапкой приложения и полосой меню оставался
+   зазор в padding обёртки, и подпись раздела визуально «проваливалась» ниже
+   середины полосы. */
 .topnav-bleed {
+  margin-top: calc(var(--mantine-spacing-xs) * -1);
   margin-left: calc(var(--mantine-spacing-xs) * -1);
   margin-right: calc(var(--mantine-spacing-xs) * -1);
 }
 @media (min-width: 48em) {
   .topnav-bleed {
+    margin-top: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
     margin-right: calc(var(--mantine-spacing-md) * -1);
   }
@@ -1075,4 +1080,38 @@ section[id] {
   .yt-tip-thumb:hover {
     transform: none;
   }
+}
+
+/* ── Админка: чат поддержки (/admin/support) ────────────────────────────────
+   На мобиле окно переписки фиксированной высоты (список обращений стоит НАД
+   ним, оба должны помещаться при скролле страницы). На десктопе (≥ md, где
+   список уезжает в левую колонку) тянем чат до низа экрана: 100dvh минус
+   шапка админки (60) + вертикальные padding'и Main (2×24) + блок заголовка
+   раздела с gap (~80). Иначе под окном оставалась пустая треть экрана. */
+.admin-support-chat {
+  height: min(72vh, 700px);
+}
+@media (min-width: 62em) {
+  .admin-support-chat {
+    height: calc(100dvh - 190px);
+    min-height: 420px;
+  }
+}
+
+/* ── Лента быстрых действий над композером (components/Chat/QuickActions.tsx) ──
+   Сама лента и чипы — Mantine (ScrollArea type="never" + Button), здесь только
+   то, чего компонентами не выразить: стрелки поверх ленты по краям. */
+.qa-arrow {
+  position: absolute;
+  top: 50%;
+  /* Центрирование живёт на ОБЁРТКЕ: у Mantine ActionIcon свой
+     :active { transform: translateY(...) }, который затёр бы этот сдвиг, и на
+     нажатии стрелка проваливалась вниз. */
+  transform: translateY(-50%);
+  /* Выше чипов ленты: иначе клик по стрелке проходит на кнопку под ней
+     (ScrollArea и Button создают свой контекст наложения). */
+  z-index: 10;
+  display: flex;
+  box-shadow: var(--mantine-shadow-sm);
+  border-radius: 50%;
 }

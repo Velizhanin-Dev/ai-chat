@@ -31,10 +31,13 @@ import {
   AUDIENCE_PRESETS,
   EMPTY_SPEC,
   SPEC_LIMITS,
+  THUMBNAIL_GENERATE_QUOTA_COST,
   type ThumbnailRow,
   type ThumbnailSpec,
 } from "@/lib/thumbnails";
 import { apiGenerateThumbnail } from "@/lib/thumbnails-client";
+import { useAppDispatch } from "@/store/hooks";
+import { bumpRequestsUsed } from "@/store/authSlice";
 
 // Редактор одного превью: картинка + правки + перегенерация. Каждая перегенерация
 // — ВАРИАЦИЯ (parentId), поэтому старые версии не теряются и переключаются лентой
@@ -70,6 +73,7 @@ export default function ThumbnailEditor({
   onDelete,
 }: Props) {
   const isMobile = useMediaQuery("(max-width: 48em)");
+  const dispatch = useAppDispatch();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [spec, setSpec] = useState<ThumbnailSpec>(EMPTY_SPEC);
   const [refIds, setRefIds] = useState<string[]>([]);
@@ -113,6 +117,7 @@ export default function ThumbnailEditor({
     try {
       // Корень группы — исходное превью; сервер сам приведёт цепочку к корню.
       const row = await apiGenerateThumbnail(projectId, spec, refIds, active.parentId ?? active.id);
+      dispatch(bumpRequestsUsed(THUMBNAIL_GENERATE_QUOTA_COST)); // остаток квоты в шапке не отстаёт
       onCreated(row);
       setActiveId(row.id);
     } catch (e) {

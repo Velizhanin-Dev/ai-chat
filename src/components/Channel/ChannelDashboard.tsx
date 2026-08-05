@@ -25,6 +25,8 @@ import {
   SimpleGrid,
   Skeleton,
   Stack,
+  Center,
+  Popover,
   Text,
   ThemeIcon,
   Title,
@@ -32,6 +34,8 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { AreaChart, DonutChart, LineChart } from "@mantine/charts";
+import { DatePicker } from "@mantine/dates";
+import "dayjs/locale/ru";
 import {
   IconBrandYoutube,
   IconUsers,
@@ -53,18 +57,21 @@ import {
   IconCircleCheck,
   IconAlertTriangle,
   IconChartRadar,
+  IconCalendar,
 } from "@tabler/icons-react";
 import ChannelDiagnostics from "./ChannelDiagnostics";
 import AnalysisSummaryCard from "./AnalysisSummaryCard";
 import PackagingMatrix, {
   buildMatrix,
-  QUADRANT_META,
+  quadrantMeta,
+  type MatrixKind,
   type MatrixPoint,
 } from "./PackagingMatrix";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import {
   apiYouTubeData,
+  type PeriodSelection,
   apiYouTubeVideos,
   apiAnalyzeVideo,
   getVideoDetailCached,
@@ -99,6 +106,9 @@ import {
   type Granularity,
   type AudienceData,
   type ContentSplit,
+  type ContentSplitRow,
+  type DailySplit,
+  type DailyPoint,
 } from "@/lib/youtube-types";
 
 // Подпись периода для заголовков/капшенов.
@@ -136,7 +146,10 @@ export default function ChannelDashboard() {
 
   const [phase, setPhase] = useState<Phase>({ s: "loading" });
   const [refreshing, setRefreshing] = useState(false);
-  const [period, setPeriod] = useState<number>(28);
+  // Период: пресет (число дней) или произвольный диапазон из календаря.
+  // Держим одним состоянием — оно же уходит в запрос и в ключ кэша на сервере.
+  const [period, setPeriod] = useState<PeriodSelection>(28);
+  const customRange = typeof period === "object" ? period : null;
   // Разбор канала по параметрам продвижения — отдельная модалка (см. ChannelDiagnostics).
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagVersion, setDiagVersion] = useState(0);
@@ -208,11 +221,19 @@ export default function ChannelDashboard() {
                 size="sm"
                 radius="md"
                 color="brand"
-                value={String(period)}
+                // При произвольном диапазоне ни один пресет не активен: value=""
+                // (Mantine снимает подсветку), выбранное показывает кнопка рядом.
+                value={customRange ? "" : String(period)}
                 onChange={(v) => setPeriod(Number(v))}
                 data={PERIOD_OPTIONS}
                 disabled={refreshing}
                 aria-label="Период аналитики"
+              />
+              <CustomPeriodPicker
+                value={customRange}
+                disabled={refreshing}
+                onApply={(r) => setPeriod(r)}
+                onReset={() => setPeriod(28)}
               />
               <Tooltip label="Обновить данные из YouTube" withArrow>
                 <ActionIcon
@@ -359,7 +380,33 @@ function Dashboard({
 
   // Матрица «упаковка ↔ содержание» и очередь «что чинить» — из уже загруженных
   // роликов (нужны удержание и просмотры) + подписки по роликам из payload.
-  const matrix = useMemo(() => buildMatrix(videos, data.subsByVideo), [videos, data.subsByVideo]);
+  // Считаем ОТДЕЛЬНО для лонгов и шортсов: медианы внутри своего типа, иначе
+  // шортсы (другие охваты и досмотры) утягивают границы и все лонги валятся в
+  // «провал». Переключатель выбирает, какую матрицу показывать.
+  const [matrixKind, setMatrixKind] = useState<MatrixKind | null>(null);
+  // Источник — periodVideos (ВСЕ ролики с просмотрами за выбранный период, до
+  // 200, приходят одним разрезом Analytics), а НЕ лента `videos`: та грузится
+  // постранично по скроллу, и матрица зависела бы от того, сколько пользователь
+  // докрутил. Фолбэк на ленту — если Analytics не отдал разрез по видео.
+  const matrixSource = data.periodVideos?.length ? data.periodVideos : videos;
+  const matrixLong = useMemo(
+    () => buildMatrix(matrixSource, data.subsByVideo, "long"),
+    [matrixSource, data.subsByVideo]
+  );
+  const matrixShorts = useMemo(
+    () => buildMatrix(matrixSource, data.subsByVideo, "shorts"),
+    [matrixSource, data.subsByVideo]
+  );
+  const hasLong = matrixLong.points.length >= 3;
+  const hasShorts = matrixShorts.points.length >= 3;
+  // Переключатель доступен ВСЕГДА (иначе непонятно, что раздел умеет оба типа),
+  // но стартуем с того, где данные есть: на канале из одних шортсов открывать
+  // пустую матрицу лонгов бессмысленно. null = пользователь ещё не выбирал.
+  const effectiveKind: MatrixKind = matrixKind ?? (hasLong ? "long" : "shorts");
+  const matrix = effectiveKind === "shorts" ? matrixShorts : matrixLong;
+  // У выбранного типа мало роликов для матрицы (нужно ≥3 точки) — рисуем
+  // заглушку вместо графика, а не прячем секцию.
+  const matrixEmpty = matrix.points.length < 3;
   // Порядок очереди: сперва то, где теряем больше всего — «кликнули и ушли» на
   // хорошем охвате, потом непроданный хороший контент, потом провалы.
   const fixQueue = useMemo(() => {
@@ -420,27 +467,60 @@ function Dashboard({
       )}
 
       {/* Строка 3: диагностика — матрица + очередь «что чинить» */}
-      {matrix.points.length >= 3 && (
+      {(hasLong || hasShorts) && (
         <Grid columns={8} gutter="md">
           <Grid.Col span={{ base: 8, lg: 5 }}>
             <Box className="an-surface" p="md">
-              <Text fw={600}>Что чинить</Text>
-              <Text size="xs" c="dimmed" mb="sm">
-                Точка — ролик. Правее — больше просмотров, выше — дольше смотрят. Нажми на точку,
-                чтобы открыть разбор.
-              </Text>
-              <PackagingMatrix
-                points={matrix.points}
-                medianRetention={matrix.medianRetention}
-                onOpenVideo={setSelected}
-              />
+              <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+                <Box style={{ minWidth: 0 }}>
+                  <Text fw={600}>Что чинить</Text>
+                  <Text size="xs" c="dimmed" mb="sm">
+                    Точка — ролик. Правее — больше просмотров, выше — дольше смотрят. Нажми на
+                    точку, чтобы открыть разбор.
+                  </Text>
+                </Box>
+                <SegmentedControl
+                    size="xs"
+                    radius="md"
+                    color="brand"
+                    value={effectiveKind}
+                    onChange={(v) => setMatrixKind(v as MatrixKind)}
+                    data={[
+                      { label: "Видео", value: "long" },
+                      { label: "Shorts", value: "shorts" },
+                    ]}
+                  style={{ flexShrink: 0 }}
+                  aria-label="Тип контента для матрицы"
+                />
+              </Group>
+              {matrixEmpty ? (
+                <Center h={260}>
+                  <Text size="sm" c="dimmed" ta="center" maw={280}>
+                    {effectiveKind === "shorts"
+                      ? "Шортсов с аналитикой пока мало — нужно хотя бы три ролика."
+                      : "Обычных видео с аналитикой пока мало — нужно хотя бы три ролика."}
+                  </Text>
+                </Center>
+              ) : (
+                <PackagingMatrix
+                  points={matrix.points}
+                  medianRetention={matrix.medianRetention}
+                  onOpenVideo={setSelected}
+                  kind={effectiveKind}
+                />
+              )}
             </Box>
           </Grid.Col>
           <Grid.Col span={{ base: 8, lg: 3 }}>
-            <FixQueue items={fixQueue} onOpen={setSelected} split={data.contentSplit ?? null} />
+            <FixQueue items={fixQueue} onOpen={setSelected} kind={effectiveKind} />
           </Grid.Col>
         </Grid>
       )}
+
+      {/* Строка 4: динамика ОТДЕЛЬНО по лонгам и шортсам. В общем графике эти
+          две природы охвата смешиваются: всплеск шортса читается как «канал
+          вырос», хотя лонги в это время могли просесть. */}
+      <ContentTypeCharts split={data.dailySplit ?? null} totals={data.contentSplit ?? null} />
 
       {/* Подробности: то, что нужно не каждый раз — под сворачиванием */}
       <Accordion variant="separated" radius="lg" multiple classNames={{ item: "an-acc-item" }}>
@@ -650,22 +730,18 @@ function ChannelCard({ ch }: { ch: NonNullable<YouTubeData["channel"]> }) {
   );
 }
 
-// Очередь «что чинить»: ролики из проблемных углов матрицы + разрез «шортсы
-// против лонгов» (кто на самом деле приводит подписчиков).
+// Очередь «что чинить»: ролики из проблемных углов матрицы. `kind` — тот же тип
+// контента, что выбран в матрице: подписи диагнозов у лонгов и шортсов разные.
 function FixQueue({
   items,
-  split,
   onOpen,
+  kind,
 }: {
   items: MatrixPoint[];
-  split: ContentSplit | null;
   onOpen: (v: YouTubeVideo) => void;
+  kind: MatrixKind;
 }) {
-  const subsPer1k = (row: { views: number; subscribersGained: number } | null) =>
-    row && row.views > 0 ? (row.subscribersGained / row.views) * 1000 : null;
-  const sh = subsPer1k(split?.shorts ?? null);
-  const lo = subsPer1k(split?.long ?? null);
-
+  const META = quadrantMeta(kind);
   return (
     <Stack gap="md" style={{ height: "100%" }}>
       <Box className="an-surface" p="md">
@@ -679,7 +755,7 @@ function FixQueue({
         ) : (
           <Stack gap={2}>
             {items.map((p) => {
-              const meta = QUADRANT_META[p.quadrant];
+              const meta = META[p.quadrant];
               return (
                 <UnstyledButton
                   key={p.video.id}
@@ -714,41 +790,6 @@ function FixQueue({
         )}
       </Box>
 
-      {(sh != null || lo != null) && (
-        <Box className="an-surface" p="md">
-          <Text fw={600} mb={4}>
-            Кто приводит подписчиков
-          </Text>
-          <Text size="xs" c="dimmed" mb="sm">
-            Подписчиков на 1000 просмотров — в Studio такой цифры нет.
-          </Text>
-          <Stack gap="xs">
-            {lo != null && (
-              <Group justify="space-between" gap="xs" wrap="nowrap">
-                <Text size="sm">Обычные видео</Text>
-                <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {lo.toFixed(1)}
-                </Text>
-              </Group>
-            )}
-            {sh != null && (
-              <Group justify="space-between" gap="xs" wrap="nowrap">
-                <Text size="sm">Шортсы</Text>
-                <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {sh.toFixed(1)}
-                </Text>
-              </Group>
-            )}
-          </Stack>
-          {sh != null && lo != null && (
-            <Text size="xs" c="dimmed" mt="sm">
-              {sh > lo
-                ? "Шортсы конвертируют лучше лонгов — есть смысл вести с них на длинные ролики."
-                : "Лонги конвертируют лучше шортсов: шортсы дают охват, а подписку закрывают длинные."}
-            </Text>
-          )}
-        </Box>
-      )}
     </Stack>
   );
 }
@@ -1004,6 +1045,239 @@ function bucketLabel(key: string, gran: Granularity): string {
     return bucketMonthFmt.format(new Date(Date.UTC(y, (m || 1) - 1, 1)));
   }
   return formatShortDate(key);
+}
+
+// ── Произвольный период («Выбрать период») ─────────────────────────────────
+// Рядом с пресетами 7/28/90/365 — свой диапазон дат. Календарь — НАТИВНЫЙ
+// (input type="date"): в проекте уже так сделано в админке, и это избавляет от
+// зависимостей @mantine/dates + dayjs ради одного пикера. Кнопка «Применить»
+// активна только при корректном диапазоне; выбранное показывается на кнопке.
+function CustomPeriodPicker({
+  value,
+  disabled,
+  onApply,
+  onReset,
+}: {
+  value: { start: string; end: string } | null;
+  disabled: boolean;
+  onApply: (range: { start: string; end: string }) => void;
+  onReset: () => void;
+}) {
+  const [opened, setOpened] = useState(false);
+  // С Mantine 8 DatePicker отдаёт СТРОКИ "YYYY-MM-DD" (в 7.x были Date) — это
+  // ровно то, что ждут Analytics API и ключ кэша, конвертация не нужна. Заодно
+  // ушла ловушка с toISOString: он переводит в UTC и в плюсовых часовых поясах
+  // сдвигал выбранный день на сутки назад.
+  const [range, setRange] = useState<[string | null, string | null]>([
+    value?.start ?? null,
+    value?.end ?? null,
+  ]);
+  const [from, to] = range;
+  const valid = Boolean(from && to);
+
+  const apply = () => {
+    if (!from || !to) return;
+    onApply({ start: from, end: to });
+    setOpened(false);
+  };
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      position="bottom-end"
+      withArrow
+      shadow="md"
+      radius="md"
+      trapFocus
+    >
+      <Popover.Target>
+        <Button
+          size="sm"
+          radius="md"
+          variant={value ? "filled" : "default"}
+          color="brand"
+          leftSection={<IconCalendar size={16} />}
+          onClick={() => setOpened((o) => !o)}
+          disabled={disabled}
+        >
+          {value ? `${formatShortDate(value.start)} — ${formatShortDate(value.end)}` : "Выбрать период"}
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <DatePicker
+            type="range"
+            value={range}
+            onChange={setRange}
+            maxDate={new Date().toISOString().slice(0, 10)}
+            locale="ru"
+            size="sm"
+            allowSingleDateInRange
+          />
+          <Group gap="xs" grow>
+            {value && (
+              <Button
+                size="xs"
+                variant="subtle"
+                color="gray"
+                onClick={() => {
+                  setRange([null, null]);
+                  onReset();
+                  setOpened(false);
+                }}
+              >
+                Сбросить
+              </Button>
+            )}
+            <Button size="xs" color="brand" onClick={apply} disabled={!valid}>
+              Применить
+            </Button>
+          </Group>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+// ── Динамика отдельно по лонгам и шортсам ──────────────────────────────────
+// Два независимых графика вместо одного общего: у шортсов и лонгов разная
+// природа охвата, и в общем ряду они смешиваются — всплеск одного шортса читается
+// как «канал вырос», хотя лонги в это же время могли просесть. Оси времени у
+// обоих графиков одинаковые (сервер добивает пропущенные дни нулями), поэтому
+// карточки можно сравнивать взглядом.
+function ContentTypeChart({
+  title,
+  hint,
+  points,
+  totals,
+  color,
+}: {
+  title: string;
+  hint: string;
+  points: DailyPoint[];
+  totals: ContentSplitRow | null;
+  color: string;
+}) {
+  const views = points.reduce((s, p) => s + p.views, 0);
+  const gained = points.reduce((s, p) => s + p.subscribersGained, 0);
+  // Карточку показываем ВСЕГДА — и когда контента такого типа за период не было.
+  // Пустое место молча съедало бы вопрос «а где шортсы?»: непонятно, то ли их
+  // нет, то ли раздел сломался.
+  const empty = points.length === 0 || views === 0;
+
+  return (
+    // h=100% + flex-колонка: соседняя карточка может быть пустой («данных нет»),
+    // и без растяжки соседи разной высоты — на десктопе это видно сразу.
+    // Grid.Col тянет колонки по высоте строки, карточка занимает её целиком.
+    <Box
+      className="an-surface"
+      p="md"
+      h="100%"
+      style={{ display: "flex", flexDirection: "column" }}
+    >
+      <Group justify="space-between" align="flex-start" wrap="nowrap" mb={2}>
+        <div style={{ minWidth: 0 }}>
+          <Text fw={600}>{title}</Text>
+          <Text size="xs" c="dimmed">
+            {hint}
+          </Text>
+        </div>
+      </Group>
+
+      {empty ? (
+        <Center style={{ flex: 1, minHeight: 248 }}>
+          <Stack align="center" gap={4}>
+            <IconChartArcs size={26} style={{ color: "var(--mantine-color-dimmed)" }} />
+            <Text size="sm" c="dimmed" ta="center">
+              Данных за выбранный период нет
+            </Text>
+          </Stack>
+        </Center>
+      ) : (
+        <>
+          <Group gap="lg" mb="sm" mt="xs">
+            <div>
+              <Text size="xs" c="dimmed">
+                Просмотры
+              </Text>
+              <Text fw={700}>{formatFull(views)}</Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed">
+                Подписчиков
+              </Text>
+              <Text fw={700}>
+                {gained > 0 ? `+${formatFull(gained)}` : formatFull(gained)}
+              </Text>
+            </div>
+            {/* Средний досмотр отдаёт только сводный разрез (contentSplit) — по
+                дням его взвешенно не пересчитать, берём готовый за период. */}
+            {totals && (
+              <div>
+                <Text size="xs" c="dimmed">
+                  Ср. досмотр
+                </Text>
+                <Text fw={700}>{Math.round(totals.avgViewPercentage)}%</Text>
+              </div>
+            )}
+          </Group>
+          <AreaChart
+            h={200}
+            data={points.map((d) => ({
+              date: formatShortDate(d.date),
+              Просмотры: d.views,
+            }))}
+            dataKey="date"
+            series={[{ name: "Просмотры", color }]}
+            curveType="monotone"
+            withGradient
+            withDots={false}
+            valueFormatter={(v) => formatFull(v)}
+            gridAxis="y"
+            tickLine="none"
+          />
+        </>
+      )}
+    </Box>
+  );
+}
+
+function ContentTypeCharts({
+  split,
+  totals,
+}: {
+  split: DailySplit | null;
+  totals: ContentSplit | null;
+}) {
+  // Совсем нет разбивки (API не отдал тип контента) — секции нет, общий график
+  // динамики остаётся в «подробностях». А вот если один из типов пуст —
+  // карточку всё равно рисуем с «данных нет»: иначе непонятно, то ли контента
+  // такого не было, то ли раздел не догрузился.
+  if (!split || (!split.long && !split.shorts)) return null;
+
+  return (
+    <Grid columns={8} gutter="md">
+      <Grid.Col span={{ base: 8, lg: 4 }}>
+        <ContentTypeChart
+          title="Обычные видео"
+          hint="Просмотры лонгов по дням"
+          points={split.long ?? []}
+          totals={totals?.long ?? null}
+          color="brand.6"
+        />
+      </Grid.Col>
+      <Grid.Col span={{ base: 8, lg: 4 }}>
+        <ContentTypeChart
+          title="Шортсы"
+          hint="Просмотры шортсов по дням"
+          points={split.shorts ?? []}
+          totals={totals?.shorts ?? null}
+          color="teal.6"
+        />
+      </Grid.Col>
+    </Grid>
+  );
 }
 
 function GrowthSection({

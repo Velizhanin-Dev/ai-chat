@@ -1,0 +1,71 @@
+import {
+  IconBolt,
+  IconBulb,
+  IconCalendarMonth,
+  IconChartLine,
+  IconDeviceMobile,
+  IconMovie,
+  IconPhoto,
+  IconTextCaption,
+} from "@tabler/icons-react";
+
+// Готовые запросы ассистенту — общий источник для стартового экрана пустого чата
+// (ChatWelcome, плитки) и ленты быстрых действий над полем ввода (QuickActions).
+// Клик подставляет prompt в композер (chatSlice.prefillInput), юзер дописывает
+// свою тему и отправляет.
+//
+// Формулировки — под категории роутера знаний (short/long/content_plan/method),
+// чтобы запрос сразу попадал в нужный слой базы. Часть промптов намеренно
+// «незакончена» (двоеточие в конце) — там нужна конкретика от пользователя.
+
+export interface Suggestion {
+  icon: React.ReactNode;
+  title: string;
+  prompt: string;
+}
+
+export const SUGGESTIONS: Suggestion[] = [
+  {
+    icon: <IconTextCaption size={20} />,
+    title: "Названия по ВИСП",
+    prompt: "Придумай 7 названий для ролика на тему: ",
+  },
+  {
+    icon: <IconPhoto size={20} />,
+    title: "Текст на превью",
+    prompt:
+      "Придумай 5 вариантов текста на превью (3-5 слов) для ролика на тему: ",
+  },
+  {
+    icon: <IconCalendarMonth size={20} />,
+    title: "Контент-план на месяц",
+    prompt: "Собери контент-план на месяц для моего канала",
+  },
+  {
+    icon: <IconDeviceMobile size={20} />,
+    title: "Сценарий шортса",
+    prompt: "Напиши сценарий шортса на тему: ",
+  },
+  {
+    icon: <IconMovie size={20} />,
+    title: "Сценарий для видео",
+    prompt: "Напиши сценарий длинного ролика на тему: ",
+  },
+  {
+    icon: <IconBolt size={20} />,
+    title: "Хук и опенинг",
+    prompt:
+      "Дай 5 вариантов захода на первые 10 секунд, чтобы не отваливались. Тема ролика: ",
+  },
+  {
+    icon: <IconBulb size={20} />,
+    title: "Идеи тем",
+    prompt: "Накидай 10 тем для роликов в моей нише",
+  },
+  {
+    icon: <IconChartLine size={20} />,
+    title: "Почему не залетело",
+    prompt:
+      "Разбери, почему ролик не набрал просмотров. Название, превью и цифры такие: ",
+  },
+];

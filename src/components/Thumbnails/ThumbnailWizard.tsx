@@ -33,6 +33,7 @@ import {
   EMPTY_SPEC,
   MAX_REFERENCE_BYTES,
   SPEC_LIMITS,
+  THUMBNAIL_GENERATE_QUOTA_COST,
   type RefRole,
   type ThumbnailIdeas,
   type ThumbnailRow,
@@ -43,6 +44,8 @@ import {
   apiThumbnailIdeas,
   apiUploadReference,
 } from "@/lib/thumbnails-client";
+import { useAppDispatch } from "@/store/hooks";
+import { bumpRequestsUsed } from "@/store/authSlice";
 
 // Мастер создания превью: три коротких шага вместо анкеты на 15 полей.
 // 1. О чём ролик  2. Кто в кадре  3. Как выглядит (текст и стиль подсказывает
@@ -97,6 +100,7 @@ export default function ThumbnailWizard({
   niche,
   audience,
 }: Props) {
+  const dispatch = useAppDispatch();
   const isMobile = useMediaQuery("(max-width: 48em)");
   const [step, setStep] = useState(0);
   const [spec, setSpec] = useState<ThumbnailSpec>({ ...EMPTY_SPEC, niche, audience });
@@ -212,6 +216,7 @@ export default function ThumbnailWizard({
       // Порядок референсов = Image 1..N в промпте: спикер первым, стиль следом.
       const refIds = [...speakerIds, ...styleIds];
       const row = await apiGenerateThumbnail(projectId, spec, refIds);
+      dispatch(bumpRequestsUsed(THUMBNAIL_GENERATE_QUOTA_COST)); // остаток квоты в шапке не отстаёт
       try {
         localStorage.removeItem(draftKey(projectId));
       } catch {
