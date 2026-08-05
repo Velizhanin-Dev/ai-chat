@@ -40,7 +40,7 @@ export default function AchievementsModal({
           </Group>
 
           <Stack gap="xs">
-            {view.items.map((a) => (
+            {sortByProgress(view.items).map((a) => (
               <Row key={a.code} a={a} />
             ))}
           </Stack>
@@ -48,6 +48,22 @@ export default function AchievementsModal({
       )}
     </Modal>
   );
+}
+
+// Порядок в списке — по прогрессу: сперва то, что ближе к следующей цели (есть
+// шанс добить), закрытые целиком уезжают вниз. Внутри равных — по доле взятых
+// уровней, чтобы «почти собранные» шли выше только начатых.
+function sortByProgress(items: AchievementView[]): AchievementView[] {
+  const rank = (a: AchievementView) => {
+    if (a.done) return 2; // всё взято — вниз
+    return a.level > 0 ? 0 : 1; // начатые выше нетронутых
+  };
+  return [...items].sort((x, y) => {
+    if (rank(x) !== rank(y)) return rank(x) - rank(y);
+    const levelShare = (a: AchievementView) => (a.maxLevel > 0 ? a.level / a.maxLevel : 0);
+    if (levelShare(x) !== levelShare(y)) return levelShare(y) - levelShare(x);
+    return y.ratio - x.ratio; // ближе к ближайшей цели — выше
+  });
 }
 
 function Summary({ label, value }: { label: string; value: string | number }) {

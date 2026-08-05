@@ -663,7 +663,8 @@ AI-ассистент Велижанина (методика КМК) в форм
     сюда, БД и UI не трогаем. Уровень **не понижается** (`Math.max`) при правке каталога.
   - **Сервер — [achievements-server.ts](src/lib/achievements-server.ts)**: `track(userId, key)` —
     отмечает день + счётчик + пересчитывает уровни, зовётся **только fire-and-forget** из точек
-    действий (`/api/chat`, `POST /api/conversations`, `/api/thumbnails/generate`, youtube
+    действий (`/api/chat`, `POST /api/conversations`, `/api/thumbnails/generate`,
+    `POST /api/content-plan` → ачивка «Матрица контента» 1/3/12, youtube
     `analyze`/`diagnose`/`callback`); `getAchievementsView`, `markAchievementsSeen`.
     API — `GET /api/achievements` + `POST /api/achievements/seen`, клиент — `achievements-client.ts`.
   - **Ачивки за шаги дорожной карты** (SEO / CTR-превью / конверсия в подписку / вовлечение /

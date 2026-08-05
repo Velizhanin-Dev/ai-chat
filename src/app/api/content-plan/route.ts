@@ -18,6 +18,7 @@ import {
   generatePlanVideos,
   toPlanView,
 } from "@/lib/content-plan-server";
+import { track } from "@/lib/achievements-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // генерация сетки — долгий вызов модели
@@ -145,6 +146,9 @@ export async function POST(req: Request) {
         })
         .catch((err) => console.error("[content-plan] quota increment error:", err));
     }
+
+    // Геймификация (docs/achievements.md), fire-and-forget.
+    track(user.id, "content_plan");
 
     return NextResponse.json({ plan: toPlanView(plan, plan.videos) });
   } catch (err) {

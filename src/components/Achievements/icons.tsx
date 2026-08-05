@@ -1,5 +1,6 @@
 import {
   IconCalendar,
+  IconCalendarMonth,
   IconChartLine,
   IconClick,
   IconFlame,
@@ -39,6 +40,7 @@ const MAP: Record<AchievementIcon, ComponentType<IconProps>> = {
   heart: IconHeart,
   chart: IconChartLine,
   route: IconRoute,
+  calendarMonth: IconCalendarMonth,
 };
 
 export function AchIcon({ name, ...props }: { name: AchievementIcon } & IconProps) {

@@ -14,6 +14,7 @@ export const COUNTER_KEYS = [
   "video_analysis", // ИИ-разбор упаковки ролика
   "youtube_connected", // канал подключён
   "brief_done", // бриф + DISC пройден
+  "content_plan", // собран контент-план на месяц (раздел «Контент-план»)
   // Шаги дорожной карты канала (docs/channel-roadmap.md). Инкрементятся, когда
   // шаг ЗАСЧИТАН переразбором (галочку нельзя просто тыкнуть), а не когда нажат.
   "step_seo", // пересеошил ролики
@@ -61,7 +62,8 @@ export type AchievementIcon =
   | "userPlus"
   | "heart"
   | "chart"
-  | "route";
+  | "route"
+  | "calendarMonth";
 
 export interface AchievementSpec {
   code: string;
@@ -219,6 +221,18 @@ export const ACHIEVEMENTS: AchievementSpec[] = [
     tierLabels: ["Первый разбор", "Патологоанатом", "Тысяча и один раз"],
     icon: "search",
     unit: "роликов",
+  },
+  {
+    code: "content_plan",
+    // «Матрица бесконечного контента» — его термин из методики: сетка тем, которая
+    // не даёт сесть на мель. Ровно то, что делает раздел «Контент-план».
+    title: "Матрица контента",
+    description: "Собери контент-план на месяц в разделе «Контент-план» (1 / 3 / 12)",
+    metric: "content_plan",
+    tiers: [1, 3, 12],
+    tierLabels: ["Первая сетка", "Работаю по плану", "Год по сетке"],
+    icon: "calendarMonth",
+    unit: "планов",
   },
   {
     code: "connected",
