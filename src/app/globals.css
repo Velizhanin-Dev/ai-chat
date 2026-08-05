@@ -1115,3 +1115,451 @@ section[id] {
   box-shadow: var(--mantine-shadow-sm);
   border-radius: 50%;
 }
+
+/* ── Ачивки (геймификация) ─────────────────────────────────────────────── */
+/* docs/achievements.md. Трекер-«профиль игрока»: тёплая подложка с брендовым
+   свечением, герой-метрика, подсвеченная цель и стена медалей. Должно мотивировать
+   даже на нуле, поэтому locked-медали не мёртво-серые, а с мягким тинтом. */
+
+.ach-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: clamp(16px, 2.4vw, 22px);
+  height: 100%;
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--mantine-color-brand-6) 12%, transparent), transparent 60%),
+    var(--mantine-color-gray-0);
+  border: 1px solid var(--mantine-color-gray-2);
+}
+[data-mantine-color-scheme="dark"] .ach-card {
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--mantine-color-brand-6) 20%, transparent), transparent 60%),
+    var(--mantine-color-dark-6);
+  border-color: var(--mantine-color-dark-4);
+}
+/* Плавающее брендовое пятно за героем — даёт «жизнь» пустому состоянию. */
+.ach-card::before {
+  content: "";
+  position: absolute;
+  top: -40px;
+  right: -30px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent), transparent 70%);
+  filter: blur(6px);
+  pointer-events: none;
+  animation: ach-float 9s ease-in-out infinite;
+}
+
+@keyframes ach-float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-14px, 12px); }
+}
+
+/* Герой: общий прогресс + серия/дни. */
+.ach-hero-num {
+  font-weight: 800;
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.ach-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+}
+[data-mantine-color-scheme="dark"] .ach-stat {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+
+/* Спотлайт ближайшей цели — фокус мотивации. */
+.ach-spotlight {
+  position: relative;
+  border-radius: 16px;
+  padding: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 10%, transparent), transparent 70%);
+  border: 1px solid color-mix(in srgb, var(--mantine-color-brand-6) 32%, transparent);
+}
+
+/* Стена медалей — сетка плиток. */
+.ach-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px 6px;
+}
+.ach-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 2px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+.ach-tile:hover,
+.ach-tile:focus-visible {
+  transform: translateY(-3px);
+  background: var(--mantine-color-body);
+  border-color: var(--mantine-color-gray-2);
+  outline: none;
+}
+[data-mantine-color-scheme="dark"] .ach-tile:hover,
+[data-mantine-color-scheme="dark"] .ach-tile:focus-visible {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 70%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+.ach-tile-label {
+  font-size: 0.6875rem;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--mantine-color-dimmed);
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ach-tile-label.is-unlocked {
+  color: var(--mantine-color-text);
+  font-weight: 600;
+}
+
+/* Пипсы уровней (●●○) под медалью. */
+.ach-pips {
+  display: flex;
+  gap: 3px;
+}
+.ach-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mantine-color-gray-4);
+}
+[data-mantine-color-scheme="dark"] .ach-pip {
+  background: var(--mantine-color-dark-3);
+}
+.ach-pip.on {
+  background: var(--mantine-color-brand-6);
+}
+
+/* Медаль: обёртка для свечения/пульса и press-squish. */
+.ach-medal {
+  position: relative;
+  line-height: 0;
+  transition: transform 140ms ease;
+}
+.ach-medal.is-unlocked {
+  filter: drop-shadow(0 3px 10px color-mix(in srgb, var(--mantine-color-brand-6) 35%, transparent));
+}
+.ach-medal.clickable {
+  cursor: pointer;
+}
+.ach-medal.clickable:active {
+  transform: scale(0.94);
+}
+.ach-medal.pulse::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--mantine-color-brand-6);
+  animation: ach-pulse 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes ach-pulse {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+/* Точка «новое» на свежевзятой медали. */
+.ach-new-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--mantine-color-brand-6, #ec582e);
+  border: 2px solid var(--mantine-color-body);
+  z-index: 2;
+  animation: ach-blip 1.6s ease-in-out infinite;
+}
+[data-mantine-color-scheme="dark"] .ach-new-dot {
+  border-color: var(--mantine-color-dark-6);
+}
+@keyframes ach-blip {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mantine-color-brand-6) 55%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--mantine-color-brand-6) 0%, transparent); }
+}
+
+/* Стаггер-появление плиток. */
+.ach-rise {
+  animation: ach-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes ach-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* KPI-строка внутри карточки канала (показатели за период). Та же подложка, что
+   у стат-чипов достижений (.ach-stat) — для единого языка в первой строке раздела. */
+.kpi-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  transition: border-color 150ms ease, transform 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .kpi-row {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+.kpi-row:hover {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-gray-2));
+}
+[data-mantine-color-scheme="dark"] .kpi-row:hover {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-dark-4));
+}
+/* Пилюля дельты роста — цветной тинт + стрелка. */
+.kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Дорожная карта канала (шаги) ──────────────────────────────────────── */
+.rm-step {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  transition: border-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+[data-mantine-color-scheme="dark"] .rm-step {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 55%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+/* Активный (открытый) шаг — акцентная рамка + лёгкое свечение, чтобы вести взгляд. */
+.rm-step.is-open {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent);
+}
+.rm-step.is-locked {
+  opacity: 0.62;
+}
+.rm-step.is-done {
+  border-color: color-mix(in srgb, var(--mantine-color-teal-6) 40%, transparent);
+}
+/* Кружок-маркер шага (номер / замок / галочка). */
+.rm-marker {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+/* ── Контент-план (канбан) ─────────────────────────────────────────────── */
+.cp-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 62em) {
+  .cp-board {
+    grid-template-columns: 1fr;
+  }
+}
+.cp-col {
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--mantine-color-gray-0);
+  min-height: 120px;
+}
+[data-mantine-color-scheme="dark"] .cp-col {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 55%, transparent);
+}
+/* Колонка под курсором при перетаскивании — акцентная рамка/подложка. */
+.cp-col {
+  border: 2px dashed transparent;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.cp-col-over {
+  border-color: var(--mantine-color-brand-6);
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 10%, var(--mantine-color-gray-0));
+}
+[data-mantine-color-scheme="dark"] .cp-col-over {
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 16%, var(--mantine-color-dark-7));
+}
+.cp-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 10px;
+}
+.cp-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* Карточка ролика. */
+.cp-card {
+  position: relative;
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .cp-card {
+  border-color: var(--mantine-color-dark-4);
+}
+.cp-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-gray-2));
+  box-shadow: var(--mantine-shadow-sm);
+}
+.cp-card + .cp-card {
+  margin-top: 10px;
+}
+/* Мини-превью привязанного ролика. */
+.cp-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+/* Панель ролика контент-плана: увеличенный отступ между подписью и инпутом
+   (по умолчанию Mantine прижимает label вплотную — читается тесно). */
+.cp-drawer .mantine-InputWrapper-label {
+  margin-bottom: 8px;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+/* Своя подпись для блоков без Input (статус, ВИСП, название) — тот же вид. */
+.cp-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Карточка внутри опорного блока (портрет ЦА, ступень Ханта, воронка). */
+.cp-block {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .cp-block {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+}
+/* Сетка шортсов — плитками. */
+.cp-shorts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.cp-shorts .cp-card + .cp-card {
+  margin-top: 0;
+}
+
+/* Строка ролика в пикере привязки. */
+.cp-pick-row {
+  width: 100%;
+  padding: 8px;
+  border-radius: 10px;
+  transition: background 130ms ease;
+}
+.cp-pick-row:hover {
+  background: var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .cp-pick-row:hover {
+  background: var(--mantine-color-dark-6);
+}
+
+/* ВИСП-галочки на карточке. */
+.cp-visp {
+  display: inline-flex;
+  gap: 3px;
+}
+.cp-visp span {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  background: var(--mantine-color-gray-2);
+  color: var(--mantine-color-dimmed);
+}
+[data-mantine-color-scheme="dark"] .cp-visp span {
+  background: var(--mantine-color-dark-5);
+}
+.cp-visp span.on {
+  background: var(--mantine-color-brand-6);
+  color: #fff;
+}
+
+/* Строка ачивки в модалке — мягкая подложка. */
+.ach-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-gray-0);
+  transition: background 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .ach-row {
+  background: var(--mantine-color-dark-6);
+}
+.ach-row.is-unlocked {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 8%, transparent), transparent 60%), var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .ach-row.is-unlocked {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 14%, transparent), transparent 60%), var(--mantine-color-dark-6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ach-card::before,
+  .ach-medal.pulse::after,
+  .ach-new-dot,
+  .ach-rise {
+    animation: none;
+  }
+  .ach-tile,
+  .ach-medal {
+    transition: none;
+  }
+}

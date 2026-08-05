@@ -25,7 +25,7 @@ import { useAppSelector } from "@/store/hooks";
 const ITEMS = [
   { label: "Чат", seg: "chat", adminOnly: false, beta: false },
   { label: "Аналитика", seg: "channel", adminOnly: false, beta: false },
-  { label: "Контент-план", seg: "creatives", adminOnly: true, beta: false },
+  { label: "Контент-план", seg: "content-plan", adminOnly: false, beta: true },
   { label: "Генератор превью", seg: "thumbnails", adminOnly: false, beta: true },
   { label: "Настройки", seg: "settings", adminOnly: false, beta: false },
 ] as const;

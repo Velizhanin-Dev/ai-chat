@@ -22,6 +22,7 @@ import {
   appendStreamingContent,
   finalizeStreaming,
   setError,
+  prefillConsumed,
 } from "@/store/chatSlice";
 import type { ChatMessage } from "@/store/chatSlice";
 import { bumpRequestsUsed } from "@/store/authSlice";
@@ -207,14 +208,17 @@ export default function ChatInput({
     }
   }, [inputFocusSignal]);
 
-  // Подстановка запроса из плиток стартового экрана. Реагируем на рост seq
-  // (а не на текст) — повторный клик по той же плитке тоже должен срабатывать.
+  // Подстановка запроса извне: плитки стартового экрана, быстрые действия, а также
+  // переходы из ДРУГИХ разделов («Сгенерировать сценарий» в контент-плане, шаги
+  // дорожной карты). ⚠️ Работает по модели «потребления», а НЕ по росту seq: при
+  // переходе из другого раздела prefill ставится до монтирования этого компонента,
+  // и сравнение счётчиков молча теряло текст. Забрали → гасим (prefillConsumed),
+  // поэтому повторный клик по той же плитке тоже срабатывает.
   const prefill = useAppSelector((s) => s.chat.prefill);
-  const prevPrefillSeq = useRef(prefill.seq);
   useEffect(() => {
-    if (prevPrefillSeq.current === prefill.seq) return;
-    prevPrefillSeq.current = prefill.seq;
+    if (!prefill.text) return;
     setInput(prefill.text);
+    dispatch(prefillConsumed());
     const el = textareaRef.current;
     if (el) {
       el.focus();
@@ -223,7 +227,7 @@ export default function ChatInput({
         el.selectionStart = el.selectionEnd = el.value.length;
       });
     }
-  }, [prefill]);
+  }, [prefill, dispatch]);
 
   // ── Остановка генерации ───────────────────────────────────────────────────
   // Рвём fetch AbortController'ом. Сервер видит обрыв через req.signal и НЕ

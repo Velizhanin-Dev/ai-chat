@@ -18,6 +18,7 @@ import {
   toRow,
   THUMBNAIL_GENERATE_QUOTA_COST,
 } from "@/lib/thumbnails-server";
+import { track } from "@/lib/achievements-server";
 
 // Генерация превью. Тратит 1 запрос квоты (как ИИ-разбор видео) — списываем
 // только ПОСЛЕ успеха. Картинка кладётся на диск, метаданные + промпт + спека —
@@ -121,6 +122,9 @@ export async function POST(req: Request) {
     });
 
     await spendQuota(access.user, THUMBNAIL_GENERATE_QUOTA_COST);
+
+    // Геймификация (docs/achievements.md), fire-and-forget.
+    track(access.user.id, "thumbnail_generated");
 
     return NextResponse.json({ item: toRow(row) });
   } catch (err) {

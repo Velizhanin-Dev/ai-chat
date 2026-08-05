@@ -10,6 +10,7 @@ import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { getQuotaState } from "@/lib/quota";
 import { prisma } from "@/lib/prisma";
+import { track } from "@/lib/achievements-server";
 
 // Сборка system-промпта (методика/голос/знания) вынесена в src/lib/llm/system.ts
 // (buildSystem) — её переиспользует и ИИ-разбор видео. route.ts отвечает за
@@ -297,6 +298,10 @@ export async function POST(request: NextRequest) {
               })
               .catch((err) => console.error("[chat] requestsUsed increment error:", err));
           }
+
+          // Геймификация: засчитываем действие (docs/achievements.md).
+          // Fire-and-forget, админов тоже считаем — ачивки не про биллинг.
+          if (!stopped && assistantText.trim()) track(sessionUser.id, "chat_message");
 
           // Успешный ответ — дописываем пару «вопрос+ответ» в историю. Вложенный
           // create обновляет диалог (триггерит @updatedAt → свежие сверху).

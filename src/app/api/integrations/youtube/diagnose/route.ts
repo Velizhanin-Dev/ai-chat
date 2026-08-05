@@ -13,6 +13,8 @@ import { getValidAccessToken, assertOwnedProject } from "@/lib/youtube";
 import { collectDiagnostics } from "@/lib/youtube-diagnostics";
 import { paramsFor, kindLabel, periodLabelFull } from "@/lib/channel-params";
 import { DIAGNOSE_PERIODS } from "@/lib/youtube-types";
+import { track } from "@/lib/achievements-server";
+import { verifyRoadmapAfterDiagnose } from "@/lib/roadmap-server";
 import type {
   ChannelAnalysisResult,
   ChannelDiagnostics,
@@ -362,6 +364,13 @@ ${jsonSchemaBlock(keys)}
         .update({ where: { id: user.id }, data: { requestsUsed: { increment: 1 } } })
         .catch((err) => console.error("[youtube diagnose] quota increment error:", err));
     }
+
+    // Геймификация (docs/achievements.md), fire-and-forget.
+    track(user.id, "channel_analysis");
+
+    // Разбор канала — это и есть «переразбор» для дорожной карты: освежаем
+    // сигналы и проверяем шаги (docs/channel-roadmap.md). Fire-and-forget.
+    verifyRoadmapAfterDiagnose(projectId, user.id).catch(() => {});
 
     return NextResponse.json({
       analysis: {

@@ -16,6 +16,7 @@ import {
   assertOwnedProject,
 } from "@/lib/youtube";
 import type { RetentionPoint, VideoAnalysis } from "@/lib/youtube-types";
+import { track } from "@/lib/achievements-server";
 
 // ИИ-разбор упаковки видео (название/описание/теги/удержание) с вариантами по
 // методике. ТРАТИТ 1 запрос квоты (как ответ в чате). Возвращает структурный JSON.
@@ -212,6 +213,9 @@ ${retLine}
         .update({ where: { id: user.id }, data: { requestsUsed: { increment: 1 } } })
         .catch((err) => console.error("[youtube analyze] quota increment error:", err));
     }
+
+    // Геймификация (docs/achievements.md), fire-and-forget.
+    track(user.id, "video_analysis");
 
     return NextResponse.json({ analysis });
   } catch (err) {

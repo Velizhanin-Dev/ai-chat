@@ -124,9 +124,18 @@ const chatSlice = createSlice({
     setLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
     },
-    // Клик по плитке стартового экрана — подставить текст в композер и сфокусировать.
+    // Подставить текст в композер и сфокусировать. Зовётся и с уже открытого чата
+    // (плитки, быстрые действия), и ИЗ ДРУГИХ РАЗДЕЛОВ перед переходом в чат
+    // (дорожная карта, «Сгенерировать сценарий» в контент-плане).
     prefillInput(state, action: PayloadAction<string>) {
       state.prefill = { text: action.payload, seq: state.prefill.seq + 1 };
+    },
+    // Композер забрал текст. ⚠️ Обязательный шаг: реагировать только на рост seq
+    // нельзя — при переходе из другого раздела prefill ставится ДО монтирования
+    // ChatInput, и тот видит уже новый seq как «начальный» (текст терялся).
+    // Поэтому потребитель гасит текст, а не сравнивает счётчики.
+    prefillConsumed(state) {
+      state.prefill = { text: "", seq: state.prefill.seq };
     },
     setMessagesLoading(state, action: PayloadAction<boolean>) {
       state.messagesLoading = action.payload;
@@ -187,6 +196,7 @@ export const {
   addMessage,
   setLoading,
   prefillInput,
+  prefillConsumed,
   setMessagesLoading,
   setConversationMessages,
   setStreamingContent,

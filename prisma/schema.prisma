@@ -54,6 +54,10 @@ model Conversation {
   thumbnails Thumbnail[]
   // История разборов канала по параметрам продвижения (см. ChannelAnalysis ниже).
   analyses  ChannelAnalysis[]
+  // Дорожная карта канала (движок шагов, см. ChannelRoadmap ниже).
+  roadmap   ChannelRoadmap?
+  // Контент-планы по месяцам (см. ContentPlan ниже).
+  contentPlans ContentPlan[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -145,6 +149,89 @@ model ChannelAnalysis {
   @@index([conversationId, createdAt])
 }
 
+// ── Дорожная карта канала (движок шагов) ───────────────────────────────────
+// docs/channel-roadmap.md + src/lib/roadmap.ts. Пер-проектная (1 проект = 1
+// диалог = 1 канал). Один снапшот сигналов канала + список шагов JSON-ом:
+// шаги отбираются по цифрам (SEO/CTR/подписка/вовлечение/удержание), открываются
+// по одному раз в 2 дня, а выполнение проверяется диффом снапшотов (не по клику).
+// Закрытый шаг зажигает соответствующую ачивку-шаг (completeStep).
+model ChannelRoadmap {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // Последний собранный снимок сигналов (RoadmapSignals) + когда собран.
+  signals        Json?
+  signalsAt      DateTime?
+  // Состояние шагов: RoadmapStepState[] (key, order, claimedAt, doneAt, baseline).
+  steps          Json         @default("[]")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// ── Контент-план (месячная сетка роликов) ──────────────────────────────────
+// docs/content-plan.md. Пер-проектный, по месяцам (прошлые хранятся, current —
+// свежий). Генерируется по методике (CONTENT_PLAN_GUIDE, 8–12 роликов/мес, 25
+// запросов квоты). Опорные блоки (портреты ЦА / лестница Ханта / воронка) —
+// JSON, генерятся по желанию. Ролики — ContentPlanVideo (канбан по статусам).
+model ContentPlan {
+  id             String             @id @default(cuid())
+  conversationId String
+  conversation   Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // Ключ месяца "2026-07" (для сортировки/архива) + человеческая метка "Июль 2026".
+  period         String
+  label          String
+  // Снимок ниши/брифа на момент генерации (чтобы план читался сам по себе).
+  niche          String?
+  // Опорные блоки (Фаза 3, генерятся по желанию): портреты ЦА, легенда Ханта, воронка.
+  audience       Json?
+  huntLadder     Json?
+  funnel         Json?
+  model          String             @default("")
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  videos         ContentPlanVideo[]
+
+  @@index([conversationId, period])
+}
+
+// Один ролик в контент-плане. Поля — из методики (см. CONTENT_PLAN_GUIDE).
+// Массивы (titles/previewTexts/questions) — варианты/скелет. status — канбан.
+model ContentPlanVideo {
+  id           String      @id @default(cuid())
+  planId       String
+  plan         ContentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  order        Int         @default(0)
+  // "video" (лонг) | "short" (шортс — облегчённые поля).
+  kind         String      @default("video")
+  // Канбан: "idea" | "in_progress" | "published" | "cancelled".
+  status       String      @default("idea")
+  // Источник строки: "ai" (сгенерирована) | "manual" (добавил юзер) | "imported"
+  // (импортирован реальный ролик канала).
+  source       String      @default("ai")
+  // Поля методики. titles/previewTexts — 1–3 варианта (A/B), questions — 10 (скелет).
+  titles       String[]
+  previewTexts String[]
+  format       String?     // охватное | экспертное | продающее
+  noSpeaker    Boolean     @default(false) // подтип «охватное без спикера»
+  huntStage    String?     // стадия лестницы Ханта (словами)
+  pain         String?     // боль ЦА от первого лица
+  questions    String[]    // 10 вопросов/тезисов — скелет ролика
+  nativeClose  String?     // нативное закрытие (на что мягко закрываем)
+  cta          Json?       // { like, subscribe, comment, link, leadMagnet } — строки
+  visp         Json?       // { v,i,s,p } — булевы галочки ВИСП
+  reference    String?     // референс (видео-донор): текст или ссылка
+  whyWorks     String?     // «почему тема залетит» (универсальный страх/желание)
+  opening      String?     // прописанный опенинг (первый крючок)
+  // Связь с реальным роликом YouTube (Фаза 2). Привязан → снимок превью/просмотров.
+  youtubeVideoId String?
+  thumbnail      String?
+  views          Int?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([planId, order])
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────
 // Реальная регистрация/вход на бэкенде: пароль хранится хэшем (bcrypt),
 // сессия — подписанный JWT в httpOnly-cookie (см. src/lib/auth.ts).
@@ -193,6 +280,56 @@ model User {
   youtubePending YouTubePendingConnection?
   // Переписка с техподдержкой (см. модель SupportMessage ниже).
   supportMessages SupportMessage[]
+  // Геймификация: счётчики действий, дни активности и взятые ачивки (docs/achievements.md).
+  counters        UserCounter[]
+  activityDays    UserActivityDay[]
+  achievements    UserAchievement[]
+}
+
+// ── Геймификация (ачивки) ──────────────────────────────────────────────────
+// Подробности и правила — docs/achievements.md. Три таблицы: счётчики действий,
+// дни активности (из них считаются серия и «всего активных дней») и взятые
+// уровни ачивок. Прогресс в UserAchievement НЕ хранится — он всегда считается
+// из счётчиков, чтобы не разъезжался при правке каталога.
+
+// Счётчик действий пользователя. key — CounterKey из src/lib/achievements.ts
+// ("chat_message", "thumbnail_generated", …). Инкремент атомарный (upsert +
+// increment), значение только растёт: удалил проект — взятую ачивку не отбираем.
+model UserCounter {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
+}
+
+// День, в который у юзера было хоть одно засчитанное действие (дата по UTC).
+// Отдельная таблица, а не счётчик: серия — это непрерывность, из числа нельзя
+// восстановить, был ли разрыв.
+model UserActivityDay {
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day    DateTime @db.Date
+
+  @@id([userId, day])
+}
+
+// Взятая ачивка. level — сколько уровней (tiers) закрыто; не понижается при
+// правке каталога. seenAt — когда пользователь увидел последний взятый уровень
+// (null = показываем метку «новое»).
+model UserAchievement {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code       String
+  level      Int       @default(0)
+  unlockedAt DateTime  @default(now())
+  seenAt     DateTime?
+
+  @@unique([userId, code])
 }
 
 // ── Чат техподдержки ───────────────────────────────────────────────────────

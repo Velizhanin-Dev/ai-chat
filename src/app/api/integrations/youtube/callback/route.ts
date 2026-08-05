@@ -7,6 +7,7 @@ import {
   assertOwnedProject,
   YT_STATE_COOKIE,
 } from "@/lib/youtube";
+import { track } from "@/lib/achievements-server";
 
 // Колбэк подключения YouTube: сверяем state, меняем code на токены, тянем канал и
 // сохраняем интеграцию КОНКРЕТНОМУ проекту (projectId из state-cookie). Возвращаем
@@ -108,6 +109,10 @@ export async function GET(req: NextRequest) {
         scope: tokens.scope ?? null,
       },
     });
+    // Геймификация (docs/achievements.md), fire-and-forget. Только для реального
+    // подключения к проекту — черновик на шаге брифа не считаем, он ещё может
+    // не доехать до проекта.
+    track(user.id, "youtube_connected");
     return back("connected");
   } catch (err) {
     console.error("[youtube callback]", err);

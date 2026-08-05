@@ -60,7 +60,8 @@ import {
   IconCalendar,
 } from "@tabler/icons-react";
 import ChannelDiagnostics from "./ChannelDiagnostics";
-import AnalysisSummaryCard from "./AnalysisSummaryCard";
+import AchievementsCard from "@/components/Achievements/AchievementsCard";
+import RoadmapCard from "./RoadmapCard";
 import PackagingMatrix, {
   buildMatrix,
   quadrantMeta,
@@ -152,7 +153,6 @@ export default function ChannelDashboard() {
   const customRange = typeof period === "object" ? period : null;
   // Разбор канала по параметрам продвижения — отдельная модалка (см. ChannelDiagnostics).
   const [diagOpen, setDiagOpen] = useState(false);
-  const [diagVersion, setDiagVersion] = useState(0);
 
   const load = useCallback(
     async (soft: boolean, force = false) => {
@@ -258,24 +258,14 @@ export default function ChannelDashboard() {
           <Reauth settingsHref={settingsHref} onRetry={() => load(false)} />
         )}
         {phase.s === "error" && <ErrorState msg={phase.msg} onRetry={() => load(false)} />}
-        {phase.s === "ready" && (
-          <Dashboard
-            data={phase.data}
-            onOpenDiagnostics={() => setDiagOpen(true)}
-            diagRefreshKey={diagVersion}
-          />
-        )}
+        {phase.s === "ready" && <Dashboard data={phase.data} />}
       </Box>
 
       {projectId && (
         <ChannelDiagnostics
           projectId={projectId}
           opened={diagOpen}
-          onClose={() => {
-            setDiagOpen(false);
-            // Могли сделать новый разбор — карточка на первой строке перечитает его.
-            setDiagVersion((v) => v + 1);
-          }}
+          onClose={() => setDiagOpen(false)}
         />
       )}
     </Box>
@@ -286,12 +276,8 @@ export default function ChannelDashboard() {
 
 function Dashboard({
   data,
-  onOpenDiagnostics,
-  diagRefreshKey,
 }: {
   data: YouTubeData;
-  onOpenDiagnostics: () => void;
-  diagRefreshKey: number;
 }) {
   const params = useParams();
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
@@ -421,26 +407,22 @@ function Dashboard({
 
   return (
     <Stack gap="lg">
-      {/* Строка 1: канал + последний разбор (3 к 5 по сетке из восьми колонок) */}
+      {/* Строка 1: канал (+ показатели за период внутри блока) + достижения */}
       <Grid columns={8} gutter="md">
         <Grid.Col span={{ base: 8, md: 3 }}>
-          <ChannelCard ch={ch} />
+          <ChannelCard ch={ch} period={period} />
         </Grid.Col>
         <Grid.Col span={{ base: 8, md: 5 }}>
-          {projectId && (
-            <AnalysisSummaryCard
-              projectId={projectId}
-              onOpen={onOpenDiagnostics}
-              refreshKey={diagRefreshKey}
-            />
-          )}
+          <AchievementsCard />
         </Grid.Col>
       </Grid>
 
-      {/* Строка 2: метрики за период */}
-      {period ? (
-        <PeriodKpis period={period} />
-      ) : (
+      {/* Дорожная карта «что чинить по шагам» (docs/channel-roadmap.md). */}
+      {projectId && <RoadmapCard projectId={projectId} />}
+
+      {/* Метрики канала за всё время — только когда периода нет (у периода KPI
+          теперь живут ВНУТРИ карточки канала, см. ChannelCard). */}
+      {!period && (
         <SimpleGrid cols={{ base: 2, md: 3 }} spacing="md">
           <StatCard
             icon={<IconUsers size={20} />}
@@ -656,7 +638,13 @@ function Dashboard({
 
 // Карточка канала — первая колонка первой строки. Компактная: тонкий баннер,
 // аватар, счётчики и описание в две строки.
-function ChannelCard({ ch }: { ch: NonNullable<YouTubeData["channel"]> }) {
+function ChannelCard({
+  ch,
+  period,
+}: {
+  ch: NonNullable<YouTubeData["channel"]>;
+  period: PeriodComparison | null;
+}) {
   return (
     <Box className="an-surface" style={{ overflow: "hidden", height: "100%" }}>
       <Box
@@ -725,7 +713,152 @@ function ChannelCard({ ch }: { ch: NonNullable<YouTubeData["channel"]> }) {
             {ch.description}
           </Text>
         )}
+
+        {/* Показатели за выбранный период — внутри блока канала (перенесены из
+            отдельной строки KPI под дашбордом). */}
+        {period && (
+          <>
+            <Divider my="md" />
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={700}
+              tt="uppercase"
+              mb="sm"
+              style={{ letterSpacing: "0.04em" }}
+            >
+              Показатели {periodLabel(period.days)}
+            </Text>
+            <ChannelPeriodKpis period={period} />
+          </>
+        )}
       </Box>
+    </Box>
+  );
+}
+
+// KPI периода ВНУТРИ карточки канала — вертикальный список стат-строк (заполняет
+// высоту узкой колонки лучше, чем 2×2, и не оставляет пустоты снизу). Стиль строки
+// (.kpi-row) единый со стат-чипами достижений в соседней карточке.
+function ChannelPeriodKpis({ period }: { period: PeriodComparison }) {
+  const { current: c, previous: p } = period;
+  const dPoints = p ? c.avgViewPercentage - p.avgViewPercentage : null;
+  return (
+    <Stack gap="sm">
+      <KpiRow
+        icon={<IconEye size={17} />}
+        color="brand"
+        label="Просмотры"
+        value={formatCount(c.views)}
+        pct={growthPct(c.views, p?.views)}
+      />
+      <KpiRow
+        icon={<IconClock size={17} />}
+        color="blue"
+        label="Время просмотра"
+        value={formatWatchTime(c.minutes)}
+        pct={growthPct(c.minutes, p?.minutes)}
+      />
+      <KpiRow
+        icon={<IconUserPlus size={17} />}
+        color="teal"
+        label="Подписчики"
+        value={`${c.netSubscribers >= 0 ? "+" : "−"}${formatCount(Math.abs(c.netSubscribers))}`}
+        pct={growthPct(c.netSubscribers, p?.netSubscribers)}
+      />
+      <KpiRow
+        icon={<IconChartArcs size={17} />}
+        color="grape"
+        label="Ср. % досмотра"
+        value={`${Math.round(c.avgViewPercentage)}%`}
+        deltaText={dPoints != null ? formatDeltaPoints(dPoints) : undefined}
+        deltaUp={dPoints != null ? dPoints >= 0 : undefined}
+        deltaNeutral={dPoints != null ? Math.round(dPoints * 10) === 0 : undefined}
+      />
+    </Stack>
+  );
+}
+
+// Одна стат-строка: иконка-чип, подпись+значение, дельта-пилюля справа.
+function KpiRow({
+  icon,
+  color,
+  label,
+  value,
+  pct,
+  deltaText,
+  deltaUp,
+  deltaNeutral,
+}: {
+  icon: React.ReactNode;
+  color: string;
+  label: string;
+  value: string;
+  pct?: number | null;
+  deltaText?: string;
+  deltaUp?: boolean;
+  deltaNeutral?: boolean;
+}) {
+  return (
+    <Box className="kpi-row">
+      <ThemeIcon size={34} radius="md" variant="light" color={color}>
+        {icon}
+      </ThemeIcon>
+      <Box style={{ flex: 1, minWidth: 0 }}>
+        <Text size="xs" c="dimmed" truncate>
+          {label}
+        </Text>
+        <Text fz="1.35rem" fw={800} lh={1.1} style={{ fontVariantNumeric: "tabular-nums" }}>
+          {value}
+        </Text>
+      </Box>
+      <DeltaPill pct={pct} text={deltaText} up={deltaUp} neutral={deltaNeutral} />
+    </Box>
+  );
+}
+
+// Пилюля дельты: цветной тинт (teal рост / red падение / gray нейтраль) + стрелка.
+// Нет прошлого периода → тихий прочерк, без пилюли.
+function DeltaPill({
+  pct,
+  text,
+  up,
+  neutral,
+}: {
+  pct?: number | null;
+  text?: string;
+  up?: boolean;
+  neutral?: boolean;
+}) {
+  let label = text;
+  let isUp = up ?? false;
+  let isNeutral = neutral ?? false;
+  if (label === undefined) {
+    if (pct == null) {
+      return (
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          —
+        </Text>
+      );
+    }
+    const rounded = Math.round(pct);
+    label = formatDeltaPct(pct);
+    isUp = rounded > 0;
+    isNeutral = rounded === 0;
+  }
+  const col = isNeutral ? "gray" : isUp ? "teal" : "red";
+  const Icon = isUp ? IconArrowUpRight : IconArrowDownRight;
+  return (
+    <Box
+      className="kpi-delta"
+      style={{
+        flexShrink: 0,
+        background: `var(--mantine-color-${col}-light)`,
+        color: `var(--mantine-color-${col}-light-color)`,
+      }}
+    >
+      {!isNeutral && <Icon size={13} stroke={2.5} />}
+      {label}
     </Box>
   );
 }
@@ -834,111 +967,6 @@ function StatCard({
   );
 }
 
-// KPI за период: просмотры, время просмотра, новые подписчики (net), ср. % досмотра —
-// с дельтой роста относительно предыдущего равного периода.
-function PeriodKpis({ period }: { period: PeriodComparison }) {
-  const { current: c, previous: p } = period;
-  const suffix = periodLabel(period.days);
-  return (
-    <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md">
-      <StatCard
-        icon={<IconEye size={20} />}
-        label={`Просмотры ${suffix}`}
-        value={formatCount(c.views)}
-        full={formatFull(c.views)}
-        color="brand"
-        trend={<DeltaInline pct={growthPct(c.views, p?.views)} />}
-      />
-      <StatCard
-        icon={<IconClock size={20} />}
-        label={`Время просмотра ${suffix}`}
-        value={formatWatchTime(c.minutes)}
-        full={`${formatFull(Math.round(c.minutes))} минут`}
-        color="blue"
-        trend={<DeltaInline pct={growthPct(c.minutes, p?.minutes)} />}
-      />
-      <StatCard
-        icon={<IconUserPlus size={20} />}
-        label={`Подписчики ${suffix}`}
-        value={`${c.netSubscribers >= 0 ? "+" : "−"}${formatCount(Math.abs(c.netSubscribers))}`}
-        full={`Пришло ${formatFull(c.subscribersGained)}, ушло ${formatFull(c.subscribersLost)}`}
-        color="teal"
-        trend={<DeltaInline pct={growthPct(c.netSubscribers, p?.netSubscribers)} />}
-      />
-      <StatCard
-        icon={<IconChartArcs size={20} />}
-        label={`Ср. % досмотра ${suffix}`}
-        value={`${Math.round(c.avgViewPercentage)}%`}
-        full={`Средний процент досмотра ролика ${suffix}`}
-        color="grape"
-        trend={
-          p ? (
-            <DeltaInline
-              text={formatDeltaPoints(c.avgViewPercentage - p.avgViewPercentage)}
-              up={c.avgViewPercentage - p.avgViewPercentage >= 0}
-              neutral={Math.round((c.avgViewPercentage - p.avgViewPercentage) * 10) === 0}
-            />
-          ) : (
-            <DeltaInline />
-          )
-        }
-      />
-    </SimpleGrid>
-  );
-}
-
-// Инлайн-дельта внутри карточки (без пилюли): цветная стрелка + значение + тихий
-// капшен «за пред. период». Цвет текста — из Mantine light-color переменной
-// (адаптив к теме, контраст ≥4.5:1). Принимает процент (pct) или готовый text +
-// направление (для процентных пунктов). Нет прошлого периода → тихий «нет данных».
-function DeltaInline({
-  pct,
-  text,
-  up,
-  neutral,
-}: {
-  pct?: number | null;
-  text?: string;
-  up?: boolean;
-  neutral?: boolean;
-}) {
-  if (text === undefined) {
-    if (pct == null) {
-      return (
-        <Text size="xs" c="dimmed">
-          нет данных за пред. период
-        </Text>
-      );
-    }
-    const rounded = Math.round(pct);
-    return <DeltaInline text={formatDeltaPct(pct)} up={rounded > 0} neutral={rounded === 0} />;
-  }
-  const c = neutral ? "gray" : up ? "teal" : "red";
-  const Icon = up ? IconArrowUpRight : IconArrowDownRight;
-  return (
-    <Group gap={5} wrap="nowrap" align="center">
-      <Box
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 2,
-          color: `var(--mantine-color-${c}-light-color)`,
-          fontWeight: 700,
-          fontSize: "0.9375rem",
-          lineHeight: 1.1,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {!neutral && <Icon size={16} stroke={2.5} />}
-        {text}
-      </Box>
-      <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
-        за пред. период
-      </Text>
-    </Group>
-  );
-}
 
 // Цвет прогресс-бара удержания по порогам (методика: низкое = «чинить хук»).
 function retentionColor(pct: number): string {
