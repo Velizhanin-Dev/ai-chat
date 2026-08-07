@@ -5,7 +5,7 @@ import { getSettings } from "@/lib/settings";
 import { routeQuery } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem } from "@/lib/llm/system";
-import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
+import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { sanitizeSpec, type ThumbnailIdeas } from "@/lib/thumbnails";
 import {
   requireProjectAccess,
@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     route.contentPlan = false;
 
     const userName = access.user.name?.trim().slice(0, 100) ?? "";
-    const systemBlocks = buildSystem(route, route.searchQuery || routeHint, "", brief, userName);
+    const systemBlocks = buildSystem(route, withBriefTerms(route.searchQuery || routeHint, brief), "", brief, userName);
     systemBlocks.push({
       type: "text",
       text: `# ФОРМАТ ЭТОЙ ЗАДАЧИ (важно)\nЭто не чат, а заготовка упаковки для превью. Верни ТОЛЬКО валидный JSON по схеме из сообщения пользователя — без markdown-обёртки, без преамбул и без текста вокруг. Содержимое строк — живым моим языком и по моей методике. Не пиши ничего, кроме JSON.`,

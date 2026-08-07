@@ -169,8 +169,25 @@ async function fetchChannelSnapshot(accessToken: string): Promise<ChannelSnapsho
       }
     : null;
 
+  // Лексика ниши из тегов последних роликов: дедуп без учёта регистра, порядок
+  // сохраняем (сначала теги свежих видео). Обрезаем — это подсказка, а не словарь.
+  const seenTag = new Set<string>();
+  const nicheWords: string[] = [];
+  for (const v of videos) {
+    for (const t of v.tags ?? []) {
+      const key = t.trim().toLowerCase();
+      if (!key || key.length > 40 || seenTag.has(key)) continue;
+      seenTag.add(key);
+      nicheWords.push(t.trim());
+      if (nicheWords.length >= 25) break;
+    }
+    if (nicheWords.length >= 25) break;
+  }
+
   return {
     title: channel.title,
+    about: channel.description?.trim().slice(0, 600) || undefined,
+    nicheWords: nicheWords.length ? nicheWords : undefined,
     subscribers: channel.subscriberCount,
     totalViews: channel.viewCount,
     videoCount: channel.videoCount,
@@ -580,6 +597,8 @@ export async function fetchRecentVideos(
       viewCount: Number(st.viewCount ?? 0),
       likeCount: Number(st.likeCount ?? 0),
       commentCount: Number(st.commentCount ?? 0),
+      // Теги уже пришли в part=snippet — раньше маппер их молча выбрасывал.
+      tags: s.tags ?? [],
     };
   });
   return { videos, nextPageToken };

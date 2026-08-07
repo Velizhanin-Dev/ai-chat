@@ -5,7 +5,7 @@ import { apiError, readJson } from "@/lib/http";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { getQuotaState } from "@/lib/quota";
-import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
+import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { routeQuery } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem } from "@/lib/llm/system";
@@ -154,7 +154,7 @@ export async function POST(req: Request) {
     route.contentPlan = false;
 
     const userName = user.name?.trim().slice(0, 100) ?? "";
-    const systemBlocks = buildSystem(route, route.searchQuery || routeHint, "", brief, userName);
+    const systemBlocks = buildSystem(route, withBriefTerms(route.searchQuery || routeHint, brief), "", brief, userName);
     // Жёсткий формат ИМЕННО этой задачи — строгий JSON (перебивает дисциплину чата).
     systemBlocks.push({
       type: "text",

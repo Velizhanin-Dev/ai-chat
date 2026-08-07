@@ -1,18 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Badge,
   Box,
   Button,
+  Code,
   Group,
   Loader,
   Modal,
   Paper,
   Progress,
+  ScrollArea,
   SegmentedControl,
   SimpleGrid,
+  Spoiler,
   Stack,
   Text,
   Textarea,
@@ -34,6 +37,12 @@ import {
   MAX_REFERENCE_BYTES,
   SPEC_LIMITS,
   THUMBNAIL_GENERATE_QUOTA_COST,
+  THUMB_STYLES,
+  buildThumbnailPrompt,
+  normalizeRefRole,
+  speakerNeedFor,
+  thumbStyleById,
+  type PromptRef,
   type RefRole,
   type ThumbnailIdeas,
   type ThumbnailRow,
@@ -47,17 +56,29 @@ import {
 import { useAppDispatch } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 
-// Мастер создания превью: три коротких шага вместо анкеты на 15 полей.
-// 1. О чём ролик  2. Кто в кадре  3. Как выглядит (текст и стиль подсказывает
-// нейронка по методике). Черновик пишется в localStorage — недозаполненный мастер
-// переживает перезагрузку. После генерации родитель открывает редактор.
+// Мастер создания превью. Флоу задан владельцем (2026-08-07):
+//   ЦА → стиль (5 вариантов) → кто в кадре → о чём ролик → текст и название от ИИ
+//   → сводка с промптом → генерация.
+// Шаг «кто в кадре» пропускается, если выбранный стиль спикера не требует
+// (например рекламно-каталожный подстиль спецпроектов).
+// Черновик пишется в localStorage — недозаполненный мастер переживает перезагрузку.
 
-const STEPS = ["О чём ролик", "Кто в кадре", "Как выглядит"];
-const DRAFT_KEY = "creative-chat:thumb-draft-v1";
+const DRAFT_KEY = "creative-chat:thumb-draft-v2";
+
+type StepId = "audience" | "style" | "frame" | "topic" | "text" | "review";
+
+const STEP_TITLE: Record<StepId, string> = {
+  audience: "Кому показываем",
+  style: "Как выглядит",
+  frame: "Кто в кадре",
+  topic: "О чём ролик",
+  text: "Текст и название",
+  review: "Проверь и запускай",
+};
 
 interface Draft {
   spec: ThumbnailSpec;
-  step: number;
+  stepId: StepId;
   speakerIds: string[];
   styleIds: string[];
 }
@@ -80,12 +101,9 @@ interface Props {
   projectId: string;
   opened: boolean;
   onClose: () => void;
-  // Референсы проекта (спикеры/объекты/стили) + колбэк, когда загрузили новый.
   references: ThumbnailRow[];
   onReferenceAdded: (row: ThumbnailRow) => void;
-  // Готовое превью — родитель кладёт в галерею и открывает редактор.
   onCreated: (row: ThumbnailRow) => void;
-  // Ниша и аудитория из брифа проекта — показываем строкой, чтобы не спрашивать.
   niche: string;
   audience: string;
 }
@@ -102,7 +120,7 @@ export default function ThumbnailWizard({
 }: Props) {
   const dispatch = useAppDispatch();
   const isMobile = useMediaQuery("(max-width: 48em)");
-  const [step, setStep] = useState(0);
+  const [stepId, setStepId] = useState<StepId>("audience");
   const [spec, setSpec] = useState<ThumbnailSpec>({ ...EMPTY_SPEC, niche, audience });
   const [speakerIds, setSpeakerIds] = useState<string[]>([]);
   const [styleIds, setStyleIds] = useState<string[]>([]);
@@ -116,18 +134,31 @@ export default function ThumbnailWizard({
   const set = <K extends keyof ThumbnailSpec>(key: K, value: ThumbnailSpec[K]) =>
     setSpec((s) => ({ ...s, [key]: value }));
 
+  const style = thumbStyleById(spec.style);
+  const speakerNeed = speakerNeedFor(spec.style, spec.subStyle);
+
+  // Шаг «кто в кадре» показываем, только если стиль допускает человека в кадре.
+  const steps: StepId[] = useMemo(
+    () =>
+      (
+        ["audience", "style", "frame", "topic", "text", "review"] as StepId[]
+      ).filter((s) => s !== "frame" || speakerNeed !== "none"),
+    [speakerNeed]
+  );
+  const stepIndex = Math.max(0, steps.indexOf(stepId));
+
   // Восстановление черновика на открытии; закреплённые стили подставляем сразу.
   useEffect(() => {
     if (!opened) return;
     const d = loadDraft(projectId);
     if (d) {
       setSpec({ ...d.spec, niche: d.spec.niche || niche, audience: d.spec.audience || audience });
-      setStep(Math.min(d.step, STEPS.length - 1));
+      setStepId(d.stepId ?? "audience");
       setSpeakerIds(d.speakerIds ?? []);
       setStyleIds(d.styleIds ?? []);
     } else {
       setSpec({ ...EMPTY_SPEC, niche, audience });
-      setStep(0);
+      setStepId("audience");
       setSpeakerIds([]);
       setStyleIds(references.filter((r) => r.role === "style" && r.pinned).map((r) => r.id));
     }
@@ -137,18 +168,28 @@ export default function ThumbnailWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened, projectId, niche, audience]);
 
-  // Пишем черновик на каждое изменение — мастер переживает перезагрузку.
   useEffect(() => {
     if (!opened) return;
     try {
       localStorage.setItem(
         draftKey(projectId),
-        JSON.stringify({ spec, step, speakerIds, styleIds } satisfies Draft)
+        JSON.stringify({ spec, stepId, speakerIds, styleIds } satisfies Draft)
       );
     } catch {
       // приватный режим / переполнение — не критично
     }
-  }, [opened, projectId, spec, step, speakerIds, styleIds]);
+  }, [opened, projectId, spec, stepId, speakerIds, styleIds]);
+
+  // Стиль без людей — сразу обнуляем счётчик и снимаем выбранные фото спикера,
+  // иначе в промпт уедет «максимум 1 человек» вместе с «людей в кадре нет».
+  useEffect(() => {
+    if (speakerNeed === "none" && spec.peopleCount !== 0) {
+      set("peopleCount", 0);
+      setSpeakerIds([]);
+    }
+    if (speakerNeed !== "none" && spec.peopleCount === 0) set("peopleCount", 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speakerNeed]);
 
   const upload = useCallback(
     async (files: FileList | null) => {
@@ -182,14 +223,13 @@ export default function ThumbnailWizard({
     fileInput.current?.click();
   };
 
-  // Подсказки по методике — тянем при входе на третий шаг (тратит 1 запрос).
+  // Названия и текст на превью по методике — тянем при входе на шаг «Текст и название».
   const askIdeas = useCallback(async () => {
     setIdeasLoading(true);
     setError(null);
     try {
       const res = await apiThumbnailIdeas(projectId, spec);
       setIdeas(res);
-      // Пустые поля заполняем предложенным, введённое руками не трогаем.
       setSpec((s) => ({
         ...s,
         supportObject: s.supportObject || res.supportObject,
@@ -204,19 +244,34 @@ export default function ThumbnailWizard({
   }, [projectId, spec]);
 
   const goNext = () => {
-    const next = step + 1;
-    setStep(next);
-    if (next === 2 && !ideas && !ideasLoading) void askIdeas();
+    const next = steps[stepIndex + 1];
+    if (!next) return;
+    setStepId(next);
+    if (next === "text" && !ideas && !ideasLoading) void askIdeas();
   };
+  const goBack = () => {
+    const prev = steps[stepIndex - 1];
+    if (prev) setStepId(prev);
+    else onClose();
+  };
+
+  // Порядок референсов = Image 1..N в промпте: спикер первым, стиль следом.
+  const refIds = useMemo(() => [...speakerIds, ...styleIds], [speakerIds, styleIds]);
+  // Тот же промпт, что соберёт сервер: человек видит ровно то, что уйдёт в модель.
+  const previewPrompt = useMemo(() => {
+    const ordered: PromptRef[] = refIds
+      .map((id) => references.find((r) => r.id === id))
+      .filter((r): r is ThumbnailRow => Boolean(r))
+      .map((r) => ({ role: normalizeRefRole(r.role), label: r.label }));
+    return buildThumbnailPrompt(spec, ordered);
+  }, [spec, refIds, references]);
 
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      // Порядок референсов = Image 1..N в промпте: спикер первым, стиль следом.
-      const refIds = [...speakerIds, ...styleIds];
       const row = await apiGenerateThumbnail(projectId, spec, refIds);
-      dispatch(bumpRequestsUsed(THUMBNAIL_GENERATE_QUOTA_COST)); // остаток квоты в шапке не отстаёт
+      dispatch(bumpRequestsUsed(THUMBNAIL_GENERATE_QUOTA_COST));
       try {
         localStorage.removeItem(draftKey(projectId));
       } catch {
@@ -231,8 +286,14 @@ export default function ThumbnailWizard({
   };
 
   const speakers = references.filter((r) => r.role === "speaker" || r.role === "object");
-  const styles = references.filter((r) => r.role === "style");
-  const canNext = step === 0 ? Boolean(spec.videoSummary.trim() || spec.videoTitle.trim()) : true;
+  const styleRefs = references.filter((r) => r.role === "style");
+
+  const canNext =
+    stepId === "style"
+      ? Boolean(!style.subStyles?.length || spec.subStyle)
+      : stepId === "topic"
+        ? Boolean(spec.videoSummary.trim() || spec.instructions.trim())
+        : true;
 
   return (
     <Modal
@@ -260,17 +321,21 @@ export default function ThumbnailWizard({
       />
 
       <Stack gap="md">
-        {/* Прогресс: где я и сколько осталось */}
         <Box>
           <Group justify="space-between" mb={6}>
             <Text size="sm" fw={600}>
-              {STEPS[step]}
+              {STEP_TITLE[stepId]}
             </Text>
             <Text size="xs" c="dimmed">
-              шаг {step + 1} из {STEPS.length}
+              шаг {stepIndex + 1} из {steps.length}
             </Text>
           </Group>
-          <Progress value={((step + 1) / STEPS.length) * 100} color="brand" size="sm" radius="xl" />
+          <Progress
+            value={((stepIndex + 1) / steps.length) * 100}
+            color="brand"
+            size="sm"
+            radius="xl"
+          />
         </Box>
 
         {error && (
@@ -284,28 +349,24 @@ export default function ThumbnailWizard({
           </Alert>
         )}
 
-        {/* ── Шаг 1: о чём ролик ── */}
-        {step === 0 && (
+        {/* ── ЦА ── */}
+        {stepId === "audience" && (
           <Stack gap="sm">
-            <Textarea
-              label="О чём ролик"
-              description="Пары предложений хватит — остальное подскажу сам."
-              placeholder="Например: разбираю, почему ремонт под ключ выходит дороже сметы"
-              autosize
-              minRows={3}
-              maxRows={7}
-              maxLength={SPEC_LIMITS.videoSummary}
-              value={spec.videoSummary}
-              onChange={(e) => set("videoSummary", e.currentTarget.value)}
-              data-autofocus
-            />
-            <TextInput
-              label="Название ролика"
-              description="Необязательно. Нужно, чтобы текст на превью его не повторял."
-              maxLength={SPEC_LIMITS.videoTitle}
-              value={spec.videoTitle}
-              onChange={(e) => set("videoTitle", e.currentTarget.value)}
-            />
+            <Text size="sm" c="dimmed">
+              Превью делается под аудиторию, а не «чтобы красиво». От этого зависят кегль
+              текста, палитра и то, насколько сильную эмоцию можно давать.
+            </Text>
+            <Stack gap={6}>
+              {AUDIENCE_PRESETS.map((p) => (
+                <PickCard
+                  key={p.id}
+                  active={spec.audiencePreset === p.id}
+                  title={p.label}
+                  hint={p.hint}
+                  onClick={() => set("audiencePreset", p.id)}
+                />
+              ))}
+            </Stack>
             {(spec.niche || spec.audience) && (
               <Text size="xs" c="dimmed">
                 Из брифа проекта: {spec.niche || "ниша не указана"}
@@ -315,8 +376,54 @@ export default function ThumbnailWizard({
           </Stack>
         )}
 
-        {/* ── Шаг 2: кто в кадре ── */}
-        {step === 1 && (
+        {/* ── Стиль ── */}
+        {stepId === "style" && (
+          <Stack gap="sm">
+            <Stack gap={6}>
+              {THUMB_STYLES.map((s) => (
+                <PickCard
+                  key={s.id}
+                  active={spec.style === s.id}
+                  title={s.label}
+                  hint={s.hint}
+                  badge={
+                    s.speaker === "required"
+                      ? "нужно фото спикера"
+                      : s.speaker === "none"
+                        ? "без спикера"
+                        : undefined
+                  }
+                  onClick={() => {
+                    set("style", s.id);
+                    set("subStyle", "");
+                  }}
+                />
+              ))}
+            </Stack>
+
+            {style.subStyles?.length ? (
+              <Box>
+                <Text size="sm" fw={500} mb={6}>
+                  Какой именно спецпроект
+                </Text>
+                <Stack gap={6}>
+                  {style.subStyles.map((s) => (
+                    <PickCard
+                      key={s.id}
+                      active={spec.subStyle === s.id}
+                      title={s.label}
+                      hint={s.hint}
+                      onClick={() => set("subStyle", s.id)}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            ) : null}
+          </Stack>
+        )}
+
+        {/* ── Кто в кадре ── */}
+        {stepId === "frame" && (
           <Stack gap="sm">
             <Box>
               <Text size="sm" fw={500} mb={4}>
@@ -332,6 +439,11 @@ export default function ThumbnailWizard({
                   { value: "2", label: "Двое" },
                 ]}
               />
+              {speakerNeed === "required" && spec.peopleCount === 0 && (
+                <Text size="xs" c="red" mt={4}>
+                  Этот стиль строится вокруг спикера — без человека он рассыплется.
+                </Text>
+              )}
             </Box>
 
             {spec.peopleCount > 0 && (
@@ -371,102 +483,138 @@ export default function ThumbnailWizard({
                 )}
               </Box>
             )}
-          </Stack>
-        )}
-
-        {/* ── Шаг 3: как выглядит ── */}
-        {step === 2 && (
-          <Stack gap="md">
-            {ideasLoading && (
-              <Group gap="xs">
-                <Loader size="xs" color="brand" />
-                <Text size="sm" c="dimmed">
-                  Подбираю варианты текста по методике…
-                </Text>
-              </Group>
-            )}
-
-            {ideas && ideas.thumbTexts.length > 0 && (
-              <Box>
-                <Text size="sm" fw={500} mb={6}>
-                  Текст на превью — выбери или напиши свой
-                </Text>
-                <Stack gap={6}>
-                  {ideas.thumbTexts.map((t) => {
-                    const active = spec.thumbText === t.text;
-                    return (
-                      <UnstyledButton
-                        key={t.text}
-                        onClick={() => {
-                          set("thumbText", t.text);
-                          set("keyWord", t.keyWord);
-                        }}
-                      >
-                        <Paper
-                          radius="md"
-                          p="sm"
-                          className="an-surface"
-                          style={{
-                            outline: active
-                              ? "2px solid var(--mantine-color-brand-6)"
-                              : "2px solid transparent",
-                          }}
-                        >
-                          <Group justify="space-between" wrap="nowrap" gap="xs">
-                            <Text fw={600} size="sm">
-                              {t.text}
-                            </Text>
-                            {active && (
-                              <ThemeIcon size="sm" radius="xl" color="brand" variant="filled">
-                                <IconCheck size={12} />
-                              </ThemeIcon>
-                            )}
-                          </Group>
-                          <Text size="xs" c="dimmed" mt={2}>
-                            {t.why}
-                          </Text>
-                        </Paper>
-                      </UnstyledButton>
-                    );
-                  })}
-                </Stack>
-              </Box>
-            )}
-
-            <TextInput
-              label="Текст на превью"
-              description="Не больше пяти слов. Пусто — нарисую превью без текста."
-              maxLength={SPEC_LIMITS.thumbText}
-              value={spec.thumbText}
-              onChange={(e) => set("thumbText", e.currentTarget.value)}
-            />
 
             <Group grow align="flex-start">
-              <TextInput
-                label="Эмоция"
-                maxLength={SPEC_LIMITS.emotion}
-                value={spec.emotion}
-                onChange={(e) => set("emotion", e.currentTarget.value)}
-              />
+              {spec.peopleCount > 0 && (
+                <TextInput
+                  label="Эмоция"
+                  placeholder="например: тревога, азарт, спокойная уверенность"
+                  maxLength={SPEC_LIMITS.emotion}
+                  value={spec.emotion}
+                  onChange={(e) => set("emotion", e.currentTarget.value)}
+                />
+              )}
               <TextInput
                 label="Что ещё в кадре"
+                placeholder="один предмет, о котором ролик"
                 maxLength={SPEC_LIMITS.supportObject}
                 value={spec.supportObject}
                 onChange={(e) => set("supportObject", e.currentTarget.value)}
               />
             </Group>
+          </Stack>
+        )}
+
+        {/* ── О чём ролик ── */}
+        {stepId === "topic" && (
+          <Stack gap="sm">
+            <Textarea
+              label="О чём ролик"
+              description="Пары предложений хватит — остальное подскажу сам."
+              placeholder="Например: разбираю, почему ремонт под ключ выходит дороже сметы"
+              autosize
+              minRows={3}
+              maxRows={7}
+              maxLength={SPEC_LIMITS.videoSummary}
+              value={spec.videoSummary}
+              onChange={(e) => set("videoSummary", e.currentTarget.value)}
+              data-autofocus
+            />
+            <Textarea
+              label="Особые пожелания к кадру"
+              description="Необязательно. Если хочешь конкретную сцену — опиши своими словами."
+              autosize
+              minRows={2}
+              maxRows={5}
+              maxLength={SPEC_LIMITS.instructions}
+              value={spec.instructions}
+              onChange={(e) => set("instructions", e.currentTarget.value)}
+            />
+          </Stack>
+        )}
+
+        {/* ── Текст и название ── */}
+        {stepId === "text" && (
+          <Stack gap="md">
+            {ideasLoading && (
+              <Group gap="xs">
+                <Loader size="xs" color="brand" />
+                <Text size="sm" c="dimmed">
+                  Подбираю названия и текст на превью по методике…
+                </Text>
+              </Group>
+            )}
+
+            {ideas && ideas.titles.length > 0 && (
+              <Box>
+                <Text size="sm" fw={500} mb={6}>
+                  Название ролика — выбери или напиши своё
+                </Text>
+                <Stack gap={6}>
+                  {ideas.titles.map((t) => (
+                    <PickCard
+                      key={t}
+                      active={spec.videoTitle === t}
+                      title={t}
+                      onClick={() => set("videoTitle", t)}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            <TextInput
+              label="Название ролика"
+              description="На превью его НЕ рисуем — нужно, чтобы текст на превью его не повторял."
+              maxLength={SPEC_LIMITS.videoTitle}
+              value={spec.videoTitle}
+              onChange={(e) => set("videoTitle", e.currentTarget.value)}
+            />
+
+            {ideas && ideas.thumbTexts.length > 0 && (
+              <Box>
+                <Text size="sm" fw={500} mb={6}>
+                  Текст на превью
+                </Text>
+                <Stack gap={6}>
+                  {ideas.thumbTexts.map((t) => (
+                    <PickCard
+                      key={t.text}
+                      active={spec.thumbText === t.text}
+                      title={t.text}
+                      hint={t.why}
+                      onClick={() => {
+                        set("thumbText", t.text);
+                        set("keyWord", t.keyWord);
+                      }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            <Group grow align="flex-start">
+              <TextInput
+                label="Текст на превью"
+                description="Не больше пяти слов. Пусто — нарисую без текста."
+                maxLength={SPEC_LIMITS.thumbText}
+                value={spec.thumbText}
+                onChange={(e) => set("thumbText", e.currentTarget.value)}
+              />
+              <TextInput
+                label="Главное слово"
+                description="Его поставлю капсом и крупнее."
+                maxLength={SPEC_LIMITS.keyWord}
+                value={spec.keyWord}
+                onChange={(e) => set("keyWord", e.currentTarget.value)}
+              />
+            </Group>
 
             <Box>
               <Group justify="space-between" mb={6} wrap="nowrap">
-                <Box>
-                  <Text size="sm" fw={500}>
-                    Стиль превью
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Подложи картинку, на которую хочешь быть похожим, — так все превью канала
-                    будут в одном виде.
-                  </Text>
-                </Box>
+                <Text size="sm" fw={500}>
+                  Свой референс стиля
+                </Text>
                 <Button
                   size="xs"
                   variant="light"
@@ -478,9 +626,9 @@ export default function ThumbnailWizard({
                   Добавить
                 </Button>
               </Group>
-              {styles.length > 0 && (
+              {styleRefs.length > 0 && (
                 <RefPicker
-                  rows={styles}
+                  rows={styleRefs}
                   selected={styleIds}
                   onToggle={(id) =>
                     setStyleIds((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
@@ -488,37 +636,64 @@ export default function ThumbnailWizard({
                 />
               )}
             </Box>
+          </Stack>
+        )}
 
-            <Box>
-              <Text size="sm" fw={500} mb={6}>
-                Под кого превью
-              </Text>
-              <SegmentedControl
-                color="brand"
-                fullWidth
-                size="xs"
-                value={spec.audiencePreset}
-                onChange={(v) => set("audiencePreset", v)}
-                data={AUDIENCE_PRESETS.map((p) => ({ value: p.id, label: p.label }))}
-              />
-              <Text size="xs" c="dimmed" mt={4}>
-                {AUDIENCE_PRESETS.find((p) => p.id === spec.audiencePreset)?.hint ?? ""}
-              </Text>
-            </Box>
+        {/* ── Сводка ── */}
+        {stepId === "review" && (
+          <Stack gap="sm">
+            <Paper radius="md" p="sm" className="an-surface">
+              <Stack gap={6}>
+                <SummaryRow label="Аудитория" value={audienceLabel(spec.audiencePreset)} />
+                <SummaryRow
+                  label="Стиль"
+                  value={
+                    style.label +
+                    (spec.subStyle
+                      ? ` · ${style.subStyles?.find((s) => s.id === spec.subStyle)?.label ?? ""}`
+                      : "")
+                  }
+                />
+                <SummaryRow
+                  label="В кадре"
+                  value={
+                    spec.peopleCount === 0
+                      ? "без людей"
+                      : `${spec.peopleCount === 2 ? "двое" : "один"}${
+                          speakerIds.length ? `, фото спикера: ${speakerIds.length}` : ", без фото"
+                        }`
+                  }
+                />
+                <SummaryRow label="Эмоция" value={spec.emotion} />
+                <SummaryRow label="Что ещё в кадре" value={spec.supportObject} />
+                <SummaryRow label="Текст на превью" value={spec.thumbText || "без текста"} />
+                <SummaryRow label="Главное слово" value={spec.keyWord} />
+                <SummaryRow label="Название ролика" value={spec.videoTitle} />
+                <SummaryRow label="О чём ролик" value={spec.videoSummary} />
+              </Stack>
+            </Paper>
+
+            <Text size="xs" c="dimmed">
+              Что-то не так — вернись назад и поправь. Ниже — точный промпт, который уйдёт в
+              модель (он на английском: картиночные модели так точнее следуют инструкциям).
+            </Text>
+
+            <Spoiler maxHeight={0} showLabel="Показать промпт" hideLabel="Скрыть промпт">
+              <ScrollArea.Autosize mah={280} type="auto" offsetScrollbars>
+                <Code block style={{ fontSize: 11, whiteSpace: "pre-wrap" }}>
+                  {previewPrompt}
+                </Code>
+              </ScrollArea.Autosize>
+            </Spoiler>
           </Stack>
         )}
 
         {/* Навигация */}
         <Group justify="space-between" mt="xs">
-          <Button
-            variant="subtle"
-            color="gray"
-            onClick={() => (step === 0 ? onClose() : setStep(step - 1))}
-            disabled={busy}
-          >
-            {step === 0 ? "Отмена" : "Назад"}
+          <Button variant="subtle" color="gray" onClick={goBack} disabled={busy}>
+            {stepIndex === 0 ? "Отмена" : "Назад"}
           </Button>
-          {step < STEPS.length - 1 ? (
+          {stepId !== "review" ? (
             <Button color="brand" onClick={goNext} disabled={!canNext || busy}>
               Дальше
             </Button>
@@ -533,13 +708,85 @@ export default function ThumbnailWizard({
             </Button>
           )}
         </Group>
-        {step === STEPS.length - 1 && (
+        {stepId === "review" && (
           <Text size="xs" c="dimmed" ta="center">
-            Одна картинка — 1 запрос из тарифа. Рисуется до минуты.
+            Одна картинка — {THUMBNAIL_GENERATE_QUOTA_COST} запросов из тарифа. Рисуется до
+            минуты.
           </Text>
         )}
       </Stack>
     </Modal>
+  );
+}
+
+function audienceLabel(id: string): string {
+  return AUDIENCE_PRESETS.find((p) => p.id === id)?.label ?? "";
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  if (!value?.trim()) return null;
+  return (
+    <Group gap="xs" wrap="nowrap" align="flex-start">
+      <Text size="xs" c="dimmed" style={{ minWidth: 130, flexShrink: 0 }}>
+        {label}
+      </Text>
+      <Text size="sm" style={{ minWidth: 0 }}>
+        {value}
+      </Text>
+    </Group>
+  );
+}
+
+// Карточка выбора: ЦА, стиль, вариант названия. Клик — выбрать.
+function PickCard({
+  active,
+  title,
+  hint,
+  badge,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  hint?: string;
+  badge?: string;
+  onClick: () => void;
+}) {
+  return (
+    <UnstyledButton onClick={onClick} aria-pressed={active}>
+      <Paper
+        radius="md"
+        p="sm"
+        className="an-surface"
+        style={{
+          outline: active ? "2px solid var(--mantine-color-brand-6)" : "2px solid transparent",
+        }}
+      >
+        <Group justify="space-between" wrap="nowrap" gap="xs" align="flex-start">
+          <Box style={{ minWidth: 0 }}>
+            <Group gap={6} wrap="nowrap">
+              <Text fw={600} size="sm">
+                {title}
+              </Text>
+              {badge && (
+                <Badge size="xs" variant="light" color="gray">
+                  {badge}
+                </Badge>
+              )}
+            </Group>
+            {hint && (
+              <Text size="xs" c="dimmed" mt={2}>
+                {hint}
+              </Text>
+            )}
+          </Box>
+          {active && (
+            <ThemeIcon size="sm" radius="xl" color="brand" variant="filled">
+              <IconCheck size={12} />
+            </ThemeIcon>
+          )}
+        </Group>
+      </Paper>
+    </UnstyledButton>
   );
 }
 

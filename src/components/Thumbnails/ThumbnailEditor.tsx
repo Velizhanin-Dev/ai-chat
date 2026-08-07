@@ -164,6 +164,9 @@ export default function ThumbnailEditor({
         <Group align="flex-start" gap="lg" wrap="wrap">
           {/* Картинка + версии */}
           <Box style={{ flex: "1 1 340px", minWidth: 0 }}>
+            {/* Результат показываем карточкой ленты YouTube: превью живёт не само по
+                себе, а рядом с названием — только так видно, дублируют ли они друг
+                друга и читается ли текст в реальном размере. */}
             <Box
               style={{
                 aspectRatio: "16 / 9",
@@ -179,6 +182,23 @@ export default function ThumbnailEditor({
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               />
             </Box>
+            <Text
+              fw={600}
+              mt={10}
+              style={{
+                fontSize: 15,
+                lineHeight: 1.35,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {active.spec?.videoTitle?.trim() || "Название ролика пока не задано"}
+            </Text>
+            <Text size="xs" c="dimmed" mt={2}>
+              Так это увидит зритель в ленте
+            </Text>
 
             <Group gap="xs" mt="sm">
               <Button

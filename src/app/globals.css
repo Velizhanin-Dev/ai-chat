@@ -290,6 +290,48 @@ section[id] {
     opacity: 0.6;
   }
 }
+
+/* «Борода» под ответом ассистента: дата слева, «Копировать» справа.
+   Отрицательные margin гасят padding баббла (Paper p="sm") — полоса идёт от края
+   до края, как просили «без отступов». Фона нет, только линия сверху, поэтому
+   скруглённые углы баббла не нужно ничем перекрывать. */
+.msg-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px calc(var(--mantine-spacing-sm) * -1) calc(var(--mantine-spacing-sm) * -1);
+  padding: 5px 10px;
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+.msg-foot-time {
+  font-size: 0.6875rem;
+  color: var(--mantine-color-dimmed);
+  white-space: nowrap;
+}
+.msg-foot-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.6875rem;
+  line-height: 1;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.msg-foot-copy:hover,
+.msg-foot-copy:focus-visible {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-brand-6, #ec582e);
+}
 /* Мигающая каретка, пока ответ «печатается» (только стриминговый баббл —
    класс md-streaming). Сидит инлайн в конце последнего блока через ::after. */
 .md-streaming > :last-child::after {

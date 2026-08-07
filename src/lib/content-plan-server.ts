@@ -1,11 +1,18 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { getStrategy } from "./llm";
-import { buildSystem } from "./llm/system";
+import { buildSystem, buildChannelBlock } from "./llm/system";
+import { getChannelSnapshotCached } from "./youtube";
 import { getSettings } from "./settings";
 import { routeQuery } from "./router";
 import type { RouteDecision } from "./router";
-import { sanitizeBrief, isBriefComplete, type Brief } from "./brief";
+import {
+  sanitizeBrief,
+  isBriefComplete,
+  briefSearchTerms,
+  withBriefTerms,
+  type Brief,
+} from "./brief";
 import {
   MAX_VIDEO_COUNT,
   type Cta,
@@ -138,6 +145,21 @@ const JSON_FORMAT_BLOCK = `# ФОРМАТ ЭТОЙ ЗАДАЧИ (строго)
 }
 Баланс за месяц: БОЛЬШИНСТВО роликов reach (растим канал), часть expert. Не выдумывай реальные новости/цифры/имена/ссылки. 10 вопросов — обязательно.`;
 
+// Снимок канала проекта для промпта генерации. Best-effort: нет интеграции, протух
+// токен, молчит YouTube — возвращаем null и генерируем без него (генерацию не роняем).
+async function resolveChannelBlock(projectId: string): Promise<string | null> {
+  try {
+    const integ = await prisma.youTubeIntegration.findUnique({
+      where: { conversationId: projectId },
+    });
+    if (!integ) return null;
+    const snap = await getChannelSnapshotCached(projectId, integ);
+    return snap ? buildChannelBlock(snap) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Сгенерировать сетку роликов. Возвращает нормализованные ролики (throws на сбое
 // LLM). Гейт/квота/запись — в роуте (/api/content-plan/generate).
 export async function generatePlanVideos(opts: {
@@ -151,9 +173,15 @@ export async function generatePlanVideos(opts: {
   const settings = await getSettings();
   const provider = settings.provider;
 
-  // Роутим на content_plan-хинт, чтобы подключить эталон + слои ВИСП/книга.
-  const routeHint =
-    "собери контент-план сетку роликов на месяц по методике: названия превью формат боль ца 10 вопросов лестница ханта cta висп";
+  // ⚠️ Хинт роутера СОБИРАЕТСЯ ИЗ БРИФА, а не берётся константой.
+  // Раньше тут была захардкоженная строка, и она же уходила в BM25-ретрив. Ретрив —
+  // чистая функция от запроса, поэтому психолог, строитель и автосервис получали из
+  // базы ПОБАЙТОВО ОДИНАКОВЫЕ куски: из 15 нишевых шпаргалок раздела «Нишевые боли и
+  // рабочие темы» стабильно доезжали одни и те же три (авто, финансы, недвижимость).
+  // Отсюда и «идеи средние по интернету» — фактура у всех была общая.
+  const planTerms =
+    "контент-план сетка роликов названия превью формат боль ца 10 вопросов лестница ханта cta висп";
+  const routeHint = [briefSearchTerms(brief), planTerms].filter(Boolean).join(" ");
   const route: RouteDecision = await routeQuery(
     [{ role: "user", content: routeHint }],
     provider,
@@ -166,10 +194,26 @@ export async function generatePlanVideos(opts: {
   route.book = true;
   route.youtube = true;
 
-  const systemBlocks = buildSystem(route, route.searchQuery || routeHint, "", brief, "");
+  // Снимок канала — фактура, которой нет ни у кого, кроме нас: что у клиента реально
+  // залетало и что провалилось. Best-effort: канал не подключён или YouTube молчит —
+  // генерируем как раньше.
+  const channelBlock = await resolveChannelBlock(projectId);
+
+  const systemBlocks = buildSystem(
+    route,
+    withBriefTerms(route.searchQuery || routeHint, brief),
+    "",
+    brief,
+    "",
+    channelBlock
+  );
   systemBlocks.push({ type: "text", text: JSON_FORMAT_BLOCK });
 
-  const genPrompt = `Собери контент-план на «${periodLabel}»: ровно ${count} роликов (лонгов) по моей методике. Ниша/аудитория/продукт — из брифа проекта (если чего-то нет — работай от ниши). Верни строго JSON {"videos":[...]} по схеме из system.`;
+  const genPrompt = `Собери контент-план на «${periodLabel}»: ровно ${count} роликов (лонгов) по моей методике. Ниша/аудитория/продукт — из брифа проекта (если чего-то нет — работай от ниши).${
+    channelBlock
+      ? " У тебя выше есть данные его канала — оттолкнись от формы того, что там уже ЗАЛЕТЕЛО, и не повторяй темы, которые уже выходили."
+      : ""
+  } Верни строго JSON {"videos":[...]} по схеме из system.`;
 
   const strategy = getStrategy(provider);
   let full = "";
@@ -234,7 +278,7 @@ export async function generateBlock(opts: {
   route.formats = false;
   route.youtube = block === "shorts"; // слой шортсов пригодится только тут
 
-  const systemBlocks = buildSystem(route, route.searchQuery || routeHint, "", brief, "");
+  const systemBlocks = buildSystem(route, withBriefTerms(route.searchQuery || routeHint, brief), "", brief, "");
   systemBlocks.push({
     type: "text",
     text: `# ФОРМАТ ЭТОЙ ЗАДАЧИ (строго)\nВерни ТОЛЬКО валидный JSON без markdown-обёртки и текста вокруг. Значения — по-русски, в моём стиле. Ниша/аудитория — из брифа проекта.`,
@@ -417,7 +461,7 @@ export async function regenerateVideoPart(opts: {
   route.tgClosed = true;
   route.youtube = false;
 
-  const systemBlocks = buildSystem(route, route.searchQuery || routeHint, "", brief, "");
+  const systemBlocks = buildSystem(route, withBriefTerms(route.searchQuery || routeHint, brief), "", brief, "");
   systemBlocks.push({
     type: "text",
     text: `# ФОРМАТ ЭТОЙ ЗАДАЧИ (строго)\nЭто не чат, а переделка части контент-плана. Верни ТОЛЬКО валидный JSON без markdown и текста вокруг.`,

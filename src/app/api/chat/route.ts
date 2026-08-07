@@ -4,7 +4,7 @@ import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
-import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
+import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
@@ -233,7 +233,10 @@ export async function POST(request: NextRequest) {
         ? buildFullSystem(route.category, aboutYou, brief, userName, channel.channelBlock, channel.nudge)
         : buildSystem(
             route,
-            route.searchQuery || lastUser,
+            // Слова ниши клиента подмешиваем в запрос к базе: без них BM25 ранжирует
+            // по терминам методики от роутера и тащит теорию вместо нишевой фактуры
+            // (см. withBriefTerms в brief.ts). Токенов не стоит — меняется ранжирование.
+            withBriefTerms(route.searchQuery || lastUser, brief),
             aboutYou,
             brief,
             userName,

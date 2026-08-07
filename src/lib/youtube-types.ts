@@ -41,6 +41,10 @@ export interface YouTubeVideo {
   viewCount: number;
   likeCount: number;
   commentCount: number;
+  // Теги ролика. Уже приходят в part=snippet (то есть оплачены квотой), но раньше
+  // маппер их выбрасывал. Это живая лексика ниши словами самого автора — то, чем
+  // модель отличает конкретного клиента от «вообще эксперта в этой сфере».
+  tags?: string[];
   // Дизлайки: публичного счётчика у YouTube с 2021 нет, но Analytics по своему
   // каналу их отдаёт. undefined = аналитика недоступна (в ER не учитываем).
   dislikeCount?: number;
@@ -220,6 +224,13 @@ export interface ChannelSnapshotPeriod {
 }
 export interface ChannelSnapshot {
   title: string;
+  // Описание канала словами самого автора (как он себя позиционирует). Уже приходит
+  // из fetchChannelInfo, но в снимок раньше не попадало.
+  about?: string;
+  // Лексика ниши: теги последних роликов, дедуплицированные. Это те слова, которыми
+  // о теме говорит сам клиент и его зрители, — по ним модель отличает конкретного
+  // эксперта от «вообще специалиста в этой сфере».
+  nicheWords?: string[];
   subscribers: number;
   totalViews: number;
   videoCount: number;
