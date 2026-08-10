@@ -26,15 +26,16 @@ export async function POST(req: Request) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return apiError("Аккаунт с такой почтой уже зарегистрирован", 409);
 
-  // Выдаём пробный тариф ВСЕГО на 1 час (срок). Число запросов в этот час —
-  // из Plan.limits.requests тарифа "start" (правится в админке). После окончания
-  // пробного — только переход на платный тариф, заново триал не выдаётся.
+  // Пробный тариф на срок из настроек (AppSettings.trialHours). Число запросов в
+  // этот срок — из Plan.limits.requests тарифа "start" (редактор тарифов). Заново
+  // сам по себе триал не выдаётся — только сбросом из админки.
+  const { trialHours } = await getSettings();
   const user = await prisma.user.create({
     data: {
       name,
       email,
       passwordHash: await hashPassword(password),
-      planExpiresAt: trialExpiresAt(),
+      planExpiresAt: trialExpiresAt(trialHours),
     },
   });
 

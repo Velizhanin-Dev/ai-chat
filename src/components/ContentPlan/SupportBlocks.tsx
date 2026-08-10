@@ -46,9 +46,7 @@ export default function SupportBlocks({
       ? Boolean(plan.audience?.length)
       : k === "hunt"
         ? Boolean(plan.huntLadder?.length)
-        : k === "funnel"
-          ? Boolean(plan.funnel)
-          : shorts.length > 0;
+        : shorts.length > 0;
 
   return (
     <Accordion
@@ -171,39 +169,6 @@ export default function SupportBlocks({
                       </Box>
                     ))}
                   </Stack>
-                ) : null}
-
-                {key === "funnel" && plan.funnel ? (
-                  <Box className="cp-block">
-                    <Stack gap="sm">
-                      {plan.funnel.parts.map((p, i) => {
-                        const fm = FORMAT_META[p.format];
-                        return (
-                          <Box key={i}>
-                            <Group justify="space-between" gap="xs" align="baseline">
-                              <Text fw={600} size="sm">
-                                {fm.label}
-                              </Text>
-                              <Text size="sm" c="dimmed">
-                                {Math.round(p.share * 100)}%
-                              </Text>
-                            </Group>
-                            <Progress value={p.share * 100} color={fm.color} size="sm" radius="xl" />
-                            {p.goal && (
-                              <Text size="xs" c="dimmed" mt={2}>
-                                {p.goal}
-                              </Text>
-                            )}
-                          </Box>
-                        );
-                      })}
-                      {plan.funnel.note && (
-                        <Text size="sm" c="dimmed">
-                          {plan.funnel.note}
-                        </Text>
-                      )}
-                    </Stack>
-                  </Box>
                 ) : null}
 
                 {key === "shorts" && shorts.length > 0 ? (

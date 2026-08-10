@@ -11,12 +11,14 @@ export const CONTENT_PLAN_EDIT_QUOTA_COST = 1; // переделка части 
 export const CONTENT_PLAN_BLOCK_QUOTA_COST = 1;
 export const CONTENT_PLAN_SHORTS_QUOTA_COST = 5;
 
-// Сколько шортсов в сетке по умолчанию.
-export const DEFAULT_SHORTS_COUNT = 8;
+// Сколько шортсов в сетке по умолчанию. 16 — решение владельца: шортсов на канал
+// нужно вдвое больше, чем лонгов (верх воронки и холодный охват).
+export const DEFAULT_SHORTS_COUNT = 16;
 
-// Сколько роликов в месячной сетке. ФИКСИРОВАНО: 7 (пользователь не выбирает —
-// решение заказчика). Методика допускает 8–12, но продукт даёт ровно 7.
-export const PLAN_VIDEO_COUNT = 7;
+// Сколько ЛОНГОВ в месячной сетке. ФИКСИРОВАНО: 8 (пользователь не выбирает —
+// решение владельца). Методика допускает 8–12, продукт даёт ровно 8; шортсов к ним
+// вдвое больше — DEFAULT_SHORTS_COUNT выше.
+export const PLAN_VIDEO_COUNT = 8;
 export const MAX_VIDEO_COUNT = 16; // потолок нормализации ответа модели
 
 // Ступени лестницы Ханта — подсказка (?) рядом с полем в карточке ролика.
@@ -136,7 +138,11 @@ export interface Funnel {
 }
 
 // Какие опорные блоки умеем генерировать.
-export const BLOCKS = ["audience", "hunt", "funnel", "shorts"] as const;
+// ⚠️ «Воронка» убрана из списка (решение владельца): сколько снимать охватного /
+// экспертного / продающего — это и есть сам контент-план, блок дублировал его.
+// Поле funnel в модели плана и тип Funnel оставлены — у старых планов блок уже
+// собран, ломать сохранённые данные незачем; просто больше не предлагаем собрать.
+export const BLOCKS = ["audience", "hunt", "shorts"] as const;
 export type BlockKey = (typeof BLOCKS)[number];
 export const BLOCK_META: Record<BlockKey, { label: string; hint: string; cost: number }> = {
   audience: {
@@ -147,11 +153,6 @@ export const BLOCK_META: Record<BlockKey, { label: string; hint: string; cost: n
   hunt: {
     label: "Лестница Ханта",
     hint: "5 ступеней осознанности под твою нишу с темами-зацепками",
-    cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
-  },
-  funnel: {
-    label: "Воронка",
-    hint: "Сколько охватного / экспертного / продающего снимать",
     cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
   },
   shorts: {

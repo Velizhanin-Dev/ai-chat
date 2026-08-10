@@ -374,9 +374,13 @@ function Column({
 }) {
   const m = STATUS_META[status];
   const [over, setOver] = useState(false);
+  // Идёт перетаскивание — подсвечиваем ВСЕ колонки как возможные цели, а не только
+  // ту, что под курсором. Иначе человек не понимает, что карточку вообще можно
+  // куда-то тащить: подсказка появлялась ровно там, где он уже и так навёл.
+  const dragging = Boolean(dragId);
   return (
     <Box
-      className={`cp-col${over ? " cp-col-over" : ""}`}
+      className={`cp-col${dragging ? " cp-col-target" : ""}${over ? " cp-col-over" : ""}`}
       onDragOver={(e) => {
         if (dragId) {
           e.preventDefault();
@@ -415,9 +419,11 @@ function Column({
         )}
       </Box>
       {videos.length === 0 ? (
-        <Text size="xs" c="dimmed" px={4} py="sm">
-          {over ? "Перенести сюда" : "Пусто"}
-        </Text>
+        <Box className="cp-col-empty">
+          <Text size="xs" c="dimmed">
+            {over ? "Отпусти — переедет сюда" : dragging ? "Можно бросить сюда" : "Пусто"}
+          </Text>
+        </Box>
       ) : (
         <Box>
           {videos.map((v) => (

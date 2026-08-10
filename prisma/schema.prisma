@@ -52,6 +52,7 @@ model Conversation {
   youtube   YouTubeIntegration?
   // Референсы и сгенерированные превью проекта (см. модель Thumbnail ниже).
   thumbnails Thumbnail[]
+  jobs       Job[]
   // История разборов канала по параметрам продвижения (см. ChannelAnalysis ниже).
   analyses  ChannelAnalysis[]
   // Дорожная карта канала (движок шагов, см. ChannelRoadmap ниже).
@@ -275,6 +276,7 @@ model User {
   conversations Conversation[]
   stats         Stat[]
   thumbnails    Thumbnail[]
+  jobs          Job[]
   analyses      ChannelAnalysis[]
   // Черновое подключение YouTube на время прохождения брифа (см. модель ниже).
   youtubePending YouTubePendingConnection?
@@ -506,4 +508,54 @@ model VerificationToken {
   createdAt DateTime @default(now())
 
   @@index([userId, type])
+}
+
+// Фоновая задача (очередь на Postgres, без брокера). Зачем: генерация превью,
+// контент-плана и разборы идут десятки секунд, а раньше жили внутри HTTP-запроса —
+// пользователь обновил страницу или ушёл, и результат терялся вместе с потраченной
+// квотой. Теперь запрос ставит задачу и сразу отдаёт id; воркер выполняет её вне
+// запроса, результат ложится сюда, клиент забирает его в любой момент и с любого
+// устройства.
+//
+// Очередь на БД, а НЕ на брокере (RabbitMQ и т.п.): результат всё равно надо
+// хранить, у нас один инстанс приложения, а `FOR UPDATE SKIP LOCKED` держит
+// тысячи задач в минуту — на порядки выше нашей нагрузки. Если инстансов станет
+// несколько и упрёмся — меняется только claimJob(), API и клиент не трогаются.
+//
+// kind — что делать (см. JOB_KINDS в src/lib/jobs.ts), payload — вход обработчика,
+// result — то, что раньше уходило в JSON-ответ роута.
+model Job {
+  id     String @id @default(cuid())
+  kind   String
+  // queued | running | done | error | canceled
+  status String @default("queued")
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Проект, к которому относится задача (у аккаунтных задач — null). По нему
+  // страница проекта находит «свои» незавершённые задачи после перезагрузки.
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  payload Json
+  result  Json?
+  error   String?
+
+  // Сколько раз брали в работу. Задача, у которой воркер умер посреди работы,
+  // переедет обратно в queued по таймауту lockedAt — но не бесконечно.
+  attempts Int     @default(0)
+  // Кто и когда взял задачу. Пара нужна для «переехавших» задач: воркер мог
+  // умереть, не сняв блокировку.
+  lockedAt DateTime?
+  lockedBy String?
+
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  // Разбор очереди: свежие queued вперёд.
+  @@index([status, createdAt])
+  // Экран проекта: «есть ли у меня незаконченное».
+  @@index([conversationId, status])
+  @@index([userId, createdAt])
 }

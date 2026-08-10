@@ -357,6 +357,48 @@ export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 export const THUMBNAIL_GENERATE_QUOTA_COST = 10;
 export const THUMBNAIL_SPEC_QUOTA_COST = 1;
 
+// ── Пунктуация: у картинки и у названия РАЗНЫЕ правила ──────────────────────
+//
+// ⚠️ НЕ ПУТАТЬ (на этом уже ошибались):
+//  • ТЕКСТ НА КАРТИНКЕ — знаков препинания нет ВООБЩЕ. Ни точки, ни запятой, ни
+//    «?», ни «!», ни «|», ни «/». На мелком превью в ленте любой знак читается
+//    как грязь и отъедает кегль у главного слова.
+//  • НАЗВАНИЕ РОЛИКА — знаки нужны и разрешены: «.», «?», «!», «|», «/». Ими и
+//    режется мысль. Запрещены только запятые, двоеточия, точки с запятой,
+//    тире-разделители, кавычки, скобки и многоточия.
+//
+// Чистим ЗДЕСЬ, в санитайзере, а не просьбой в промпте: image-модель рисует ровно
+// те символы, что мы дали между [TEXT]…[/TEXT], и «не рисуй запятую» она нарушит
+// именно тогда, когда запятая есть во входе. Чиним вход.
+//
+// ⚠️ Дефис в классы НЕ ставим: он нужен внутри слов («из-за», «онлайн-курс»).
+// Тире-разделитель убираем отдельным правилом — только когда оно окружено
+// пробелами. Иначе «из-за» превращается в «из за».
+const DASH_SEPARATOR = /\s+[—–-]\s+/g;
+
+// Текст на картинке: под нож всё, включая «?», «!», «|» и «/».
+const THUMB_TEXT_PUNCT = /[.,;:!?|/«»"'“”„()\[\]{}…]/g;
+
+export function stripThumbTextPunctuation(s: string): string {
+  return s
+    .replace(DASH_SEPARATOR, " ")
+    .replace(THUMB_TEXT_PUNCT, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Название ролика: «.», «?», «!», «|», «/» остаются — они и делят мысль.
+const TITLE_PUNCT = /[,;:«»"'“”„()\[\]{}…]/g;
+
+export function stripTitlePunctuation(s: string): string {
+  return s
+    .replace(DASH_SEPARATOR, " ")
+    .replace(TITLE_PUNCT, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([|/?!.])/g, "$1")
+    .trim();
+}
+
 export function sanitizeSpec(input: unknown): ThumbnailSpec {
   const o = (input ?? {}) as Record<string, unknown>;
   const str = (key: keyof ThumbnailSpec): string => {
@@ -367,10 +409,11 @@ export function sanitizeSpec(input: unknown): ThumbnailSpec {
   const styleId = thumbStyleById(str("style")).id;
   return {
     videoSummary: str("videoSummary"),
-    videoTitle: str("videoTitle"),
+    videoTitle: stripTitlePunctuation(str("videoTitle")),
     instructions: str("instructions"),
-    thumbText: str("thumbText"),
-    keyWord: str("keyWord"),
+    // Пунктуацию срезаем на входе — см. stripThumbTextPunctuation выше.
+    thumbText: stripThumbTextPunctuation(str("thumbText")),
+    keyWord: stripThumbTextPunctuation(str("keyWord")),
     supportObject: str("supportObject"),
     emotion: str("emotion"),
     palette: str("palette"),
@@ -609,10 +652,17 @@ yellow-versus-purple — viewers do not read it.`
 - No glossy AI look: no plastic skin, no symmetrical CGI face, no lens flares, no neon rim light on
   everything, no floating particles or fake bokeh confetti. It must look like a real photograph.
 - No gibberish, mangled or half-formed letters anywhere. No Latin text at all.
+- NO PUNCTUATION AT ALL in the rendered text: no full stops, commas, semicolons, colons, dashes,
+  ellipses, quotation marks, brackets, and no "?", "!", "|" or "/" either. Words only. Any mark is
+  visual noise at thumbnail size and steals weight from the key word.
 - No YouTube interface, play button, duration badge, progress bar, border or frame.
-- No thin, small or low-contrast type. No script or decorative fonts.${
+- No thin, small or low-contrast type. No script or decorative fonts.
+- The caption must sit STRICTLY HORIZONTAL on a level baseline. Do not rotate, tilt, skew, arc,
+  curve, or step the text; no rising or falling baseline, no perspective, no wavy or diagonal
+  layout. Every line is flat and parallel to the bottom edge of the frame. Tilted text reads as
+  amateur and hurts legibility at thumbnail size.${
       spec.videoTitle
-        ? `\n- Do not draw the video title anywhere. It is given only so the thumbnail does not repeat it, delimited by markers: [TITLE]${spec.videoTitle}[/TITLE]. The title carries the rational/SEO part, the thumbnail carries emotion.`
+        ? `\n- HARD RULE: the thumbnail text must NEVER duplicate the video title. Do not draw the title anywhere, and do not paraphrase it. It is given only so the thumbnail avoids repeating it, delimited by markers: [TITLE]${spec.videoTitle}[/TITLE]. Title and thumbnail must say DIFFERENT things: the title carries the rational/SEO part, the thumbnail carries the emotional hook. A viewer must get two pieces of information, not the same one twice.`
         : ""
     }`
   );

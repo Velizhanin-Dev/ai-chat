@@ -38,6 +38,8 @@ import {
 import { apiGenerateThumbnail } from "@/lib/thumbnails-client";
 import { useAppDispatch } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
+import YouTubeCard from "./YouTubeCard";
+import { apiYouTubeStatus } from "@/lib/youtube-client";
 
 // Редактор одного превью: картинка + правки + перегенерация. Каждая перегенерация
 // — ВАРИАЦИЯ (parentId), поэтому старые версии не теряются и переключаются лентой
@@ -72,6 +74,25 @@ export default function ThumbnailEditor({
   onCreated,
   onDelete,
 }: Props) {
+  // Канал для карточки ленты: если YouTube подключён — показываем реальные имя и
+  // аватар, иначе нейтральную заглушку. Ошибку глушим: предпросмотр важнее.
+  const [channel, setChannel] = useState<{ title: string; thumbnail: string | null } | null>(null);
+  useEffect(() => {
+    if (!opened) return;
+    let cancelled = false;
+    void (async () => {
+      const res = await apiYouTubeStatus(projectId);
+      if (cancelled || !res.ok || !res.data.channel) return;
+      setChannel({
+        title: res.data.channel.title,
+        thumbnail: res.data.channel.thumbnail ?? null,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [opened, projectId]);
+
   const isMobile = useMediaQuery("(max-width: 48em)");
   const dispatch = useAppDispatch();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -164,39 +185,18 @@ export default function ThumbnailEditor({
         <Group align="flex-start" gap="lg" wrap="wrap">
           {/* Картинка + версии */}
           <Box style={{ flex: "1 1 340px", minWidth: 0 }}>
-            {/* Результат показываем карточкой ленты YouTube: превью живёт не само по
-                себе, а рядом с названием — только так видно, дублируют ли они друг
-                друга и читается ли текст в реальном размере. */}
-            <Box
-              style={{
-                aspectRatio: "16 / 9",
-                borderRadius: 12,
-                overflow: "hidden",
-                background: "var(--mantine-color-dark-4)",
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={active.url}
-                alt={active.label || "превью"}
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-              />
-            </Box>
-            <Text
-              fw={600}
-              mt={10}
-              style={{
-                fontSize: 15,
-                lineHeight: 1.35,
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
-            >
-              {active.spec?.videoTitle?.trim() || "Название ролика пока не задано"}
-            </Text>
-            <Text size="xs" c="dimmed" mt={2}>
+            {/* Результат — карточкой ленты YouTube: превью живёт не само по себе, а
+                рядом с названием, аватаркой и служебной строкой. Только в этом
+                окружении видно, читается ли текст в реальном размере и не
+                дублирует ли он название. */}
+            <YouTubeCard
+              src={active.url}
+              title={active.spec?.videoTitle?.trim() || ""}
+              channel={channel?.title || "Твой канал"}
+              avatarUrl={channel?.thumbnail}
+              duration="12:04"
+            />
+            <Text size="xs" c="dimmed" mt={6}>
               Так это увидит зритель в ленте
             </Text>
 

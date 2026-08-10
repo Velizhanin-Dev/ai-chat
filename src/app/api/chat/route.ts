@@ -244,6 +244,16 @@ export async function POST(request: NextRequest) {
             channel.nudge
           );
 
+    // Веб-поиск: только на OpenRouter (плагин `web`), только если включён в админке,
+    // и только на содержательных запросах — на «привет / спасибо» (category === "chat")
+    // искать нечего, а каждый результат стоит денег (~$0.004).
+    const webSearch =
+      provider === "openrouter" &&
+      settings.webSearch.enabled &&
+      route.category !== "chat"
+        ? settings.webSearch.maxResults
+        : 0;
+
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -263,6 +273,12 @@ export async function POST(request: NextRequest) {
         try {
           send(": ping\n\n");
 
+          // Веб-поиск включён — говорим клиенту, чтобы индикатор показал «Ищу в
+          // интернете» вместо обычной цепочки «думаю». Отдельное SSE-событие, а не
+          // токен: до первого токена стрим и так молчит, а поиск заметно добавляет
+          // к TTFT — без подписи это выглядит как «завис».
+          if (webSearch > 0) send(`data: ${JSON.stringify({ searching: true })}\n\n`);
+
           // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
           // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
           const strategy = getStrategy(provider);
@@ -275,6 +291,7 @@ export async function POST(request: NextRequest) {
             model: settings.openrouterModel,
             orParams: settings.openrouterParams,
             orProvider: settings.openrouterProvider,
+            webSearch,
             meta: { userId: sessionUser.id, conversationId },
           })) {
             if (request.signal.aborted) break;

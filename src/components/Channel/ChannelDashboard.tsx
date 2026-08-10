@@ -33,7 +33,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from "@mantine/core";
-import { AreaChart, DonutChart, LineChart } from "@mantine/charts";
+import { AreaChart, BarChart, DonutChart, LineChart } from "@mantine/charts";
 import { DatePicker } from "@mantine/dates";
 import "dayjs/locale/ru";
 import {
@@ -57,6 +57,7 @@ import {
   IconCircleCheck,
   IconAlertTriangle,
   IconChartRadar,
+  IconTextCaption,
   IconCalendar,
 } from "@tabler/icons-react";
 import ChannelDiagnostics from "./ChannelDiagnostics";
@@ -78,6 +79,7 @@ import {
   getVideoDetailCached,
   prefetchVideoDetail,
   writeHookPrompt,
+  writeThumbTextsPrompt,
   formatCount,
   formatFull,
   formatDuration,
@@ -153,6 +155,8 @@ export default function ChannelDashboard() {
   const customRange = typeof period === "object" ? period : null;
   // Разбор канала по параметрам продвижения — отдельная модалка (см. ChannelDiagnostics).
   const [diagOpen, setDiagOpen] = useState(false);
+  const router = useRouter();
+  const dashUserId = useAppSelector((st) => st.auth.user?.id ?? "");
 
   const load = useCallback(
     async (soft: boolean, force = false) => {
@@ -180,6 +184,26 @@ export default function ChannelDashboard() {
     load(soft);
   }, [load]);
 
+  // «Слабый CTR» — собираем список реальных роликов (за период, иначе из ленты) и
+  // уводим в чат с готовым разбором упаковки.
+  const fixCtr = () => {
+    if (phase.s !== "ready") return;
+    // periodVideos — ВСЕ ролики с просмотрами за период (их может не быть, если
+    // разрез Analytics не пришёл), иначе лента последних.
+    const src = phase.data.periodVideos?.length
+      ? phase.data.periodVideos
+      : (phase.data.videos ?? []);
+    writeThumbTextsPrompt(
+      dashUserId,
+      src.map((v) => ({
+        title: v.title,
+        views: v.viewCount,
+        retention: v.avgViewPercentage ?? null,
+      }))
+    );
+    router.push(`/${projectId}/chat`);
+  };
+
   return (
     <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }} py="md">
       <Box px={{ base: "xs", sm: "md" }}>
@@ -203,6 +227,20 @@ export default function ChannelDashboard() {
                 visibleFrom="sm"
               >
                 Разобрать канал
+              </Button>
+              {/* Слабый CTR — уводим в чат с РАЗБОРОМ реальных роликов канала, а не
+                  с абстрактной просьбой «дай названия по ВИСП»: ассистент видит
+                  текущую упаковку с цифрами и переписывает именно её. */}
+              <Button
+                variant="light"
+                color="brand"
+                size="sm"
+                radius="md"
+                leftSection={<IconTextCaption size={16} />}
+                onClick={fixCtr}
+                visibleFrom="md"
+              >
+                Слабый CTR — переписать превью
               </Button>
               <Tooltip label="Разобрать канал по параметрам продвижения" withArrow>
                 <ActionIcon
@@ -461,17 +499,21 @@ function Dashboard({
                     точку, чтобы открыть разбор.
                   </Text>
                 </Box>
+                {/* Переключатель типа контента — НЕ мелкий: матрица считает медианы
+                    ВНУТРИ типа, и от него зависит вся картина «что чинить». Раньше
+                    стоял size="xs" и терялся в шапке — люди не замечали, что раздел
+                    умеет и лонги, и шортсы. */}
                 <SegmentedControl
-                    size="xs"
-                    radius="md"
-                    color="brand"
-                    value={effectiveKind}
-                    onChange={(v) => setMatrixKind(v as MatrixKind)}
-                    data={[
-                      { label: "Видео", value: "long" },
-                      { label: "Shorts", value: "shorts" },
-                    ]}
-                  style={{ flexShrink: 0 }}
+                  size="md"
+                  radius="md"
+                  color="brand"
+                  value={effectiveKind}
+                  onChange={(v) => setMatrixKind(v as MatrixKind)}
+                  data={[
+                    { label: "Видео", value: "long" },
+                    { label: "Shorts", value: "shorts" },
+                  ]}
+                  style={{ flexShrink: 0, fontWeight: 600 }}
                   aria-label="Тип контента для матрицы"
                 />
               </Group>
@@ -1338,49 +1380,55 @@ function GrowthSection({
   const hasViews = tl.buckets.some((b) => b.views > 0);
   const hasReleases = tl.buckets.some((b) => b.releases.length > 0);
 
-  // Кривая «всего подписчиков»: YouTube отдаёт только приросты по дням, истории
-  // самого счётчика нет — восстанавливаем её назад от текущего числа, вычитая
-  // net (пришло − ушло) каждого следующего отрезка. totals[i] = сколько было на
-  // конец отрезка i. ⚠️ У каналов больше 1000 подписчиков YouTube округляет
-  // subscriberCount, поэтому абсолютные значения — оценка, а форма кривой точная.
-  const canCumulative = subscribersNow > 0 && !hiddenSubscribers;
-  const totals = useMemo(() => {
-    if (!canCumulative) return [] as number[];
-    const out: number[] = [];
-    let acc = subscribersNow;
-    for (let i = tl.buckets.length - 1; i >= 0; i--) {
-      out[i] = acc;
-      acc -= tl.buckets[i].totalGained - tl.buckets[i].totalLost;
+  // ⚠️ Реконструкция кривой «всего подписчиков» отсюда УБРАНА вместе с линейным
+  // графиком: она восстанавливала абсолютный счётчик назад от текущего числа, а
+  // YouTube округляет subscriberCount выше 1000 — то есть цифры были оценкой.
+  // Понедельный график ниже копит ПРИРОСТ за период, а его YouTube отдаёт точно.
+
+  // Строка = отрезок времени. Каждый драйвер — своя секция столбца, плюс «Другое»
+  // (прирост, который не удалось отнести к конкретному ролику).
+  const rows = tl.buckets.map((b) => {
+    const row: Record<string, string | number> = { label: bucketLabel(b.key, gran) };
+    for (const v of drivers) row[v.title || v.id] = b.gainedByVideo[v.id] ?? 0;
+    if (hasOther) row["Другое"] = b.other;
+    return row;
+  });
+
+  // Серии стека в том же порядке и теми же цветами, что лидерборд под графиком.
+  const barSeries = [
+    ...drivers.map((v) => ({ name: v.title || v.id, color: colorById.get(v.id) as string })),
+    ...(hasOther ? [{ name: "Другое", color: OTHER_COLOR }] : []),
+  ];
+
+  // Понедельный рост: буквы ТЗ — «растущий график, сколько за неделю пришло».
+  // Копим сумму от начала периода, в тултипе видно и прирост недели, и итог.
+  const weekly = useMemo(() => {
+    const byWeek = new Map<string, number>();
+    for (const b of tl.buckets) {
+      const d = new Date(`${b.key.length === 7 ? `${b.key}-01` : b.key}T00:00:00Z`);
+      if (Number.isNaN(d.getTime())) continue;
+      // Понедельник этой недели — канонический ключ.
+      const day = (d.getUTCDay() + 6) % 7;
+      d.setUTCDate(d.getUTCDate() - day);
+      const key = d.toISOString().slice(0, 10);
+      byWeek.set(key, (byWeek.get(key) ?? 0) + b.totalGained);
     }
-    return out;
-  }, [canCumulative, subscribersNow, tl.buckets]);
+    let acc = 0;
+    return Array.from(byWeek.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, gained]) => {
+        acc += gained;
+        return { label: bucketLabel(key, "week"), Подписчики: acc, gained };
+      });
+  }, [tl.buckets]);
 
-  // Общая сетка отрезков для обоих графиков: одна строка = один отрезок времени.
-  // Подписчики — одной линией; раскладка по видео живёт в тултипе и лидерборде,
-  // чтобы линия читалась, а не превращалась в спагетти из шести серий.
-  const rows = tl.buckets.map((b, i) => ({
-    label: bucketLabel(b.key, gran),
-    Просмотры: b.views,
-    Подписчики: canCumulative ? totals[i] : b.totalGained,
-  }));
-
-  // Ось Y для накопленной кривой не должна начинаться с нуля — иначе рост в
-  // сотню подписчиков на канале с десятками тысяч выглядит прямой линией.
-  const subMin = Math.min(...rows.map((r) => r.Подписчики));
-  const subMax = Math.max(...rows.map((r) => r.Подписчики));
-  const subPad = Math.max(1, Math.round((subMax - subMin) * 0.2));
-  const subDomain: [number, number] = canCumulative
-    ? [Math.max(0, subMin - subPad), subMax + subPad]
-    : [0, subMax + subPad];
-
+  // Ось Y столбцов всегда от нуля — иначе секции стека врут по площади.
+  // (Прежний расчёт домена был нужен накопленной ЛИНИИ; она уехала в понедельный
+  // график ниже, где домен считается отдельно.)
   // Отрезок по подписи — тултипу нужна раскладка прироста по видео, а линия её
   // в payload не несёт (в отличие от прежнего стека).
   const bucketByLabel = useMemo(
     () => new Map(tl.buckets.map((b) => [bucketLabel(b.key, gran), b])),
-    [tl.buckets, gran]
-  );
-  const labelIndex = useMemo(
-    () => new Map(tl.buckets.map((b, i) => [bucketLabel(b.key, gran), i])),
     [tl.buckets, gran]
   );
 
@@ -1477,19 +1525,19 @@ function GrowthSection({
       // Клампим X, чтобы карточка не уезжала за края графика.
       const w = wrapRef.current?.offsetWidth ?? 600;
       const cx = Math.min(Math.max(x, 160), w - 160);
-      const idx = labelIndex.get(label) ?? -1;
       const next: TipState = {
         x: cx,
         y,
         label,
-        total: canCumulative && idx >= 0 ? totals[idx] : null,
+        // Абсолютный счётчик больше не показываем (см. комментарий выше).
+        total: null,
         gained: b?.totalGained ?? 0,
         lost: b?.totalLost ?? 0,
         items,
       };
       setTip((prev) => (prev && prev.label === label ? prev : next));
     },
-    [bucketByLabel, canCumulative, clearHide, colorById, drivers, labelIndex, totals]
+    [bucketByLabel, clearHide, colorById, drivers]
   );
   useEffect(() => clearHide, [clearHide]);
 
@@ -1532,54 +1580,34 @@ function GrowthSection({
         </Group>
       </Group>
 
-      {/* Верхний график — просмотры во времени (ось X скрыта: общая с нижним). */}
-      {hasViews && (
-        <Box mb="xs">
-          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            Просмотры
-          </Text>
-          <AreaChart
-            h={130}
-            data={rows}
-            dataKey="label"
-            series={[{ name: "Просмотры", color: "brand.6" }]}
-            curveType="monotone"
-            withGradient
-            withDots={false}
-            withXAxis={false}
-            valueFormatter={(v) => formatFull(v)}
-            gridAxis="y"
-            tickLine="none"
-            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
-          />
-        </Box>
-      )}
+      {/* ⚠️ График просмотров отсюда УБРАН (решение владельца): он дублировал
+          YouTube Studio. Оставляем только то, чего в Studio нет — атрибуцию
+          подписчиков по роликам и понедельный рост. */}
 
-      {/* Нижний график — прирост подписчиков линией, под осью строчкой идут ролики,
-          вышедшие в этот отрезок. Точка на линии красится в цвет главного драйвера
-          отрезка, полная раскладка — в тултипе. */}
+      {/* Прирост подписчиков — СТОЛБЦЫ С НАКОПЛЕНИЕМ: один столбец = отрезок
+          времени, секции внутри = ролики, которые привели этих подписчиков.
+          Именно этого нет в Studio: там виден общий прирост, но не видно, какой
+          ролик его дал. Под осью строчкой — когда какие ролики вышли. */}
       {hasSubs ? (
         <Box ref={wrapRef} style={{ position: "relative" }} onMouseLeave={scheduleHide}>
           <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            {canCumulative ? "Всего подписчиков" : "Новые подписчики"}
+            Новые подписчики по роликам
           </Text>
-          <LineChart
-            h={210}
+          <BarChart
+            h={230}
             data={rows}
             dataKey="label"
-            series={[{ name: "Подписчики", color: "teal.6" }]}
-            curveType="monotone"
+            type="stacked"
+            series={barSeries}
             withLegend={false}
             gridAxis="y"
             tickLine="none"
-            valueFormatter={(v) => formatFull(v)}
+            valueFormatter={(v: number) => formatFull(v)}
             yAxisProps={{
               width: 52,
-              domain: subDomain,
               allowDecimals: false,
               tickFormatter: (v: number) => formatCount(v),
             }}
-            lineProps={{ dot: renderDot, activeDot: { r: 6, strokeWidth: 2 } }}
             xAxisProps={{
               interval: 0,
               height: xAxisHeight,
@@ -1593,7 +1621,6 @@ function GrowthSection({
             }}
             tooltipProps={{
               isAnimationActive: false,
-              // Контент recharts — только сенсор позиции; видимую карточку рисуем сами.
               content: (props: any) => (
                 <TooltipSensor
                   active={props.active}
@@ -1626,6 +1653,55 @@ function GrowthSection({
         <Text size="sm" c="dimmed">
           За период подписки почти не менялись.
         </Text>
+      )}
+
+      {/* Второй график — ПОНЕДЕЛЬНЫЙ рост: накопленная кривая от начала периода.
+          Смысл именно в накоплении: дневная «динамика» скачет и по ней не видно,
+          растёт канал или топчется. Тут линия идёт вверх ровно настолько,
+          насколько канал реально прибавил. */}
+      {weekly.length > 1 && (
+        <Box mt="lg">
+          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
+            Рост по неделям
+          </Text>
+          <AreaChart
+            h={180}
+            data={weekly}
+            dataKey="label"
+            series={[{ name: "Подписчики", color: "teal.6" }]}
+            curveType="monotone"
+            withGradient
+            withDots
+            gridAxis="y"
+            tickLine="none"
+            valueFormatter={(v: number) => formatFull(v)}
+            yAxisProps={{
+              width: 52,
+              allowDecimals: false,
+              tickFormatter: (v: number) => formatCount(v),
+            }}
+            tooltipProps={{
+              isAnimationActive: false,
+              content: ({ active, label, payload }: any) => {
+                if (!active || !payload?.length) return null;
+                const row = weekly.find((w) => w.label === label);
+                return (
+                  <Paper radius="md" p="xs" withBorder shadow="sm">
+                    <Text size="xs" c="dimmed">
+                      неделя с {label}
+                    </Text>
+                    <Text size="sm" fw={600}>
+                      +{formatCount(row?.gained ?? 0)} за неделю
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      всего с начала периода: {formatCount(row?.Подписчики ?? 0)}
+                    </Text>
+                  </Paper>
+                );
+              },
+            }}
+          />
+        </Box>
       )}
 
       {/* Легенда-лидерборд: видео-драйверы (цвет = серия стека), клик → разбор. */}
@@ -1667,12 +1743,9 @@ function GrowthSection({
       )}
 
       <Text size="xs" c="dimmed" mt="md">
-        {canCumulative
-          ? "Линия — сколько всего подписчиков было на канале в этот момент (восстановлена от текущего числа по приросту, поэтому абсолютные значения — оценка)."
-          : "Линия — сколько подписчиков пришло за отрезок."}{" "}
-        Цвет точки = ролик, который привёл большинство из них. Внизу строчкой — когда какие ролики
-        вышли. Наведи на линию, чтобы увидеть раскладку по видео; клик по видео открывает разбор
-        упаковки.
+        Столбец — сколько подписчиков пришло за отрезок, секции внутри — какие ролики их привели.
+        Внизу строчкой видно, когда какие ролики вышли. Наведи на столбец, чтобы увидеть раскладку;
+        клик по ролику открывает разбор упаковки. Нижний график — накопленный рост по неделям.
       </Text>
     </Paper>
   );

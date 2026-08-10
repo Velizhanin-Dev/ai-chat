@@ -8,12 +8,15 @@ import {
   type ThumbnailRow,
 } from "./thumbnails";
 import { getSessionUser } from "./auth";
-import { isAdmin } from "./admin";
+import { isAdmin } from "./admin-role";
 import { getSettings, isLaunchLocked } from "./settings";
 import { getQuotaState } from "./quota";
 import { assertOwnedProject } from "./youtube";
 import { apiError } from "./http";
 import { prisma } from "./prisma";
+// toRow/spendQuota вынесены в thumbnails-row.ts (нужны фоновому воркеру, где нет
+// сессии). Реэкспортируем, чтобы прежние импорты из thumbnails-server работали.
+export { toRow, spendQuota } from "./thumbnails-row";
 
 // ── Общий гейт для всех роутов генератора превью ────────────────────────────
 // Раздел открыт всем залогиненным (страница вынесена из route-group (locked),
@@ -28,23 +31,6 @@ type Denied = { ok: false; res: NextResponse };
 type Allowed = { ok: true; user: User; conversationId: string };
 
 // Строка БД → то, что уходит клиенту. Файл отдаём ссылкой, не инлайним.
-export function toRow(t: Thumbnail): ThumbnailRow {
-  return {
-    id: t.id,
-    kind: t.kind === "generation" ? "generation" : "reference",
-    role: normalizeRefRole(t.role),
-    label: t.label,
-    url: `/api/thumbnails/${t.id}/file`,
-    mimeType: t.mimeType,
-    bytes: t.bytes,
-    refIds: t.refIds,
-    spec: t.spec ? sanitizeSpec(t.spec) : null,
-    model: t.model,
-    createdAt: t.createdAt.toISOString(),
-    parentId: t.parentId,
-    pinned: t.pinned,
-  };
-}
 
 // Авторизация + владение проектом (+ pre-launch и админ-онли). Возвращает
 // внутренний id проекта — дальше работаем только с ним, не с сырым вводом.
@@ -115,9 +101,3 @@ export async function checkQuota(user: User): Promise<Denied | null> {
 }
 
 // Списание после УСПЕШНОЙ генерации (провал квоту не тратит). Fire-and-forget.
-export async function spendQuota(user: User, cost = THUMBNAIL_SPEC_QUOTA_COST): Promise<void> {
-  if (isAdmin(user)) return;
-  await prisma.user
-    .update({ where: { id: user.id }, data: { requestsUsed: { increment: cost } } })
-    .catch((err) => console.error("[thumbnails] quota increment error:", err));
-}

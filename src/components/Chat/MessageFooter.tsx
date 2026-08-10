@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { IconCopy, IconCheck } from "@tabler/icons-react";
+import { IconCopy, IconCheck, IconFileText, IconDownload } from "@tabler/icons-react";
+import {
+  extractScenario,
+  looksLikeScenario,
+  scenarioFileName,
+} from "@/lib/scenario-extract";
 
 // «Борода» под ответом ассистента: дата слева, кнопка «Копировать» справа.
 //
@@ -38,8 +43,14 @@ export default function MessageFooter({
   createdAt: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copiedClean, setCopiedClean] = useState(false);
 
-  const copy = async () => {
+  // Сценарий уносят из чата в работу — в Google Docs, суфлёр, монтажёру, — и там
+  // живая речь ассистента вокруг артефакта только мешает. Поэтому у сценариев
+  // (и только у них) есть отдельные кнопки: чистый текст и файл.
+  const isScenario = looksLikeScenario(content);
+
+  const copyRaw = async () => {
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -49,21 +60,74 @@ export default function MessageFooter({
     }
   };
 
+  const copyClean = async () => {
+    try {
+      await navigator.clipboard.writeText(extractScenario(content));
+      setCopiedClean(true);
+      setTimeout(() => setCopiedClean(false), 1500);
+    } catch {
+      /* см. выше */
+    }
+  };
+
+  // Файл собираем на лету: .txt с чистым сценарием. Blob + временная ссылка —
+  // без похода на сервер, файл не нужно нигде хранить.
+  const download = () => {
+    const blob = new Blob([extractScenario(content)], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = scenarioFileName(content);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Освобождаем URL — иначе blob висит в памяти вкладки до перезагрузки.
+    URL.revokeObjectURL(url);
+  };
+
   const stamp = formatStamp(createdAt);
 
   return (
     <div className="msg-foot">
       <span className="msg-foot-time">{stamp}</span>
-      <button
-        type="button"
-        className="msg-foot-copy"
-        onClick={copy}
-        aria-label={copied ? "Скопировано" : "Скопировать ответ"}
-        title={copied ? "Скопировано" : "Скопировать ответ целиком"}
-      >
-        {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-        <span>{copied ? "Скопировано" : "Копировать"}</span>
-      </button>
+      <span className="msg-foot-actions">
+        {isScenario && (
+          <>
+            <button
+              type="button"
+              className="msg-foot-copy"
+              onClick={copyClean}
+              aria-label={copiedClean ? "Скопировано" : "Скопировать только сценарий"}
+              title="Только текст сценария, без комментариев"
+            >
+              {copiedClean ? <IconCheck size={14} /> : <IconFileText size={14} />}
+              <span>{copiedClean ? "Скопировано" : "Только сценарий"}</span>
+            </button>
+            <button
+              type="button"
+              className="msg-foot-copy"
+              onClick={download}
+              aria-label="Скачать сценарий файлом"
+              title="Скачать .txt без комментариев"
+            >
+              <IconDownload size={14} />
+              <span>Файл</span>
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="msg-foot-copy"
+          onClick={copyRaw}
+          aria-label={copied ? "Скопировано" : "Скопировать ответ"}
+          title={copied ? "Скопировано" : "Скопировать ответ целиком"}
+        >
+          {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+          <span>{copied ? "Скопировано" : "Копировать"}</span>
+        </button>
+      </span>
     </div>
   );
 }

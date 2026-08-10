@@ -8,6 +8,36 @@ import type {
   VideoStatus,
 } from "./content-plan";
 
+import type { JobView } from "@/lib/jobs";
+import {
+  waitForJob,
+  rememberJob,
+  forgetJob,
+  recallJob,
+  apiActiveJobs,
+} from "@/lib/jobs-client";
+
+// Дождаться результата задачи по плану (генерация или опорный блок).
+async function awaitPlanJob(jobId: string): Promise<ContentPlanView> {
+  const job = await waitForJob(jobId);
+  if (job.status !== "done") throw new Error(job.error || "Не удалось собрать план");
+  return (job.result as { plan: ContentPlanView }).plan;
+}
+
+// Незаконченные задачи по плану в этом проекте — доска подхватывает их после
+// перезагрузки: и саму генерацию, и авто-сборку опорных блоков следом за ней.
+export async function findPendingPlanJobs(projectId: string): Promise<JobView[]> {
+  const [gen, blocks] = await Promise.all([
+    apiActiveJobs({ projectId, kind: "content_plan_generate" }),
+    apiActiveJobs({ projectId, kind: "content_plan_block" }),
+  ]);
+  return [...gen, ...blocks];
+}
+
+export function recallPlanJob(projectId: string): string | null {
+  return recallJob("content_plan_generate", projectId);
+}
+
 // ── Клиентские обёртки над /api/content-plan/* ──────────────────────────────
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
@@ -29,19 +59,29 @@ export async function apiContentPlans(projectId: string): Promise<Result<{ plans
   }
 }
 
+// Генерация плана ФОНОВАЯ: роут ставит задачу, воркер собирает план и следом
+// сам ставит задачи на опорные блоки. Здесь дожидаемся готового плана, а id
+// задачи держим в localStorage — обновил страницу, и доска подхватит её.
 export async function apiGeneratePlan(
   projectId: string,
   // Количество роликов фиксировано на сервере (PLAN_VIDEO_COUNT) — не передаём.
   opts: { period?: string; label?: string } = {}
 ): Promise<Result<{ plan: ContentPlanView }>> {
   try {
-    return json(
+    const started = await json<{ job: JobView }>(
       await fetch(`/api/content-plan?${q(projectId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(opts),
       })
     );
+    if (!started.ok) return started;
+    rememberJob("content_plan_generate", projectId, started.data.job.id);
+    try {
+      return { ok: true, data: { plan: await awaitPlanJob(started.data.job.id) } };
+    } finally {
+      forgetJob("content_plan_generate", projectId);
+    }
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
@@ -69,13 +109,15 @@ export async function apiGenerateBlock(
   block: BlockKey
 ): Promise<Result<{ plan: ContentPlanView }>> {
   try {
-    return json(
+    const started = await json<{ job: JobView }>(
       await fetch(`/api/content-plan/${planId}/blocks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ block }),
       })
     );
+    if (!started.ok) return started;
+    return { ok: true, data: { plan: await awaitPlanJob(started.data.job.id) } };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }

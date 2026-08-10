@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAdminUser } from "@/lib/admin";
 import { apiError, readJson } from "@/lib/http";
-import { getSettings, saveSettings, type AppSettings } from "@/lib/settings";
+import {
+  getSettings,
+  saveSettings,
+  normalizeWebSearch,
+  normalizeTrialHours,
+  type AppSettings,
+} from "@/lib/settings";
 
 // Чтение/запись глобальных настроек (фичефлаги: бриф вкл/выкл, таймер запуска).
 // Только для админа; не-админу — 404 (не светим существование админки).
@@ -51,6 +57,15 @@ export async function PATCH(req: Request) {
   }
   if (input.routing === "smart" || input.routing === "full") {
     patch.routing = input.routing;
+  }
+  // Срок пробного периода (кламп 1–168 ч внутри normalizeTrialHours).
+  if (input.trialHours != null) {
+    patch.trialHours = normalizeTrialHours(input.trialHours);
+  }
+  // Веб-поиск: enabled + число результатов (кламп 1–5 внутри normalizeWebSearch —
+  // каждый результат платный, потолок осознанный).
+  if (input.webSearch && typeof input.webSearch === "object") {
+    patch.webSearch = normalizeWebSearch(input.webSearch);
   }
   if (input.launch && typeof input.launch === "object") {
     const { countdownEnabled, targetAt } = input.launch;

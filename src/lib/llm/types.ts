@@ -22,6 +22,10 @@ export interface StreamArgs {
   // Пин провайдера OpenRouter (slug). Заставляет все запросы идти в одного
   // провайдера → пер-провайдерный кэш DeepSeek греется. "" / undefined = авто.
   orProvider?: string;
+  // Веб-поиск (плагин `web` OpenRouter). Число результатов — сколько запрашивать;
+  // undefined / 0 = поиск выключен. Claude/GLM игнорируют (у них своих плагинов нет).
+  // Платно (~$0.004 за результат), включается в админке. См. AppSettings.webSearch.
+  webSearch?: number;
   // Атрибуция для телеметрии (Stat): кто и в каком диалоге. Стратегия пишет
   // статистику сама после подсчёта стоимости (см. recordStat).
   meta?: { userId?: string | null; conversationId?: string | null };

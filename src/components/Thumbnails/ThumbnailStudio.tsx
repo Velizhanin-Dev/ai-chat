@@ -36,12 +36,16 @@ import {
 import {
   apiDeleteThumbnail,
   apiListThumbnails,
+  findPendingThumbnailJob,
+  awaitThumbnailJob,
   apiPinReference,
   apiUploadReference,
 } from "@/lib/thumbnails-client";
 import { apiGetProjectBrief } from "@/lib/chat-client";
 import ThumbnailWizard from "./ThumbnailWizard";
 import ThumbnailEditor from "./ThumbnailEditor";
+import { forgetJob } from "@/lib/jobs-client";
+import { JOB_LABELS } from "@/lib/jobs";
 
 // Раздел «Генератор превью». Экран — галерея уже сделанных превью; создание идёт
 // мастером (кнопка «Создать превью»), правка — в редакторе по клику на карточку.
@@ -81,6 +85,8 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
     audience: "",
   });
   const [uploading, setUploading] = useState(false);
+  // Идёт фоновая генерация (своя или подхваченная после перезагрузки).
+  const [pending, setPending] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const uploadRole = useRef<RefRole>("style");
 
@@ -114,6 +120,32 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
   const openGroup = groups.find((g) => g.rootId === openGroupId) ?? null;
 
   const addItem = useCallback((row: ThumbnailRow) => setItems((prev) => [row, ...prev]), []);
+
+  // Подхват незавершённой генерации. Человек мог обновить страницу, уйти на
+  // другую вкладку раздела или вообще открыть проект с телефона — картинку в
+  // это время рисует воркер, и результат надо показать, а не потерять.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const jobId = await findPendingThumbnailJob(projectId);
+      if (!jobId || cancelled) return;
+      setPending(true);
+      try {
+        const row = await awaitThumbnailJob(jobId);
+        if (!cancelled) addItem(row);
+      } catch (e) {
+        // Задача упала, пока нас не было — показываем причину, а не молчим.
+        if (!cancelled) setError(e instanceof Error ? e.message : "Генерация не удалась");
+      } finally {
+        if (!cancelled) setPending(false);
+        forgetJob("thumbnail_generate", projectId);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, addItem]);
+
 
   const remove = useCallback(
     async (id: string) => {
@@ -217,6 +249,19 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
             onClose={() => setError(null)}
           >
             {error}
+          </Alert>
+        )}
+
+        {/* Незавершённая генерация: подхвачена после возврата на страницу либо
+            запущена прямо сейчас. Главное здесь — сказать, что можно уйти. */}
+        {pending && (
+          <Alert color="brand" icon={<IconSparkles size={16} />} mb="md">
+            <Text fw={600} size="sm">
+              {JOB_LABELS.thumbnail_generate.title}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {JOB_LABELS.thumbnail_generate.hint}
+            </Text>
           </Alert>
         )}
 

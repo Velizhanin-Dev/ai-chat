@@ -37,7 +37,7 @@ interface OrUsage {
 
 export const openrouterStrategy: LlmStrategy = {
   provider: "openrouter",
-  async *stream({ system, messages, route, routeMs, meta, model, orParams, orProvider }: StreamArgs) {
+  async *stream({ system, messages, route, routeMs, meta, model, orParams, orProvider, webSearch }: StreamArgs) {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       throw new Error("OpenRouter не настроен: задай OPENROUTER_API_KEY");
@@ -72,6 +72,14 @@ export const openrouterStrategy: LlmStrategy = {
     const providerRouting = orProvider?.trim()
       ? { provider: { order: [orProvider.trim()], allow_fallbacks: true } }
       : {};
+    // Веб-поиск: плагин OpenRouter. Выдача подмешивается им ПОСЛЕ нашего system —
+    // замером подтверждено, что кэшируемый префикс при этом цел (cached_tokens
+    // остаётся ~90%), поэтому full-режим на DeepSeek от поиска не страдает.
+    // ⚠️ Платно отдельно от токенов: ~$0.004 за результат. Включается в админке.
+    const webPlugin =
+      webSearch && webSearch > 0
+        ? { plugins: [{ id: "web", max_results: webSearch }] }
+        : {};
     const requestBody = JSON.stringify({
       model: useModel,
       messages: oaMessages,
@@ -81,6 +89,7 @@ export const openrouterStrategy: LlmStrategy = {
       usage: { include: true },
       ...tuning,
       ...providerRouting,
+      ...webPlugin,
     });
 
     const t0 = Date.now();
@@ -208,7 +217,7 @@ export const openrouterStrategy: LlmStrategy = {
     // Стоимость OpenRouter отдаёт сам (usage.cost, USD) — цены разнятся по моделям.
     const cost = usage?.cost ?? 0;
     console.log(
-      `[chat] provider=openrouter model=${useModel} route=${route.category} routeMs=${routeMs} ttft=${ttft}ms total=${total}ms cached=${cached} input=${promptTokens} output=${completionTokens} outChars=${outChars} cost=$${cost.toFixed(4)}`
+      `[chat] provider=openrouter model=${useModel} route=${route.category} web=${webSearch && webSearch > 0 ? webSearch : "off"} routeMs=${routeMs} ttft=${ttft}ms total=${total}ms cached=${cached} input=${promptTokens} output=${completionTokens} outChars=${outChars} cost=$${cost.toFixed(4)}`
     );
     recordStat({
       kind: "chat",

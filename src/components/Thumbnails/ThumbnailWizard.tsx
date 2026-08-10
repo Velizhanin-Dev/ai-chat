@@ -26,6 +26,7 @@ import {
 import { useMediaQuery } from "@mantine/hooks";
 import {
   IconAlertCircle,
+  IconInfoCircle,
   IconCheck,
   IconPhotoPlus,
   IconSparkles,
@@ -53,7 +54,7 @@ import {
   apiThumbnailIdeas,
   apiUploadReference,
 } from "@/lib/thumbnails-client";
-import { useAppDispatch } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 
 // Мастер создания превью. Флоу задан владельцем (2026-08-07):
@@ -108,6 +109,7 @@ interface Props {
   audience: string;
 }
 
+// Роль нужна только чтобы показать админу служебное ТЗ для image-модели.
 export default function ThumbnailWizard({
   projectId,
   opened,
@@ -118,6 +120,8 @@ export default function ThumbnailWizard({
   niche,
   audience,
 }: Props) {
+  // ТЗ для image-модели показываем только админам (см. блок в шаге сводки).
+  const isAdmin = useAppSelector((st) => st.auth.user?.role === "admin");
   const dispatch = useAppDispatch();
   const isMobile = useMediaQuery("(max-width: 48em)");
   const [stepId, setStepId] = useState<StepId>("audience");
@@ -654,15 +658,11 @@ export default function ThumbnailWizard({
                       : "")
                   }
                 />
+                {/* Референсы из сводки убраны (решение владельца): человеку тут важно
+                    проверить смысл превью, а не служебный учёт приложенных файлов. */}
                 <SummaryRow
                   label="В кадре"
-                  value={
-                    spec.peopleCount === 0
-                      ? "без людей"
-                      : `${spec.peopleCount === 2 ? "двое" : "один"}${
-                          speakerIds.length ? `, фото спикера: ${speakerIds.length}` : ", без фото"
-                        }`
-                  }
+                  value={spec.peopleCount === 0 ? "без людей" : spec.peopleCount === 2 ? "двое" : "один"}
                 />
                 <SummaryRow label="Эмоция" value={spec.emotion} />
                 <SummaryRow label="Что ещё в кадре" value={spec.supportObject} />
@@ -673,18 +673,34 @@ export default function ThumbnailWizard({
               </Stack>
             </Paper>
 
+            <Alert color="brand" variant="light" icon={<IconInfoCircle size={16} />}>
+              <Text size="sm" fw={600}>
+                Это черновик, а не готовая обложка
+              </Text>
+              <Text size="xs" mt={4}>
+                Картинку рисует нейросеть: композиция, эмоция и текст — рабочая рекомендация под
+                методику, но лица, руки и мелкие детали она путает. Перед публикацией отдай превью
+                дизайнеру или доведи сам — это заготовка, с которой удобно начинать.
+              </Text>
+            </Alert>
+
             <Text size="xs" c="dimmed">
-              Что-то не так — вернись назад и поправь. Ниже — точный промпт, который уйдёт в
-              модель (он на английском: картиночные модели так точнее следуют инструкциям).
+              Что-то не так — вернись назад и поправь.
             </Text>
 
-            <Spoiler maxHeight={0} showLabel="Показать промпт" hideLabel="Скрыть промпт">
-              <ScrollArea.Autosize mah={280} type="auto" offsetScrollbars>
-                <Code block style={{ fontSize: 11, whiteSpace: "pre-wrap" }}>
-                  {previewPrompt}
-                </Code>
-              </ScrollArea.Autosize>
-            </Spoiler>
+            {/* ТЗ для image-модели спрятано от пользователя (решение владельца): это
+                служебный английский промпт, человеку он ничего не объясняет и только
+                пугает. Оставлен под спойлером ТОЛЬКО для админов — им он нужен, когда
+                разбираешь, почему картинка вышла не такой. */}
+            {isAdmin && (
+              <Spoiler maxHeight={0} showLabel="Показать ТЗ для модели" hideLabel="Скрыть ТЗ">
+                <ScrollArea.Autosize mah={280} type="auto" offsetScrollbars>
+                  <Code block style={{ fontSize: 11, whiteSpace: "pre-wrap" }}>
+                    {previewPrompt}
+                  </Code>
+                </ScrollArea.Autosize>
+              </Spoiler>
+            )}
           </Stack>
         )}
 

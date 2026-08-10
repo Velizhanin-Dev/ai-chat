@@ -18,6 +18,7 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   addMessage,
   setLoading,
+  setSearching,
   setStreamingContent,
   appendStreamingContent,
   finalizeStreaming,
@@ -336,7 +337,7 @@ export default function ChatInput({
             const data = line.slice(6);
             if (data === "[DONE]") break;
 
-            let parsed: { token?: string; error?: string };
+            let parsed: { token?: string; error?: string; searching?: boolean };
             try {
               parsed = JSON.parse(data);
             } catch {
@@ -346,6 +347,9 @@ export default function ChatInput({
             // Ошибку стрима пробрасываем НАРУЖУ (не глотаем catch'ем парсинга),
             // иначе в историю попадёт пустой ответ вместо алерта об ошибке.
             if (parsed.error) throw new Error(parsed.error);
+            // Сервер сообщил, что перед генерацией идёт веб-поиск — индикатор
+            // покажет «Ищу в интернете» (поиск заметно добавляет к TTFT).
+            if (parsed.searching) dispatch(setSearching(true));
             if (parsed.token) {
               fullContent += parsed.token;
               typewriter.push(parsed.token);
