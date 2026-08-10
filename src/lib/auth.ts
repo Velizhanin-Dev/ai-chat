@@ -5,6 +5,8 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "@prisma/client";
 import { prisma } from "./prisma";
 import { sanitizeBrief, isBriefComplete, type Brief } from "./brief";
+import { maybeGrantTrial } from "./quota";
+import { getSettings } from "./settings";
 
 // ── Сессия ──────────────────────────────────────────────────────────────
 // Источник правды для входа — подписанный JWT в httpOnly-cookie. Сервер не
@@ -97,11 +99,28 @@ export async function getSessionUser(): Promise<User | null> {
   // При ошибке деградируем до гостя.
   try {
     const user = await prisma.user.findUnique({ where: { id: uid } });
-    if (user) touchLastSeen(user);
-    return user;
+    if (!user) return null;
+    touchLastSeen(user);
+    // Массовый сброс пробных периодов выдаётся ПЕРСОНАЛЬНО — здесь, при первом
+    // заходе человека после нажатия кнопки в админке, чтобы срок отсчитывался от
+    // его визита, а не от момента нажатия (см. maybeGrantTrial в quota.ts).
+    // Дешёвый путь: у кого пробный уже выдан после метки — ни одного лишнего
+    // запроса, функция выходит на первой же проверке.
+    return await maybeGrantTrial(user, await trialResetDeps());
   } catch (err) {
     console.error("[auth] getSessionUser db error:", err);
     return null;
+  }
+}
+
+// Настройки для выдачи пробного периода. Отдельной функцией, чтобы getSessionUser
+// не тянул весь модуль настроек в свою сигнатуру; ошибку глушим — вход важнее.
+async function trialResetDeps(): Promise<{ trialResetAt: string | null; trialHours: number }> {
+  try {
+    const { trialResetAt, trialHours } = await getSettings();
+    return { trialResetAt, trialHours };
+  } catch {
+    return { trialResetAt: null, trialHours: 1 };
   }
 }
 

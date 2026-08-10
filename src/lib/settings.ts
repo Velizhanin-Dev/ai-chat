@@ -57,6 +57,12 @@ export interface AppSettings {
   // Пробный период: сколько часов он живёт. Число ЗАПРОСОВ в нём — отдельная
   // ручка: Plan.limits.requests тарифа start (редактор тарифов). Здесь только срок.
   trialHours: number;
+  // Метка массового сброса пробных периодов (ISO) или null. Сама по себе ничего не
+  // меняет: при заходе юзера maybeGrantTrial сравнивает её с User.trialGrantedAt и,
+  // если метка новее, выдаёт пробный период ЗАНОВО — от момента визита.
+  // ⚠️ Именно так, а не разовым updateMany: иначе срок отсчитывался бы от нажатия
+  // кнопки, и пришедший через четыре часа человек попал бы на закрытую дверь.
+  trialResetAt: string | null;
   // Режим «скоро запуск»: таймер в герое + скрытые тарифы на лендинге.
   launch: {
     countdownEnabled: boolean;
@@ -74,6 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   openrouterProvider: "",
   imageModel: "",
   trialHours: 1,
+  trialResetAt: null,
   webSearch: { enabled: false, maxResults: 3 },
   launch: { countdownEnabled: false, targetAt: null },
 };
@@ -89,6 +96,7 @@ const KEY_ROUTING = "routing";
 const KEY_IMAGE_MODEL = "image_model";
 const KEY_WEB_SEARCH = "web_search";
 const KEY_TRIAL_HOURS = "trial_hours";
+const KEY_TRIAL_RESET = "trial_reset_at";
 
 // Кламп срока пробного периода: 1–168 часов (неделя). Ноль превратил бы пробный
 // период в «истёк сразу», а безлимит — в бесплатный тариф.
@@ -134,6 +142,8 @@ function normalize(map: Map<string, unknown>): AppSettings {
     imageModel: typeof imageModel === "string" ? imageModel : "",
     webSearch: normalizeWebSearch(map.get(KEY_WEB_SEARCH)),
     trialHours: normalizeTrialHours(map.get(KEY_TRIAL_HOURS)),
+    trialResetAt:
+      typeof map.get(KEY_TRIAL_RESET) === "string" ? (map.get(KEY_TRIAL_RESET) as string) : null,
     routing: routing === "full" ? "full" : "smart",
     launch: {
       countdownEnabled: Boolean(launch?.countdownEnabled),
@@ -196,6 +206,7 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       : cur.webSearch,
     trialHours:
       input.trialHours == null ? cur.trialHours : normalizeTrialHours(input.trialHours),
+    trialResetAt: input.trialResetAt === undefined ? cur.trialResetAt : input.trialResetAt,
     launch: { ...cur.launch, ...(input.launch ?? {}) },
   };
   await prisma.$transaction([
@@ -218,6 +229,12 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_TRIAL_HOURS },
       create: { key: KEY_TRIAL_HOURS, value: next.trialHours },
       update: { value: next.trialHours },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_TRIAL_RESET },
+      // JSON-колонка: null пишем через Prisma.JsonNull, иначе типы не сходятся.
+      create: { key: KEY_TRIAL_RESET, value: next.trialResetAt ?? Prisma.JsonNull },
+      update: { value: next.trialResetAt ?? Prisma.JsonNull },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_WEB_SEARCH },

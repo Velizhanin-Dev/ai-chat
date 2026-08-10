@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError } from "@/lib/http";
-import { getSettings } from "@/lib/settings";
+import { getSettings, saveSettings } from "@/lib/settings";
 import { getPlans } from "@/lib/plans";
-import { trialExpiresAt } from "@/lib/quota";
 
 // Массовый сброс пробных периодов (кнопка в админке).
 //
@@ -19,8 +18,16 @@ import { trialExpiresAt } from "@/lib/quota";
 //  • тех, кто сидит на ПЛАТНОМ тарифе (priceRub > 0), даже без платежа в базе:
 //    тариф мог быть выдан руками из админки, это не пробный период.
 //
-// GET — посчитать, скольких это затронет (для подтверждения в интерфейсе).
-// POST — собственно сброс.
+// ⚠️ КАК ЭТО РАБОТАЕТ (важно, легко сломать «упрощением»):
+// POST НЕ обнуляет всех разом. Он ставит МЕТКУ времени (AppSettings.trialResetAt),
+// а пробный период выдаётся каждому персонально — при его первом заходе после
+// метки (maybeGrantTrial в quota.ts, вызывается из getSessionUser).
+//
+// Почему не updateMany: тогда срок считался бы от нажатия кнопки. Нажали в 11:00
+// при сроке 3 часа — в 14:00 у всех истекло, и человек, открывший письмо в 15:00,
+// упирается в закрытую дверь. С меткой он получает свои полные 3 часа в 15:00.
+//
+// GET — сколько людей метка затронет (для подтверждения в интерфейсе).
 
 export const dynamic = "force-dynamic";
 
@@ -54,21 +61,13 @@ export async function POST() {
   if (!admin) return apiError("Not found", 404);
 
   const where = await eligibleWhere();
-  const settings = await getSettings();
-
-  // Сбрасываем ОБЕ границы доступа сразу: и срок, и израсходованные запросы.
-  // Сбросить только срок мало — у человека с исчерпанной квотой доступа всё равно
-  // не будет, и он решит, что письмо соврало.
-  const res = await prisma.user.updateMany({
-    where,
-    data: {
-      planExpiresAt: trialExpiresAt(settings.trialHours),
-      requestsUsed: 0,
-    },
-  });
+  const [count, settings] = await Promise.all([
+    prisma.user.count({ where }),
+    saveSettings({ trialResetAt: new Date().toISOString() }),
+  ]);
 
   console.log(
-    `[admin] пробный период сброшен у ${res.count} юзеров на ${settings.trialHours} ч (админ ${admin.email})`
+    `[admin] метка сброса пробных периодов поставлена (${count} чел. получат ${settings.trialHours} ч при заходе, админ ${admin.email})`
   );
-  return NextResponse.json({ count: res.count, trialHours: settings.trialHours });
+  return NextResponse.json({ count, trialHours: settings.trialHours });
 }

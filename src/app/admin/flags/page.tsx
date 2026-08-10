@@ -335,13 +335,13 @@ export default function AdminFlagsPage() {
             <Divider my="md" />
 
             <Text fw={600} size="sm">
-              Сбросить пробные периоды
+              Открыть пробный период заново
             </Text>
             <Text size="xs" c="dimmed" mt={4}>
-              Выдаёт пробный период заново всем, кто на бесплатном тарифе и ни разу не платил:
-              срок с этой минуты и счётчик запросов в ноль. Тех, кто платил или сидит на платном
-              тарифе, не трогает. Нужно перед рассылкой — человек приходит по письму, и у него
-              снова есть доступ.
+              Все, кто на бесплатном тарифе и ни разу не платил, получат пробный период заново —
+              КАЖДЫЙ при своём следующем заходе, а не в момент нажатия. Пришёл человек в 11 или
+              в 19 — у него в любом случае будут полные часы с этой минуты и обнулённый счётчик
+              запросов. Тех, кто платил или сидит на платном тарифе, не трогает.
             </Text>
 
             {trialInfo && (
@@ -351,7 +351,7 @@ export default function AdminFlagsPage() {
             )}
             {trialDone != null && (
               <Alert color="teal" mt="sm" variant="light">
-                Пробный период выдан заново: {trialDone} чел.
+                Готово. Пробный период получат {trialDone} чел. — каждый при своём заходе.
               </Alert>
             )}
 
@@ -363,12 +363,12 @@ export default function AdminFlagsPage() {
                   onClick={() => setTrialConfirm(true)}
                   disabled={trialBusy}
                 >
-                  Сбросить пробные периоды
+                  Открыть пробный период заново
                 </Button>
               ) : (
                 <>
                   <Button color="red" loading={trialBusy} onClick={resetTrials}>
-                    Да, сбросить {trialInfo ? `(${trialInfo.count})` : ""}
+                    Да, открыть {trialInfo ? `(${trialInfo.count})` : ""}
                   </Button>
                   <Button variant="subtle" color="gray" onClick={() => setTrialConfirm(false)}>
                     Отмена
