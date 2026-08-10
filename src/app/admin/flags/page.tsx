@@ -16,6 +16,8 @@ import {
   Badge,
   SegmentedControl,
   Select,
+  Box,
+  Divider,
   NumberInput,
   SimpleGrid,
 } from "@mantine/core";
@@ -26,6 +28,7 @@ import {
   IconAlertCircle,
   IconCpu,
   IconPhoto,
+  IconHourglass,
 } from "@tabler/icons-react";
 import type { AppSettings } from "@/lib/settings";
 import {
@@ -68,6 +71,12 @@ export default function AdminFlagsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Массовый сброс пробных периодов: сколько затронет / подтверждение / результат.
+  const [trialInfo, setTrialInfo] = useState<{ count: number } | null>(null);
+  const [trialConfirm, setTrialConfirm] = useState(false);
+  const [trialBusy, setTrialBusy] = useState(false);
+  const [trialDone, setTrialDone] = useState<number | null>(null);
 
   // Каталог моделей OpenRouter — тянем только когда выбран этот провайдер.
   const [orModels, setOrModels] = useState<OrModel[]>([]);
@@ -197,6 +206,39 @@ export default function AdminFlagsPage() {
   const supported = selectedModel?.supportedParams ?? null;
   const isSupported = (key: string) => !supported || supported.includes(key);
 
+  // Сколько пользователей затронет сброс — показываем ДО подтверждения, чтобы
+  // админ видел масштаб, а не жал вслепую.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/trial-reset", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as { count: number };
+        setTrialInfo({ count: data.count });
+      } catch {
+        /* не критично: кнопка работает и без счётчика */
+      }
+    })();
+  }, []);
+
+  const resetTrials = async () => {
+    setTrialBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/trial-reset", { method: "POST" });
+      const data = (await res.json()) as { count?: number; error?: string };
+      if (!res.ok || data.count == null) throw new Error(data.error || "Ошибка");
+      setTrialDone(data.count);
+      setTrialConfirm(false);
+      // Счётчик «затронет» после сброса тот же (люди остаются пробными) —
+      // перезапрашивать нечего.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось сбросить пробные периоды");
+    } finally {
+      setTrialBusy(false);
+    }
+  };
+
   const save = async () => {
     if (!settings) return;
     setSaving(true);
@@ -259,6 +301,80 @@ export default function AdminFlagsPage() {
                 checked={settings.briefPageEnabled}
                 onChange={(e) => patch({ briefPageEnabled: e.currentTarget.checked })}
               />
+            </Group>
+          </Paper>
+
+          {/* Пробный период: срок + массовый сброс */}
+          <Paper withBorder radius="md" p="lg">
+            <Group gap="sm" wrap="nowrap" align="flex-start" mb="md">
+              <ThemeIcon color="brand" variant="light" radius="md" size="lg">
+                <IconHourglass size={18} />
+              </ThemeIcon>
+              <Box>
+                <Text fw={600}>Пробный период</Text>
+                <Text size="sm" c="dimmed">
+                  Срок задаётся здесь, число запросов — в редакторе тарифов (лимит «Запросы» у
+                  бесплатного тарифа). Это две разные ручки.
+                </Text>
+              </Box>
+            </Group>
+
+            <NumberInput
+              maw={220}
+              label="Длительность, часов"
+              description="Выдаётся при регистрации и при сбросе ниже."
+              min={1}
+              max={168}
+              value={settings.trialHours}
+              onChange={(v) => {
+                const n = Number(v);
+                if (Number.isFinite(n)) patch({ trialHours: n });
+              }}
+            />
+
+            <Divider my="md" />
+
+            <Text fw={600} size="sm">
+              Сбросить пробные периоды
+            </Text>
+            <Text size="xs" c="dimmed" mt={4}>
+              Выдаёт пробный период заново всем, кто на бесплатном тарифе и ни разу не платил:
+              срок с этой минуты и счётчик запросов в ноль. Тех, кто платил или сидит на платном
+              тарифе, не трогает. Нужно перед рассылкой — человек приходит по письму, и у него
+              снова есть доступ.
+            </Text>
+
+            {trialInfo && (
+              <Text size="sm" mt="sm">
+                Затронет пользователей: <b>{trialInfo.count}</b>
+              </Text>
+            )}
+            {trialDone != null && (
+              <Alert color="teal" mt="sm" variant="light">
+                Пробный период выдан заново: {trialDone} чел.
+              </Alert>
+            )}
+
+            <Group gap="sm" mt="sm">
+              {!trialConfirm ? (
+                <Button
+                  variant="light"
+                  color="brand"
+                  onClick={() => setTrialConfirm(true)}
+                  disabled={trialBusy}
+                >
+                  Сбросить пробные периоды
+                </Button>
+              ) : (
+                <>
+                  <Button color="red" loading={trialBusy} onClick={resetTrials}>
+                    Да, сбросить {trialInfo ? `(${trialInfo.count})` : ""}
+                  </Button>
+                  <Button variant="subtle" color="gray" onClick={() => setTrialConfirm(false)}>
+                    Отмена
+                  </Button>
+                </>
+              )}
             </Group>
           </Paper>
 
@@ -370,6 +486,48 @@ export default function AdminFlagsPage() {
                     <b>Умный роутинг</b> — подгружаем только релевантные куски базы (дешевле).{" "}
                     <b>Полный промпт</b> — отдаём всю базу знаний целиком: для моделей с
                     кэшированием контекста (DeepSeek), которым нужна вся информация сразу.
+                  </Text>
+                </div>
+
+                {/* Веб-поиск (плагин `web` OpenRouter). Платный отдельно от токенов. */}
+                <div>
+                  <Switch
+                    color="brand"
+                    label="Веб-поиск в чате"
+                    description="Модель ищет в интернете перед ответом — свежая фактура и меньше выдумок по нише клиента. В чате показывается «Ищу в интернете»."
+                    checked={settings.webSearch.enabled}
+                    onChange={(e) =>
+                      patch({
+                        webSearch: {
+                          ...settings.webSearch,
+                          enabled: e.currentTarget.checked,
+                        },
+                      })
+                    }
+                  />
+                  {settings.webSearch.enabled && (
+                    <NumberInput
+                      mt="sm"
+                      maw={220}
+                      label="Результатов на запрос"
+                      description="Каждый результат ≈ $0.004 сверх токенов."
+                      min={1}
+                      max={5}
+                      value={settings.webSearch.maxResults}
+                      onChange={(v) => {
+                        const n = Number(v);
+                        if (!Number.isFinite(n)) return;
+                        patch({
+                          webSearch: { ...settings.webSearch, maxResults: n },
+                        });
+                      }}
+                    />
+                  )}
+                  <Text size="xs" c="dimmed" mt={6}>
+                    ⚠️ Платно <b>отдельно от токенов</b>: при 3 результатах это ≈ +$0,012 к
+                    каждому запросу — сопоставимо со стоимостью самой генерации. Кэш промпта
+                    поиск не ломает (выдача подмешивается после кэшируемого префикса), на
+                    болтовню («привет», «спасибо») не тратится. Работает только на OpenRouter.
                   </Text>
                 </div>
 

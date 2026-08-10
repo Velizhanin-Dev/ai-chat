@@ -93,6 +93,24 @@ section[id] {
     transform: translateY(0);
   }
 }
+/* Глобус перед фразой на время веб-поиска. vertical-align вместо flex — индикатор
+   инлайновый (Text component="span"), флекс порвал бы строку с точками. */
+.thinking-globe {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 5px;
+  color: var(--mantine-color-brand-6);
+  animation: thinking-globe-pulse 1.8s ease-in-out infinite;
+}
+@keyframes thinking-globe-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
 .thinking-dots {
   display: inline-block;
   margin-left: 2px;
@@ -128,6 +146,10 @@ section[id] {
   .thinking-dots span {
     animation: none;
     opacity: 0.6;
+  }
+  .thinking-globe {
+    animation: none;
+    opacity: 0.8;
   }
 }
 
@@ -289,6 +311,57 @@ section[id] {
   .md-quote-copy {
     opacity: 0.6;
   }
+}
+
+/* «Борода» под ответом ассистента: дата слева, «Копировать» справа.
+   Отрицательные margin гасят padding баббла (Paper p="sm") — полоса идёт от края
+   до края, как просили «без отступов». Фона нет, только линия сверху, поэтому
+   скруглённые углы баббла не нужно ничем перекрывать. */
+.msg-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px calc(var(--mantine-spacing-sm) * -1) calc(var(--mantine-spacing-sm) * -1);
+  padding: 5px 10px;
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+.msg-foot-time {
+  font-size: 0.6875rem;
+  color: var(--mantine-color-dimmed);
+  white-space: nowrap;
+}
+/* Действия справа. У сценариев их три (только сценарий / файл / копировать
+   целиком) — на узком экране переносим, а не выдавливаем за край баббла. */
+.msg-foot-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.msg-foot-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.6875rem;
+  line-height: 1;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.msg-foot-copy:hover,
+.msg-foot-copy:focus-visible {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-brand-6, #ec582e);
 }
 /* Мигающая каретка, пока ответ «печатается» (только стриминговый баббл —
    класс md-streaming). Сидит инлайн в конце последнего блока через ::after. */
@@ -729,14 +802,19 @@ section[id] {
 }
 
 /* Мобильное верхнее меню (TopNav) внутри колонки контента: тянем «в край»,
-   гася горизонтальный padding обёртки контента (base xs, sm+ md), чтобы меню и
-   его выпадашка были во всю ширину экрана. Только < lg (где меню и рендерится). */
+   гася padding обёртки контента (base xs, sm+ md), чтобы меню и его выпадашка
+   были во всю ширину экрана. Только < lg (где меню и рендерится).
+   margin-top гасим тоже: иначе между шапкой приложения и полосой меню оставался
+   зазор в padding обёртки, и подпись раздела визуально «проваливалась» ниже
+   середины полосы. */
 .topnav-bleed {
+  margin-top: calc(var(--mantine-spacing-xs) * -1);
   margin-left: calc(var(--mantine-spacing-xs) * -1);
   margin-right: calc(var(--mantine-spacing-xs) * -1);
 }
 @media (min-width: 48em) {
   .topnav-bleed {
+    margin-top: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
     margin-right: calc(var(--mantine-spacing-md) * -1);
   }
@@ -798,6 +876,268 @@ section[id] {
   }
 }
 
+/* ── Круг разбора канала (ParamWheel) ─────────────────────────────────────────
+   Секторы = параметры продвижения, заполнение растёт из центра. Токены темы
+   держим здесь: внутри SVG media-query по схеме не применить. */
+.pw-wrap {
+  --pw-track: var(--mantine-color-gray-2);
+  --pw-grid: var(--mantine-color-gray-4);
+  --pw-core: var(--mantine-color-white);
+  --pw-label: var(--mantine-color-gray-7);
+}
+[data-mantine-color-scheme="dark"] .pw-wrap {
+  --pw-track: var(--mantine-color-dark-5);
+  --pw-grid: var(--mantine-color-dark-3);
+  --pw-core: var(--mantine-color-dark-7);
+  --pw-label: var(--mantine-color-dark-1);
+}
+.pw-hit {
+  cursor: pointer;
+  outline: none;
+}
+.pw-hit:focus-visible {
+  stroke: var(--mantine-color-brand-6);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--mantine-color-brand-6) 12%, transparent);
+}
+.pw-sector path:not(.pw-hit) {
+  transition: opacity 140ms ease;
+}
+.pw-sector:hover path:not(.pw-hit) {
+  opacity: 0.86;
+}
+.pw-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--pw-label);
+  cursor: pointer;
+}
+.pw-label-sel {
+  fill: var(--mantine-color-brand-6);
+}
+.pw-label-score {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.pw-overall {
+  font-size: 30px;
+  font-weight: 700;
+  fill: var(--mantine-color-text);
+}
+.pw-overall-cap {
+  font-size: 10px;
+  font-weight: 500;
+  fill: var(--mantine-color-dimmed);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pw-sector path:not(.pw-hit) {
+    transition: none;
+  }
+  .pw-sector:hover path:not(.pw-hit) {
+    opacity: 1;
+  }
+}
+
+/* Тултип сектора: идёт за курсором, поэтому не перехватывает события мыши —
+   иначе моргал бы на границе собственной карточки. */
+.pw-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  width: 250px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-md);
+}
+.pw-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.pw-tip-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.pw-tip-badge {
+  flex: none;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--mantine-color-white);
+}
+.pw-tip-good {
+  background: var(--mantine-color-teal-6);
+}
+.pw-tip-ok {
+  background: var(--mantine-color-brand-6);
+}
+.pw-tip-bad {
+  background: var(--mantine-color-red-6);
+}
+.pw-tip-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.pw-tip-norm,
+.pw-tip-about,
+.pw-tip-hint {
+  font-size: 0.6875rem;
+  color: var(--mantine-color-dimmed);
+  line-height: 1.35;
+}
+.pw-tip-norm {
+  margin-bottom: 6px;
+}
+.pw-tip-fact {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.pw-tip-about {
+  margin-bottom: 6px;
+}
+.pw-tip-hint {
+  padding-top: 6px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  color: var(--mantine-color-brand-6);
+}
+
+/* ── Раздел «Канал»: flat-поверхности ─────────────────────────────────────────
+   Вместо карточек с обводкой — плоские блоки на лёгком оттенке от фона. Границы
+   держим только там, где без них не читается (таблицы, инпуты). */
+.an-surface {
+  background: var(--mantine-color-gray-0);
+  border-radius: 14px;
+}
+[data-mantine-color-scheme="dark"] .an-surface {
+  background: var(--mantine-color-dark-6);
+}
+.an-acc-item {
+  background: var(--mantine-color-gray-0);
+  border: none;
+  border-radius: 14px;
+}
+[data-mantine-color-scheme="dark"] .an-acc-item {
+  background: var(--mantine-color-dark-6);
+}
+
+/* ── Матрица «упаковка ↔ содержание» ──────────────────────────────────────── */
+.pm-wrap {
+  --pm-median: var(--mantine-color-gray-4);
+  --pm-tick: var(--mantine-color-gray-6);
+}
+[data-mantine-color-scheme="dark"] .pm-wrap {
+  --pm-median: var(--mantine-color-dark-3);
+  --pm-tick: var(--mantine-color-dark-2);
+}
+.pm-q {
+  opacity: 0.055;
+}
+.pm-q-works {
+  fill: var(--mantine-color-teal-6);
+}
+.pm-q-packaging {
+  fill: var(--mantine-color-brand-6);
+}
+.pm-q-bait {
+  fill: var(--mantine-color-grape-6);
+}
+.pm-q-fail {
+  fill: var(--mantine-color-red-6);
+}
+.pm-median {
+  stroke: var(--pm-median);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.pm-qlabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+.pm-t-works {
+  fill: var(--mantine-color-teal-7);
+}
+.pm-t-packaging {
+  fill: var(--mantine-color-brand-7);
+}
+.pm-t-bait {
+  fill: var(--mantine-color-grape-7);
+}
+.pm-t-fail {
+  fill: var(--mantine-color-red-7);
+}
+[data-mantine-color-scheme="dark"] .pm-t-works {
+  fill: var(--mantine-color-teal-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-packaging {
+  fill: var(--mantine-color-brand-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-bait {
+  fill: var(--mantine-color-grape-4);
+}
+[data-mantine-color-scheme="dark"] .pm-t-fail {
+  fill: var(--mantine-color-red-4);
+}
+.pm-tick,
+.pm-axis {
+  font-size: 10px;
+  fill: var(--pm-tick);
+}
+.pm-axis {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pm-dot {
+  cursor: pointer;
+  stroke: var(--mantine-color-body);
+  stroke-width: 2;
+  transition: r 120ms ease, opacity 120ms ease;
+}
+.pm-dot:hover,
+.pm-dot:focus-visible {
+  r: 10;
+  outline: none;
+}
+.pm-dot-works {
+  fill: var(--mantine-color-teal-6);
+}
+.pm-dot-packaging {
+  fill: var(--mantine-color-brand-6);
+}
+.pm-dot-bait {
+  fill: var(--mantine-color-grape-6);
+}
+.pm-dot-fail {
+  fill: var(--mantine-color-red-6);
+}
+.pm-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  width: 240px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-md);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pm-dot {
+    transition: none;
+  }
+}
+
 /* Кликабельное превью внутри «липкого» тултипа графика роста. */
 .yt-tip-thumb {
   transition: transform 140ms ease, filter 140ms ease;
@@ -811,6 +1151,629 @@ section[id] {
     transition: none;
   }
   .yt-tip-thumb:hover {
+    transform: none;
+  }
+}
+
+/* ── Админка: чат поддержки (/admin/support) ────────────────────────────────
+   На мобиле окно переписки фиксированной высоты (список обращений стоит НАД
+   ним, оба должны помещаться при скролле страницы). На десктопе (≥ md, где
+   список уезжает в левую колонку) тянем чат до низа экрана: 100dvh минус
+   шапка админки (60) + вертикальные padding'и Main (2×24) + блок заголовка
+   раздела с gap (~80). Иначе под окном оставалась пустая треть экрана. */
+.admin-support-chat {
+  height: min(72vh, 700px);
+}
+@media (min-width: 62em) {
+  .admin-support-chat {
+    height: calc(100dvh - 190px);
+    min-height: 420px;
+  }
+}
+
+/* ── Лента быстрых действий над композером (components/Chat/QuickActions.tsx) ──
+   Сама лента и чипы — Mantine (ScrollArea type="never" + Button), здесь только
+   то, чего компонентами не выразить: стрелки поверх ленты по краям. */
+.qa-arrow {
+  position: absolute;
+  top: 50%;
+  /* Центрирование живёт на ОБЁРТКЕ: у Mantine ActionIcon свой
+     :active { transform: translateY(...) }, который затёр бы этот сдвиг, и на
+     нажатии стрелка проваливалась вниз. */
+  transform: translateY(-50%);
+  /* Выше чипов ленты: иначе клик по стрелке проходит на кнопку под ней
+     (ScrollArea и Button создают свой контекст наложения). */
+  z-index: 10;
+  display: flex;
+  box-shadow: var(--mantine-shadow-sm);
+  border-radius: 50%;
+}
+
+/* ── Ачивки (геймификация) ─────────────────────────────────────────────── */
+/* docs/achievements.md. Трекер-«профиль игрока»: тёплая подложка с брендовым
+   свечением, герой-метрика, подсвеченная цель и стена медалей. Должно мотивировать
+   даже на нуле, поэтому locked-медали не мёртво-серые, а с мягким тинтом. */
+
+.ach-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: clamp(16px, 2.4vw, 22px);
+  height: 100%;
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--mantine-color-brand-6) 12%, transparent), transparent 60%),
+    var(--mantine-color-gray-0);
+  border: 1px solid var(--mantine-color-gray-2);
+}
+[data-mantine-color-scheme="dark"] .ach-card {
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--mantine-color-brand-6) 20%, transparent), transparent 60%),
+    var(--mantine-color-dark-6);
+  border-color: var(--mantine-color-dark-4);
+}
+/* Плавающее брендовое пятно за героем — даёт «жизнь» пустому состоянию. */
+.ach-card::before {
+  content: "";
+  position: absolute;
+  top: -40px;
+  right: -30px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent), transparent 70%);
+  filter: blur(6px);
+  pointer-events: none;
+  animation: ach-float 9s ease-in-out infinite;
+}
+
+@keyframes ach-float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-14px, 12px); }
+}
+
+/* Герой: общий прогресс + серия/дни. */
+.ach-hero-num {
+  font-weight: 800;
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.ach-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+}
+[data-mantine-color-scheme="dark"] .ach-stat {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+
+/* Спотлайт ближайшей цели — фокус мотивации. */
+.ach-spotlight {
+  position: relative;
+  border-radius: 16px;
+  padding: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 10%, transparent), transparent 70%);
+  border: 1px solid color-mix(in srgb, var(--mantine-color-brand-6) 32%, transparent);
+}
+
+/* Стена медалей — сетка плиток. */
+.ach-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 10px 6px;
+}
+.ach-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 2px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+.ach-tile:hover,
+.ach-tile:focus-visible {
+  transform: translateY(-3px);
+  background: var(--mantine-color-body);
+  border-color: var(--mantine-color-gray-2);
+  outline: none;
+}
+[data-mantine-color-scheme="dark"] .ach-tile:hover,
+[data-mantine-color-scheme="dark"] .ach-tile:focus-visible {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 70%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+.ach-tile-label {
+  font-size: 0.6875rem;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--mantine-color-dimmed);
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.ach-tile-label.is-unlocked {
+  color: var(--mantine-color-text);
+  font-weight: 600;
+}
+
+/* Пипсы уровней (●●○) под медалью. */
+.ach-pips {
+  display: flex;
+  gap: 3px;
+}
+.ach-pip {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mantine-color-gray-4);
+}
+[data-mantine-color-scheme="dark"] .ach-pip {
+  background: var(--mantine-color-dark-3);
+}
+.ach-pip.on {
+  background: var(--mantine-color-brand-6);
+}
+
+/* Медаль: обёртка для свечения/пульса и press-squish. */
+.ach-medal {
+  position: relative;
+  line-height: 0;
+  transition: transform 140ms ease;
+}
+.ach-medal.is-unlocked {
+  filter: drop-shadow(0 3px 10px color-mix(in srgb, var(--mantine-color-brand-6) 35%, transparent));
+}
+.ach-medal.clickable {
+  cursor: pointer;
+}
+.ach-medal.clickable:active {
+  transform: scale(0.94);
+}
+.ach-medal.pulse::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--mantine-color-brand-6);
+  animation: ach-pulse 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes ach-pulse {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+/* Точка «новое» на свежевзятой медали. */
+.ach-new-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--mantine-color-brand-6, #ec582e);
+  border: 2px solid var(--mantine-color-body);
+  z-index: 2;
+  animation: ach-blip 1.6s ease-in-out infinite;
+}
+[data-mantine-color-scheme="dark"] .ach-new-dot {
+  border-color: var(--mantine-color-dark-6);
+}
+@keyframes ach-blip {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mantine-color-brand-6) 55%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--mantine-color-brand-6) 0%, transparent); }
+}
+
+/* Стаггер-появление плиток. */
+.ach-rise {
+  animation: ach-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes ach-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* KPI-строка внутри карточки канала (показатели за период). Та же подложка, что
+   у стат-чипов достижений (.ach-stat) — для единого языка в первой строке раздела. */
+.kpi-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 14px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  transition: border-color 150ms ease, transform 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .kpi-row {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+.kpi-row:hover {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-gray-2));
+}
+[data-mantine-color-scheme="dark"] .kpi-row:hover {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-dark-4));
+}
+/* Пилюля дельты роста — цветной тинт + стрелка. */
+.kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Дорожная карта канала (шаги) ──────────────────────────────────────── */
+.rm-step {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  transition: border-color 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+[data-mantine-color-scheme="dark"] .rm-step {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 55%, transparent);
+  border-color: var(--mantine-color-dark-4);
+}
+/* Активный (открытый) шаг — акцентная рамка + лёгкое свечение, чтобы вести взгляд. */
+.rm-step.is-open {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent);
+}
+.rm-step.is-locked {
+  opacity: 0.62;
+}
+.rm-step.is-done {
+  border-color: color-mix(in srgb, var(--mantine-color-teal-6) 40%, transparent);
+}
+/* Кружок-маркер шага (номер / замок / галочка). */
+.rm-marker {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+/* ── Контент-план (канбан) ─────────────────────────────────────────────── */
+.cp-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 62em) {
+  .cp-board {
+    grid-template-columns: 1fr;
+  }
+}
+.cp-col {
+  border-radius: 16px;
+  padding: 12px;
+  /* Фон колонки заметный: колонка должна читаться как ОБЛАСТЬ, куда кладут, а не
+     как просто список. Раньше подложка была почти сливающейся, и люди не понимали,
+     что карточки перетаскиваются. */
+  background: var(--mantine-color-gray-1);
+  min-height: 160px;
+  border: 2px dashed transparent;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+[data-mantine-color-scheme="dark"] .cp-col {
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 85%, transparent);
+}
+/* Цветная полоса статуса по верхнему краю — колонки различимы с одного взгляда,
+   цвет совпадает с точкой в заголовке. */
+.cp-col-head {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  margin-bottom: 10px;
+}
+/* Пока тащим карточку — все колонки показывают, что готовы принять. */
+.cp-col-target {
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 35%, transparent);
+}
+/* Колонка под курсором — акцентная рамка и подложка. */
+.cp-col-over {
+  border-color: var(--mantine-color-brand-6);
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 10%, var(--mantine-color-gray-1));
+}
+[data-mantine-color-scheme="dark"] .cp-col-over {
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 16%, var(--mantine-color-dark-6));
+}
+/* Пустая колонка — не просто слово «Пусто», а видимая зона сброса. */
+.cp-col-empty {
+  display: grid;
+  place-items: center;
+  min-height: 84px;
+  border-radius: 10px;
+  border: 1px dashed var(--mantine-color-default-border);
+  text-align: center;
+  padding: 8px;
+}
+.cp-col-over .cp-col-empty {
+  border-color: var(--mantine-color-brand-6);
+}
+.cp-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 10px;
+}
+.cp-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+/* Карточка ролика. */
+.cp-card {
+  position: relative;
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-gray-2);
+  /* grab, а не pointer: курсор — первая подсказка, что карточку можно тащить. */
+  cursor: grab;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .cp-card {
+  border-color: var(--mantine-color-dark-4);
+}
+.cp-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--mantine-color-brand-6) 45%, var(--mantine-color-gray-2));
+  box-shadow: var(--mantine-shadow-sm);
+}
+.cp-card:active {
+  cursor: grabbing;
+}
+.cp-card + .cp-card {
+  margin-top: 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cp-col,
+  .cp-card {
+    transition: none;
+  }
+  .cp-card:hover {
+    transform: none;
+  }
+}
+/* Мини-превью привязанного ролика. */
+.cp-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+/* Панель ролика контент-плана: увеличенный отступ между подписью и инпутом
+   (по умолчанию Mantine прижимает label вплотную — читается тесно). */
+.cp-drawer .mantine-InputWrapper-label {
+  margin-bottom: 8px;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+/* Своя подпись для блоков без Input (статус, ВИСП, название) — тот же вид. */
+.cp-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Карточка внутри опорного блока (портрет ЦА, ступень Ханта, воронка). */
+.cp-block {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .cp-block {
+  background: color-mix(in srgb, var(--mantine-color-dark-7) 60%, transparent);
+}
+/* Сетка шортсов — плитками. */
+.cp-shorts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.cp-shorts .cp-card + .cp-card {
+  margin-top: 0;
+}
+
+/* Строка ролика в пикере привязки. */
+.cp-pick-row {
+  width: 100%;
+  padding: 8px;
+  border-radius: 10px;
+  transition: background 130ms ease;
+}
+.cp-pick-row:hover {
+  background: var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .cp-pick-row:hover {
+  background: var(--mantine-color-dark-6);
+}
+
+/* ВИСП-галочки на карточке. */
+.cp-visp {
+  display: inline-flex;
+  gap: 3px;
+}
+.cp-visp span {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  background: var(--mantine-color-gray-2);
+  color: var(--mantine-color-dimmed);
+}
+[data-mantine-color-scheme="dark"] .cp-visp span {
+  background: var(--mantine-color-dark-5);
+}
+.cp-visp span.on {
+  background: var(--mantine-color-brand-6);
+  color: #fff;
+}
+
+/* Строка ачивки в модалке — мягкая подложка. */
+.ach-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-gray-0);
+  transition: background 150ms ease;
+}
+[data-mantine-color-scheme="dark"] .ach-row {
+  background: var(--mantine-color-dark-6);
+}
+.ach-row.is-unlocked {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 8%, transparent), transparent 60%), var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .ach-row.is-unlocked {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mantine-color-brand-6) 14%, transparent), transparent 60%), var(--mantine-color-dark-6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ach-card::before,
+  .ach-medal.pulse::after,
+  .ach-new-dot,
+  .ach-rise {
+    animation: none;
+  }
+  .ach-tile,
+  .ach-medal {
+    transition: none;
+  }
+}
+
+/* ── Карточка ленты YouTube (предпросмотр превью) ───────────────────────────
+   Превью показываем не «картинкой в рамке», а так, как его увидит зритель:
+   рядом с названием в две строки, аватаркой и служебной строкой. Только в этом
+   окружении видно, читается ли текст и не дублирует ли он название. */
+.ytc-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--mantine-color-dark-4);
+}
+.ytc-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Плашка длительности — как у YouTube: правый нижний угол, полупрозрачный фон. */
+.ytc-duration {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.ytc-avatar {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--mantine-color-brand-6);
+  display: grid;
+  place-items: center;
+}
+.ytc-avatar-letter {
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+}
+/* Название — ровно две строки, как в ленте: третья обрезается многоточием.
+   Это и есть проверка «влезает ли мысль», ради которой карточка нужна. */
+.ytc-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ytc-verified {
+  color: var(--mantine-color-dimmed);
+  flex: none;
+}
+.ytc-dots {
+  color: var(--mantine-color-dimmed);
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ── Лендинг: карточки разделов продукта (Landing/Workspace.tsx) ─────────────
+   Блок ДОПОЛНЯЕТ лендинг рассказом про разделы вокруг чата. Карточка — мягкая
+   поверхность на тёплой подложке секции; бордер видимый в обеих темах, чтобы
+   карточки не сливались с фоном (в тёмной подложка почти совпадает с body). */
+.lp-workspace-card {
+  height: 100%;
+  padding: clamp(20px, 2.4vw, 28px);
+  border-radius: var(--radius-md);
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-xs);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+.lp-workspace-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--mantine-shadow-md);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+/* Маркер пункта: смысл несёт текст, точка только поддерживает ритм списка. */
+.lp-workspace-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 7px;
+  flex: none;
+  background: var(--color-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-workspace-card {
+    transition: none;
+  }
+  .lp-workspace-card:hover {
     transform: none;
   }
 }

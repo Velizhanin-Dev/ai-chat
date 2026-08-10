@@ -27,6 +27,8 @@ interface ChatState {
   drafting: boolean;
   // Стрим/ошибка относятся к активному диалогу (одновременно генерируется один).
   isLoading: boolean;
+  // Идёт веб-поиск перед генерацией (индикатор «Ищу в интернете»).
+  isSearching: boolean;
   streamingContent: string;
   error: string | null;
   // Идёт ленивая подгрузка сообщений открытого диалога с сервера.
@@ -55,6 +57,7 @@ const initialState: ChatState = {
   activeId: null,
   drafting: false,
   isLoading: false,
+  isSearching: false,
   streamingContent: "",
   error: null,
   messagesLoading: false,
@@ -123,10 +126,26 @@ const chatSlice = createSlice({
     },
     setLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
+      // Новый запрос / конец генерации — сбрасываем признак веб-поиска, иначе
+      // следующий ответ откроется с «Ищу в интернете», хотя поиска не было.
+      if (!action.payload) state.isSearching = false;
     },
-    // Клик по плитке стартового экрана — подставить текст в композер и сфокусировать.
+    // Идёт веб-поиск перед генерацией (сервер прислал `searching` в SSE).
+    setSearching(state, action: PayloadAction<boolean>) {
+      state.isSearching = action.payload;
+    },
+    // Подставить текст в композер и сфокусировать. Зовётся и с уже открытого чата
+    // (плитки, быстрые действия), и ИЗ ДРУГИХ РАЗДЕЛОВ перед переходом в чат
+    // (дорожная карта, «Сгенерировать сценарий» в контент-плане).
     prefillInput(state, action: PayloadAction<string>) {
       state.prefill = { text: action.payload, seq: state.prefill.seq + 1 };
+    },
+    // Композер забрал текст. ⚠️ Обязательный шаг: реагировать только на рост seq
+    // нельзя — при переходе из другого раздела prefill ставится ДО монтирования
+    // ChatInput, и тот видит уже новый seq как «начальный» (текст терялся).
+    // Поэтому потребитель гасит текст, а не сравнивает счётчики.
+    prefillConsumed(state) {
+      state.prefill = { text: "", seq: state.prefill.seq };
     },
     setMessagesLoading(state, action: PayloadAction<boolean>) {
       state.messagesLoading = action.payload;
@@ -186,7 +205,9 @@ export const {
   renameConversation,
   addMessage,
   setLoading,
+  setSearching,
   prefillInput,
+  prefillConsumed,
   setMessagesLoading,
   setConversationMessages,
   setStreamingContent,

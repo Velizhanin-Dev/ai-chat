@@ -41,6 +41,22 @@ export interface AppSettings {
   // независимо от provider выше (чат может работать на Claude/GLM). Дефолт задаёт
   // IMAGE_DEFAULT_MODEL в src/lib/llm/image.ts (Nano Banana Pro), "" = дефолт.
   imageModel: string;
+  // Веб-поиск в чате (только OpenRouter — плагин `web` в теле запроса). Даёт модели
+  // свежую фактуру и снижает шанс выдуманной отраслевой конкретики.
+  // ⚠️ ПЛАТНЫЙ отдельно от токенов: замерено ~$0.004 за результат (3 результата =
+  // +$0.012 к запросу, сопоставимо со стоимостью самой генерации). Поэтому по
+  // умолчанию ВЫКЛЮЧЕН и включается осознанно.
+  // Кэш промпта плагин НЕ ломает — проверено замером: выдача вставляется ПОСЛЕ
+  // кэшируемого префикса (cached_tokens с плагином 13135/14520 против 11406/12412
+  // без него). Так что full-режим на DeepSeek от него не страдает.
+  webSearch: {
+    enabled: boolean;
+    // Сколько результатов запрашивать (1–5). Каждый — деньги, дефолт 3.
+    maxResults: number;
+  };
+  // Пробный период: сколько часов он живёт. Число ЗАПРОСОВ в нём — отдельная
+  // ручка: Plan.limits.requests тарифа start (редактор тарифов). Здесь только срок.
+  trialHours: number;
   // Режим «скоро запуск»: таймер в герое + скрытые тарифы на лендинге.
   launch: {
     countdownEnabled: boolean;
@@ -57,6 +73,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   openrouterParams: {},
   openrouterProvider: "",
   imageModel: "",
+  trialHours: 1,
+  webSearch: { enabled: false, maxResults: 3 },
   launch: { countdownEnabled: false, targetAt: null },
 };
 
@@ -69,6 +87,26 @@ const KEY_OR_PARAMS = "openrouter_params";
 const KEY_OR_PROVIDER = "openrouter_provider";
 const KEY_ROUTING = "routing";
 const KEY_IMAGE_MODEL = "image_model";
+const KEY_WEB_SEARCH = "web_search";
+const KEY_TRIAL_HOURS = "trial_hours";
+
+// Кламп срока пробного периода: 1–168 часов (неделя). Ноль превратил бы пробный
+// период в «истёк сразу», а безлимит — в бесплатный тариф.
+export function normalizeTrialHours(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(168, Math.max(1, Math.round(n))) : 1;
+}
+
+// Кламп числа результатов поиска: 1–5. Каждый результат платный (~$0.004),
+// поэтому потолок низкий и осознанный.
+export function normalizeWebSearch(v: unknown): AppSettings["webSearch"] {
+  const raw = (v ?? {}) as { enabled?: unknown; maxResults?: unknown };
+  const n = Number(raw.maxResults);
+  return {
+    enabled: Boolean(raw.enabled),
+    maxResults: Number.isFinite(n) ? Math.min(5, Math.max(1, Math.round(n))) : 3,
+  };
+}
 
 function normalizeProviderValue(v: unknown): LlmProvider {
   return v === "glm" || v === "openrouter" ? v : "claude";
@@ -94,6 +132,8 @@ function normalize(map: Map<string, unknown>): AppSettings {
     openrouterParams: normalizeOpenRouterParams(orParams),
     openrouterProvider: typeof orProvider === "string" ? orProvider : "",
     imageModel: typeof imageModel === "string" ? imageModel : "",
+    webSearch: normalizeWebSearch(map.get(KEY_WEB_SEARCH)),
+    trialHours: normalizeTrialHours(map.get(KEY_TRIAL_HOURS)),
     routing: routing === "full" ? "full" : "smart",
     launch: {
       countdownEnabled: Boolean(launch?.countdownEnabled),
@@ -151,6 +191,11 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
     openrouterProvider: input.openrouterProvider ?? cur.openrouterProvider,
     imageModel: input.imageModel ?? cur.imageModel,
     routing: input.routing ?? cur.routing,
+    webSearch: input.webSearch
+      ? normalizeWebSearch({ ...cur.webSearch, ...input.webSearch })
+      : cur.webSearch,
+    trialHours:
+      input.trialHours == null ? cur.trialHours : normalizeTrialHours(input.trialHours),
     launch: { ...cur.launch, ...(input.launch ?? {}) },
   };
   await prisma.$transaction([
@@ -168,6 +213,19 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_OR_MODEL },
       create: { key: KEY_OR_MODEL, value: next.openrouterModel },
       update: { value: next.openrouterModel },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_TRIAL_HOURS },
+      create: { key: KEY_TRIAL_HOURS, value: next.trialHours },
+      update: { value: next.trialHours },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_WEB_SEARCH },
+      create: {
+        key: KEY_WEB_SEARCH,
+        value: next.webSearch as unknown as Prisma.InputJsonValue,
+      },
+      update: { value: next.webSearch as unknown as Prisma.InputJsonValue },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_OR_PARAMS },

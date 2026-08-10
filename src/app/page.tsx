@@ -1,6 +1,7 @@
 import LandingNav from "@/components/Landing/LandingNav";
 import Hero from "@/components/Landing/Hero";
 import Features from "@/components/Landing/Features";
+import Workspace from "@/components/Landing/Workspace";
 import Showcase from "@/components/Landing/Showcase";
 import Pricing from "@/components/Landing/Pricing";
 import FinalCta from "@/components/Landing/FinalCta";
@@ -21,6 +22,8 @@ export default async function Home() {
       <main>
         <Hero launchTarget={launchMode ? launch.targetAt : null} />
         <Features />
+        {/* Разделы вокруг чата: аналитика, контент-план, превью, дорожная карта. */}
+        <Workspace />
         <Showcase />
         {!launchMode && <Pricing plans={plans} />}
         <FinalCta hidePricing={launchMode} launchMode={launchMode} />

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  Accordion,
   ActionIcon,
   Alert,
   Anchor,
@@ -11,23 +12,30 @@ import {
   Badge,
   Box,
   Button,
+  Grid,
   CopyButton,
   Divider,
   Group,
   Loader,
   Modal,
+  NumberInput,
   Paper,
   Progress,
   SegmentedControl,
   SimpleGrid,
   Skeleton,
   Stack,
+  Center,
+  Popover,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
+  UnstyledButton,
 } from "@mantine/core";
-import { AreaChart, BarChart, DonutChart } from "@mantine/charts";
+import { AreaChart, BarChart, DonutChart, LineChart } from "@mantine/charts";
+import { DatePicker } from "@mantine/dates";
+import "dayjs/locale/ru";
 import {
   IconBrandYoutube,
   IconUsers,
@@ -48,16 +56,30 @@ import {
   IconCopy,
   IconCircleCheck,
   IconAlertTriangle,
+  IconChartRadar,
+  IconTextCaption,
+  IconCalendar,
 } from "@tabler/icons-react";
+import ChannelDiagnostics from "./ChannelDiagnostics";
+import AchievementsCard from "@/components/Achievements/AchievementsCard";
+import RoadmapCard from "./RoadmapCard";
+import PackagingMatrix, {
+  buildMatrix,
+  quadrantMeta,
+  type MatrixKind,
+  type MatrixPoint,
+} from "./PackagingMatrix";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import {
   apiYouTubeData,
+  type PeriodSelection,
   apiYouTubeVideos,
   apiAnalyzeVideo,
   getVideoDetailCached,
   prefetchVideoDetail,
   writeHookPrompt,
+  writeThumbTextsPrompt,
   formatCount,
   formatFull,
   formatDuration,
@@ -86,6 +108,10 @@ import {
   type TimelineRelease,
   type Granularity,
   type AudienceData,
+  type ContentSplit,
+  type ContentSplitRow,
+  type DailySplit,
+  type DailyPoint,
 } from "@/lib/youtube-types";
 
 // Подпись периода для заголовков/капшенов.
@@ -123,7 +149,14 @@ export default function ChannelDashboard() {
 
   const [phase, setPhase] = useState<Phase>({ s: "loading" });
   const [refreshing, setRefreshing] = useState(false);
-  const [period, setPeriod] = useState<number>(28);
+  // Период: пресет (число дней) или произвольный диапазон из календаря.
+  // Держим одним состоянием — оно же уходит в запрос и в ключ кэша на сервере.
+  const [period, setPeriod] = useState<PeriodSelection>(28);
+  const customRange = typeof period === "object" ? period : null;
+  // Разбор канала по параметрам продвижения — отдельная модалка (см. ChannelDiagnostics).
+  const [diagOpen, setDiagOpen] = useState(false);
+  const router = useRouter();
+  const dashUserId = useAppSelector((st) => st.auth.user?.id ?? "");
 
   const load = useCallback(
     async (soft: boolean, force = false) => {
@@ -151,6 +184,26 @@ export default function ChannelDashboard() {
     load(soft);
   }, [load]);
 
+  // «Слабый CTR» — собираем список реальных роликов (за период, иначе из ленты) и
+  // уводим в чат с готовым разбором упаковки.
+  const fixCtr = () => {
+    if (phase.s !== "ready") return;
+    // periodVideos — ВСЕ ролики с просмотрами за период (их может не быть, если
+    // разрез Analytics не пришёл), иначе лента последних.
+    const src = phase.data.periodVideos?.length
+      ? phase.data.periodVideos
+      : (phase.data.videos ?? []);
+    writeThumbTextsPrompt(
+      dashUserId,
+      src.map((v) => ({
+        title: v.title,
+        views: v.viewCount,
+        retention: v.avgViewPercentage ?? null,
+      }))
+    );
+    router.push(`/${projectId}/chat`);
+  };
+
   return (
     <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }} py="md">
       <Box px={{ base: "xs", sm: "md" }}>
@@ -165,15 +218,60 @@ export default function ChannelDashboard() {
                   обновлено {formatTime(phase.data.fetchedAt)}
                 </Text>
               )}
+              <Button
+                color="brand"
+                size="sm"
+                radius="md"
+                leftSection={<IconChartRadar size={16} />}
+                onClick={() => setDiagOpen(true)}
+                visibleFrom="sm"
+              >
+                Разобрать канал
+              </Button>
+              {/* Слабый CTR — уводим в чат с РАЗБОРОМ реальных роликов канала, а не
+                  с абстрактной просьбой «дай названия по ВИСП»: ассистент видит
+                  текущую упаковку с цифрами и переписывает именно её. */}
+              <Button
+                variant="light"
+                color="brand"
+                size="sm"
+                radius="md"
+                leftSection={<IconTextCaption size={16} />}
+                onClick={fixCtr}
+                visibleFrom="md"
+              >
+                Слабый CTR — переписать превью
+              </Button>
+              <Tooltip label="Разобрать канал по параметрам продвижения" withArrow>
+                <ActionIcon
+                  variant="filled"
+                  color="brand"
+                  size="lg"
+                  radius="md"
+                  onClick={() => setDiagOpen(true)}
+                  hiddenFrom="sm"
+                  aria-label="Разобрать канал по параметрам продвижения"
+                >
+                  <IconChartRadar size={18} />
+                </ActionIcon>
+              </Tooltip>
               <SegmentedControl
                 size="sm"
                 radius="md"
                 color="brand"
-                value={String(period)}
+                // При произвольном диапазоне ни один пресет не активен: value=""
+                // (Mantine снимает подсветку), выбранное показывает кнопка рядом.
+                value={customRange ? "" : String(period)}
                 onChange={(v) => setPeriod(Number(v))}
                 data={PERIOD_OPTIONS}
                 disabled={refreshing}
                 aria-label="Период аналитики"
+              />
+              <CustomPeriodPicker
+                value={customRange}
+                disabled={refreshing}
+                onApply={(r) => setPeriod(r)}
+                onReset={() => setPeriod(28)}
               />
               <Tooltip label="Обновить данные из YouTube" withArrow>
                 <ActionIcon
@@ -200,13 +298,25 @@ export default function ChannelDashboard() {
         {phase.s === "error" && <ErrorState msg={phase.msg} onRetry={() => load(false)} />}
         {phase.s === "ready" && <Dashboard data={phase.data} />}
       </Box>
+
+      {projectId && (
+        <ChannelDiagnostics
+          projectId={projectId}
+          opened={diagOpen}
+          onClose={() => setDiagOpen(false)}
+        />
+      )}
     </Box>
   );
 }
 
 // ── Загруженный дашборд ───────────────────────────────────────────────────────
 
-function Dashboard({ data }: { data: YouTubeData }) {
+function Dashboard({
+  data,
+}: {
+  data: YouTubeData;
+}) {
   const params = useParams();
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
   const ch = data.channel;
@@ -292,82 +402,65 @@ function Dashboard({ data }: { data: YouTubeData }) {
     [videosById]
   );
 
+  // Матрица «упаковка ↔ содержание» и очередь «что чинить» — из уже загруженных
+  // роликов (нужны удержание и просмотры) + подписки по роликам из payload.
+  // Считаем ОТДЕЛЬНО для лонгов и шортсов: медианы внутри своего типа, иначе
+  // шортсы (другие охваты и досмотры) утягивают границы и все лонги валятся в
+  // «провал». Переключатель выбирает, какую матрицу показывать.
+  const [matrixKind, setMatrixKind] = useState<MatrixKind | null>(null);
+  // Источник — periodVideos (ВСЕ ролики с просмотрами за выбранный период, до
+  // 200, приходят одним разрезом Analytics), а НЕ лента `videos`: та грузится
+  // постранично по скроллу, и матрица зависела бы от того, сколько пользователь
+  // докрутил. Фолбэк на ленту — если Analytics не отдал разрез по видео.
+  const matrixSource = data.periodVideos?.length ? data.periodVideos : videos;
+  const matrixLong = useMemo(
+    () => buildMatrix(matrixSource, data.subsByVideo, "long"),
+    [matrixSource, data.subsByVideo]
+  );
+  const matrixShorts = useMemo(
+    () => buildMatrix(matrixSource, data.subsByVideo, "shorts"),
+    [matrixSource, data.subsByVideo]
+  );
+  const hasLong = matrixLong.points.length >= 3;
+  const hasShorts = matrixShorts.points.length >= 3;
+  // Переключатель доступен ВСЕГДА (иначе непонятно, что раздел умеет оба типа),
+  // но стартуем с того, где данные есть: на канале из одних шортсов открывать
+  // пустую матрицу лонгов бессмысленно. null = пользователь ещё не выбирал.
+  const effectiveKind: MatrixKind = matrixKind ?? (hasLong ? "long" : "shorts");
+  const matrix = effectiveKind === "shorts" ? matrixShorts : matrixLong;
+  // У выбранного типа мало роликов для матрицы (нужно ≥3 точки) — рисуем
+  // заглушку вместо графика, а не прячем секцию.
+  const matrixEmpty = matrix.points.length < 3;
+  // Порядок очереди: сперва то, где теряем больше всего — «кликнули и ушли» на
+  // хорошем охвате, потом непроданный хороший контент, потом провалы.
+  const fixQueue = useMemo(() => {
+    const rank: Record<string, number> = { bait: 0, packaging: 1, fail: 2, works: 3 };
+    return matrix.points
+      .filter((p) => p.quadrant !== "works")
+      .sort((a, b) => rank[a.quadrant] - rank[b.quadrant] || b.video.viewCount - a.video.viewCount)
+      .slice(0, 6);
+  }, [matrix.points]);
+
   if (!ch) return null;
 
   return (
     <Stack gap="lg">
-      {/* Шапка канала */}
-      <Paper withBorder radius="lg" style={{ overflow: "hidden" }}>
-        <Box
-          style={{
-            height: 132,
-            background: ch.banner
-              ? `center / cover no-repeat url("${ch.banner}=w1280")`
-              : "linear-gradient(120deg, var(--mantine-color-brand-6), var(--mantine-color-brand-8))",
-          }}
-        />
-        <Group
-          gap="md"
-          wrap="nowrap"
-          align="flex-end"
-          px={{ base: "md", sm: "lg" }}
-          pb="md"
-          style={{ marginTop: -36 }}
-        >
-          <Avatar
-            src={ch.thumbnail}
-            size={88}
-            radius="50%"
-            color="red"
-            style={{ border: "4px solid var(--mantine-color-body)", flexShrink: 0 }}
-          >
-            <IconBrandYoutube size={44} />
-          </Avatar>
-          <Box style={{ minWidth: 0, paddingBottom: 4 }}>
-            <Title order={3} fz={{ base: "1.15rem", sm: "1.4rem" }} lineClamp={1}>
-              {ch.title}
-            </Title>
-            <Group gap="xs" wrap="wrap">
-              {ch.customUrl && (
-                <Anchor
-                  href={`https://www.youtube.com/${ch.customUrl}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="sm"
-                  c="dimmed"
-                >
-                  <Group gap={4} wrap="nowrap">
-                    {ch.customUrl}
-                    <IconExternalLink size={12} />
-                  </Group>
-                </Anchor>
-              )}
-              {!ch.hiddenSubscriberCount && (
-                <Text size="sm" c="dimmed">
-                  {formatCount(ch.subscriberCount)} подписчиков
-                </Text>
-              )}
-              <Text size="sm" c="dimmed">
-                · {formatCount(ch.viewCount)} просмотров
-              </Text>
-              <Text size="sm" c="dimmed">
-                · {formatCount(ch.videoCount)} видео
-              </Text>
-            </Group>
-          </Box>
-        </Group>
-        {ch.description && (
-          <Text size="sm" c="dimmed" px={{ base: "md", sm: "lg" }} pb="md" lineClamp={2}>
-            {ch.description}
-          </Text>
-        )}
-      </Paper>
+      {/* Строка 1: канал (+ показатели за период внутри блока) + достижения */}
+      <Grid columns={8} gutter="md">
+        <Grid.Col span={{ base: 8, md: 3 }}>
+          <ChannelCard ch={ch} period={period} />
+        </Grid.Col>
+        <Grid.Col span={{ base: 8, md: 5 }}>
+          <AchievementsCard />
+        </Grid.Col>
+      </Grid>
 
-      {/* KPI-карточки: метрики за период с дельтой роста vs прошлый период */}
-      {period ? (
-        <PeriodKpis period={period} />
-      ) : (
-        // Аналитика недоступна — показываем лайфтайм-тоталы без дельт.
+      {/* Дорожная карта «что чинить по шагам» (docs/channel-roadmap.md). */}
+      {projectId && <RoadmapCard projectId={projectId} />}
+
+      {/* Метрики канала за всё время — только когда периода нет (у периода KPI
+          теперь живут ВНУТРИ карточки канала, см. ChannelCard). */}
+      {!period && (
         <SimpleGrid cols={{ base: 2, md: 3 }} spacing="md">
           <StatCard
             icon={<IconUsers size={20} />}
@@ -393,48 +486,121 @@ function Dashboard({ data }: { data: YouTubeData }) {
         </SimpleGrid>
       )}
 
-      {/* Рост канала: просмотры + прирост подписчиков по видео-драйверам + релизы.
-          Основной блок — таймлайн (2 синхронных графика); если он недоступен, но
-          есть дневной ряд — фолбэк на простой график просмотров. */}
-      {data.subscribers?.timeline && data.subscribers.timeline.buckets.length > 0 ? (
-        <GrowthSection
-          sub={data.subscribers}
-          days={period?.days ?? 28}
-          onOpenVideo={openDriver}
-        />
-      ) : (
-        daily &&
-        daily.length > 0 && (
-          <Paper withBorder radius="lg" p="md">
-            <Text fw={600} mb="md">
-              Просмотры {periodLabel(period?.days ?? 28)}
-            </Text>
-            <AreaChart
-              h={240}
-              data={daily.map((d) => ({
-                date: formatShortDate(d.date),
-                Просмотры: d.views,
-              }))}
-              dataKey="date"
-              series={[{ name: "Просмотры", color: "brand.6" }]}
-              curveType="monotone"
-              withGradient
-              withDots={false}
-              valueFormatter={(v) => formatFull(v)}
-              gridAxis="y"
-              tickLine="none"
-            />
-          </Paper>
-        )
+      {/* Строка 3: диагностика — матрица + очередь «что чинить» */}
+      {(hasLong || hasShorts) && (
+        <Grid columns={8} gutter="md">
+          <Grid.Col span={{ base: 8, lg: 5 }}>
+            <Box className="an-surface" p="md">
+              <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
+                <Box style={{ minWidth: 0 }}>
+                  <Text fw={600}>Что чинить</Text>
+                  <Text size="xs" c="dimmed" mb="sm">
+                    Точка — ролик. Правее — больше просмотров, выше — дольше смотрят. Нажми на
+                    точку, чтобы открыть разбор.
+                  </Text>
+                </Box>
+                {/* Переключатель типа контента — НЕ мелкий: матрица считает медианы
+                    ВНУТРИ типа, и от него зависит вся картина «что чинить». Раньше
+                    стоял size="xs" и терялся в шапке — люди не замечали, что раздел
+                    умеет и лонги, и шортсы. */}
+                <SegmentedControl
+                  size="md"
+                  radius="md"
+                  color="brand"
+                  value={effectiveKind}
+                  onChange={(v) => setMatrixKind(v as MatrixKind)}
+                  data={[
+                    { label: "Видео", value: "long" },
+                    { label: "Shorts", value: "shorts" },
+                  ]}
+                  style={{ flexShrink: 0, fontWeight: 600 }}
+                  aria-label="Тип контента для матрицы"
+                />
+              </Group>
+              {matrixEmpty ? (
+                <Center h={260}>
+                  <Text size="sm" c="dimmed" ta="center" maw={280}>
+                    {effectiveKind === "shorts"
+                      ? "Шортсов с аналитикой пока мало — нужно хотя бы три ролика."
+                      : "Обычных видео с аналитикой пока мало — нужно хотя бы три ролика."}
+                  </Text>
+                </Center>
+              ) : (
+                <PackagingMatrix
+                  points={matrix.points}
+                  medianRetention={matrix.medianRetention}
+                  onOpenVideo={setSelected}
+                  kind={effectiveKind}
+                />
+              )}
+            </Box>
+          </Grid.Col>
+          <Grid.Col span={{ base: 8, lg: 3 }}>
+            <FixQueue items={fixQueue} onOpen={setSelected} kind={effectiveKind} />
+          </Grid.Col>
+        </Grid>
       )}
 
-      {/* Источники трафика */}
-      {data.traffic && data.traffic.length > 0 && (
-        <TrafficSources traffic={data.traffic} days={period?.days ?? 28} />
-      )}
+      {/* Строка 4: динамика ОТДЕЛЬНО по лонгам и шортсам. В общем графике эти
+          две природы охвата смешиваются: всплеск шортса читается как «канал
+          вырос», хотя лонги в это время могли просесть. */}
+      <ContentTypeCharts split={data.dailySplit ?? null} totals={data.contentSplit ?? null} />
 
-      {/* Аудитория */}
-      {data.audience && <AudienceSection a={data.audience} days={period?.days ?? 28} />}
+      {/* Подробности: то, что нужно не каждый раз — под сворачиванием */}
+      <Accordion variant="separated" radius="lg" multiple classNames={{ item: "an-acc-item" }}>
+        {(data.subscribers?.timeline || (daily && daily.length > 0)) && (
+          <Accordion.Item value="growth">
+            <Accordion.Control icon={<IconChartArcs size={18} />}>Рост канала</Accordion.Control>
+            <Accordion.Panel>
+              {data.subscribers?.timeline && data.subscribers.timeline.buckets.length > 0 ? (
+                <GrowthSection
+                  sub={data.subscribers}
+                  days={period?.days ?? 28}
+                  subscribersNow={ch.subscriberCount}
+                  hiddenSubscribers={ch.hiddenSubscriberCount}
+                  onOpenVideo={openDriver}
+                />
+              ) : (
+                daily && (
+                  <AreaChart
+                    h={240}
+                    data={daily.map((d) => ({
+                      date: formatShortDate(d.date),
+                      Просмотры: d.views,
+                    }))}
+                    dataKey="date"
+                    series={[{ name: "Просмотры", color: "brand.6" }]}
+                    curveType="monotone"
+                    withGradient
+                    withDots={false}
+                    valueFormatter={(v) => formatFull(v)}
+                    gridAxis="y"
+                    tickLine="none"
+                  />
+                )
+              )}
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+        {data.traffic && data.traffic.length > 0 && (
+          <Accordion.Item value="traffic">
+            <Accordion.Control icon={<IconChartArcs size={18} />}>
+              Источники трафика
+            </Accordion.Control>
+            <Accordion.Panel>
+              <TrafficSources traffic={data.traffic} days={period?.days ?? 28} />
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+        {data.audience && (
+          <Accordion.Item value="audience">
+            <Accordion.Control icon={<IconUsers size={18} />}>Аудитория</Accordion.Control>
+            <Accordion.Panel>
+              <AudienceSection a={data.audience} days={period?.days ?? 28} />
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+      </Accordion>
 
       {/* Видео канала — все ролики, догружаются постранично при доскролле */}
       <Box>
@@ -512,6 +678,297 @@ function Dashboard({ data }: { data: YouTubeData }) {
   );
 }
 
+// Карточка канала — первая колонка первой строки. Компактная: тонкий баннер,
+// аватар, счётчики и описание в две строки.
+function ChannelCard({
+  ch,
+  period,
+}: {
+  ch: NonNullable<YouTubeData["channel"]>;
+  period: PeriodComparison | null;
+}) {
+  return (
+    <Box className="an-surface" style={{ overflow: "hidden", height: "100%" }}>
+      <Box
+        style={{
+          height: 72,
+          background: ch.banner
+            ? `center / cover no-repeat url("${ch.banner}=w1280")`
+            : "linear-gradient(120deg, var(--mantine-color-brand-6), var(--mantine-color-brand-8))",
+        }}
+      />
+      <Box px="md" pb="md" style={{ marginTop: -28 }}>
+        <Avatar
+          src={ch.thumbnail}
+          size={64}
+          radius="50%"
+          color="red"
+          style={{ border: "4px solid var(--mantine-color-body)" }}
+        >
+          <IconBrandYoutube size={32} />
+        </Avatar>
+        <Title order={3} fz="1.15rem" mt="xs" lineClamp={1}>
+          {ch.title}
+        </Title>
+        {ch.customUrl && (
+          <Anchor
+            href={`https://www.youtube.com/${ch.customUrl}`}
+            target="_blank"
+            rel="noreferrer"
+            size="sm"
+            c="dimmed"
+          >
+            <Group gap={4} wrap="nowrap">
+              {ch.customUrl}
+              <IconExternalLink size={12} />
+            </Group>
+          </Anchor>
+        )}
+        <Group gap="lg" mt="sm" wrap="wrap">
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {ch.hiddenSubscriberCount ? "—" : formatCount(ch.subscriberCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              подписчиков
+            </Text>
+          </Box>
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {formatCount(ch.viewCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              просмотров
+            </Text>
+          </Box>
+          <Box>
+            <Text fz="1.15rem" fw={700} lh={1.2}>
+              {formatCount(ch.videoCount)}
+            </Text>
+            <Text size="xs" c="dimmed">
+              видео
+            </Text>
+          </Box>
+        </Group>
+        {ch.description && (
+          <Text size="xs" c="dimmed" mt="sm" lineClamp={2}>
+            {ch.description}
+          </Text>
+        )}
+
+        {/* Показатели за выбранный период — внутри блока канала (перенесены из
+            отдельной строки KPI под дашбордом). */}
+        {period && (
+          <>
+            <Divider my="md" />
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={700}
+              tt="uppercase"
+              mb="sm"
+              style={{ letterSpacing: "0.04em" }}
+            >
+              Показатели {periodLabel(period.days)}
+            </Text>
+            <ChannelPeriodKpis period={period} />
+          </>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+// KPI периода ВНУТРИ карточки канала — вертикальный список стат-строк (заполняет
+// высоту узкой колонки лучше, чем 2×2, и не оставляет пустоты снизу). Стиль строки
+// (.kpi-row) единый со стат-чипами достижений в соседней карточке.
+function ChannelPeriodKpis({ period }: { period: PeriodComparison }) {
+  const { current: c, previous: p } = period;
+  const dPoints = p ? c.avgViewPercentage - p.avgViewPercentage : null;
+  return (
+    <Stack gap="sm">
+      <KpiRow
+        icon={<IconEye size={17} />}
+        color="brand"
+        label="Просмотры"
+        value={formatCount(c.views)}
+        pct={growthPct(c.views, p?.views)}
+      />
+      <KpiRow
+        icon={<IconClock size={17} />}
+        color="blue"
+        label="Время просмотра"
+        value={formatWatchTime(c.minutes)}
+        pct={growthPct(c.minutes, p?.minutes)}
+      />
+      <KpiRow
+        icon={<IconUserPlus size={17} />}
+        color="teal"
+        label="Подписчики"
+        value={`${c.netSubscribers >= 0 ? "+" : "−"}${formatCount(Math.abs(c.netSubscribers))}`}
+        pct={growthPct(c.netSubscribers, p?.netSubscribers)}
+      />
+      <KpiRow
+        icon={<IconChartArcs size={17} />}
+        color="grape"
+        label="Ср. % досмотра"
+        value={`${Math.round(c.avgViewPercentage)}%`}
+        deltaText={dPoints != null ? formatDeltaPoints(dPoints) : undefined}
+        deltaUp={dPoints != null ? dPoints >= 0 : undefined}
+        deltaNeutral={dPoints != null ? Math.round(dPoints * 10) === 0 : undefined}
+      />
+    </Stack>
+  );
+}
+
+// Одна стат-строка: иконка-чип, подпись+значение, дельта-пилюля справа.
+function KpiRow({
+  icon,
+  color,
+  label,
+  value,
+  pct,
+  deltaText,
+  deltaUp,
+  deltaNeutral,
+}: {
+  icon: React.ReactNode;
+  color: string;
+  label: string;
+  value: string;
+  pct?: number | null;
+  deltaText?: string;
+  deltaUp?: boolean;
+  deltaNeutral?: boolean;
+}) {
+  return (
+    <Box className="kpi-row">
+      <ThemeIcon size={34} radius="md" variant="light" color={color}>
+        {icon}
+      </ThemeIcon>
+      <Box style={{ flex: 1, minWidth: 0 }}>
+        <Text size="xs" c="dimmed" truncate>
+          {label}
+        </Text>
+        <Text fz="1.35rem" fw={800} lh={1.1} style={{ fontVariantNumeric: "tabular-nums" }}>
+          {value}
+        </Text>
+      </Box>
+      <DeltaPill pct={pct} text={deltaText} up={deltaUp} neutral={deltaNeutral} />
+    </Box>
+  );
+}
+
+// Пилюля дельты: цветной тинт (teal рост / red падение / gray нейтраль) + стрелка.
+// Нет прошлого периода → тихий прочерк, без пилюли.
+function DeltaPill({
+  pct,
+  text,
+  up,
+  neutral,
+}: {
+  pct?: number | null;
+  text?: string;
+  up?: boolean;
+  neutral?: boolean;
+}) {
+  let label = text;
+  let isUp = up ?? false;
+  let isNeutral = neutral ?? false;
+  if (label === undefined) {
+    if (pct == null) {
+      return (
+        <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+          —
+        </Text>
+      );
+    }
+    const rounded = Math.round(pct);
+    label = formatDeltaPct(pct);
+    isUp = rounded > 0;
+    isNeutral = rounded === 0;
+  }
+  const col = isNeutral ? "gray" : isUp ? "teal" : "red";
+  const Icon = isUp ? IconArrowUpRight : IconArrowDownRight;
+  return (
+    <Box
+      className="kpi-delta"
+      style={{
+        flexShrink: 0,
+        background: `var(--mantine-color-${col}-light)`,
+        color: `var(--mantine-color-${col}-light-color)`,
+      }}
+    >
+      {!isNeutral && <Icon size={13} stroke={2.5} />}
+      {label}
+    </Box>
+  );
+}
+
+// Очередь «что чинить»: ролики из проблемных углов матрицы. `kind` — тот же тип
+// контента, что выбран в матрице: подписи диагнозов у лонгов и шортсов разные.
+function FixQueue({
+  items,
+  onOpen,
+  kind,
+}: {
+  items: MatrixPoint[];
+  onOpen: (v: YouTubeVideo) => void;
+  kind: MatrixKind;
+}) {
+  const META = quadrantMeta(kind);
+  return (
+    <Stack gap="md" style={{ height: "100%" }}>
+      <Box className="an-surface" p="md">
+        <Text fw={600} mb={4}>
+          Очередь на переделку
+        </Text>
+        {items.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            Проблемных роликов не вижу — по охвату и досмотру всё в норме канала.
+          </Text>
+        ) : (
+          <Stack gap={2}>
+            {items.map((p) => {
+              const meta = META[p.quadrant];
+              return (
+                <UnstyledButton
+                  key={p.video.id}
+                  className="yt-driver-row"
+                  onClick={() => onOpen(p.video)}
+                >
+                  <Group gap={8} wrap="nowrap" align="flex-start">
+                    <Box
+                      w={8}
+                      h={8}
+                      mt={6}
+                      style={{
+                        borderRadius: 2,
+                        flexShrink: 0,
+                        background: `var(--mantine-color-${meta.color}-6)`,
+                      }}
+                    />
+                    <Box style={{ minWidth: 0, flex: 1 }}>
+                      <Text size="sm" lineClamp={1}>
+                        {p.video.title}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {meta.label} · {formatCount(p.video.viewCount)} просмотров ·{" "}
+                        {Math.round(p.retention)}% досмотр
+                      </Text>
+                    </Box>
+                  </Group>
+                </UnstyledButton>
+              );
+            })}
+          </Stack>
+        )}
+      </Box>
+
+    </Stack>
+  );
+}
+
 function StatCard({
   icon,
   label,
@@ -529,7 +986,7 @@ function StatCard({
 }) {
   return (
     <Tooltip label={full} withArrow openDelay={200}>
-      <Paper withBorder radius="lg" p="md">
+      <Paper className="an-surface" radius="lg" p="md">
         <Group gap="xs" mb={10} wrap="nowrap">
           <ThemeIcon variant="light" color={color} radius="md" size={32}>
             {icon}
@@ -552,111 +1009,6 @@ function StatCard({
   );
 }
 
-// KPI за период: просмотры, время просмотра, новые подписчики (net), ср. % досмотра —
-// с дельтой роста относительно предыдущего равного периода.
-function PeriodKpis({ period }: { period: PeriodComparison }) {
-  const { current: c, previous: p } = period;
-  const suffix = periodLabel(period.days);
-  return (
-    <SimpleGrid cols={{ base: 2, md: 4 }} spacing="md">
-      <StatCard
-        icon={<IconEye size={20} />}
-        label={`Просмотры ${suffix}`}
-        value={formatCount(c.views)}
-        full={formatFull(c.views)}
-        color="brand"
-        trend={<DeltaInline pct={growthPct(c.views, p?.views)} />}
-      />
-      <StatCard
-        icon={<IconClock size={20} />}
-        label={`Время просмотра ${suffix}`}
-        value={formatWatchTime(c.minutes)}
-        full={`${formatFull(Math.round(c.minutes))} минут`}
-        color="blue"
-        trend={<DeltaInline pct={growthPct(c.minutes, p?.minutes)} />}
-      />
-      <StatCard
-        icon={<IconUserPlus size={20} />}
-        label={`Подписчики ${suffix}`}
-        value={`${c.netSubscribers >= 0 ? "+" : "−"}${formatCount(Math.abs(c.netSubscribers))}`}
-        full={`Пришло ${formatFull(c.subscribersGained)}, ушло ${formatFull(c.subscribersLost)}`}
-        color="teal"
-        trend={<DeltaInline pct={growthPct(c.netSubscribers, p?.netSubscribers)} />}
-      />
-      <StatCard
-        icon={<IconChartArcs size={20} />}
-        label={`Ср. % досмотра ${suffix}`}
-        value={`${Math.round(c.avgViewPercentage)}%`}
-        full={`Средний процент досмотра ролика ${suffix}`}
-        color="grape"
-        trend={
-          p ? (
-            <DeltaInline
-              text={formatDeltaPoints(c.avgViewPercentage - p.avgViewPercentage)}
-              up={c.avgViewPercentage - p.avgViewPercentage >= 0}
-              neutral={Math.round((c.avgViewPercentage - p.avgViewPercentage) * 10) === 0}
-            />
-          ) : (
-            <DeltaInline />
-          )
-        }
-      />
-    </SimpleGrid>
-  );
-}
-
-// Инлайн-дельта внутри карточки (без пилюли): цветная стрелка + значение + тихий
-// капшен «за пред. период». Цвет текста — из Mantine light-color переменной
-// (адаптив к теме, контраст ≥4.5:1). Принимает процент (pct) или готовый text +
-// направление (для процентных пунктов). Нет прошлого периода → тихий «нет данных».
-function DeltaInline({
-  pct,
-  text,
-  up,
-  neutral,
-}: {
-  pct?: number | null;
-  text?: string;
-  up?: boolean;
-  neutral?: boolean;
-}) {
-  if (text === undefined) {
-    if (pct == null) {
-      return (
-        <Text size="xs" c="dimmed">
-          нет данных за пред. период
-        </Text>
-      );
-    }
-    const rounded = Math.round(pct);
-    return <DeltaInline text={formatDeltaPct(pct)} up={rounded > 0} neutral={rounded === 0} />;
-  }
-  const c = neutral ? "gray" : up ? "teal" : "red";
-  const Icon = up ? IconArrowUpRight : IconArrowDownRight;
-  return (
-    <Group gap={5} wrap="nowrap" align="center">
-      <Box
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 2,
-          color: `var(--mantine-color-${c}-light-color)`,
-          fontWeight: 700,
-          fontSize: "0.9375rem",
-          lineHeight: 1.1,
-          fontVariantNumeric: "tabular-nums",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {!neutral && <Icon size={16} stroke={2.5} />}
-        {text}
-      </Box>
-      <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
-        за пред. период
-      </Text>
-    </Group>
-  );
-}
 
 // Цвет прогресс-бара удержания по порогам (методика: низкое = «чинить хук»).
 function retentionColor(pct: number): string {
@@ -691,7 +1043,7 @@ function TrafficSources({ traffic, days }: { traffic: TrafficSource[]; days: num
   const donutData = withColor.map((t) => ({ name: t.label, value: t.views, color: t.color }));
 
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Text fw={600} mb="md">
         Источники трафика {periodLabel(days)}
       </Text>
@@ -765,35 +1117,337 @@ function bucketLabel(key: string, gran: Granularity): string {
   return formatShortDate(key);
 }
 
+// ── Произвольный период («Выбрать период») ─────────────────────────────────
+// Рядом с пресетами 7/28/90/365 — свой диапазон дат. Календарь — НАТИВНЫЙ
+// (input type="date"): в проекте уже так сделано в админке, и это избавляет от
+// зависимостей @mantine/dates + dayjs ради одного пикера. Кнопка «Применить»
+// активна только при корректном диапазоне; выбранное показывается на кнопке.
+function CustomPeriodPicker({
+  value,
+  disabled,
+  onApply,
+  onReset,
+}: {
+  value: { start: string; end: string } | null;
+  disabled: boolean;
+  onApply: (range: { start: string; end: string }) => void;
+  onReset: () => void;
+}) {
+  const [opened, setOpened] = useState(false);
+  // С Mantine 8 DatePicker отдаёт СТРОКИ "YYYY-MM-DD" (в 7.x были Date) — это
+  // ровно то, что ждут Analytics API и ключ кэша, конвертация не нужна. Заодно
+  // ушла ловушка с toISOString: он переводит в UTC и в плюсовых часовых поясах
+  // сдвигал выбранный день на сутки назад.
+  const [range, setRange] = useState<[string | null, string | null]>([
+    value?.start ?? null,
+    value?.end ?? null,
+  ]);
+  const [from, to] = range;
+  const valid = Boolean(from && to);
+
+  const apply = () => {
+    if (!from || !to) return;
+    onApply({ start: from, end: to });
+    setOpened(false);
+  };
+
+  return (
+    <Popover
+      opened={opened}
+      onChange={setOpened}
+      position="bottom-end"
+      withArrow
+      shadow="md"
+      radius="md"
+      trapFocus
+    >
+      <Popover.Target>
+        <Button
+          size="sm"
+          radius="md"
+          variant={value ? "filled" : "default"}
+          color="brand"
+          leftSection={<IconCalendar size={16} />}
+          onClick={() => setOpened((o) => !o)}
+          disabled={disabled}
+        >
+          {value ? `${formatShortDate(value.start)} — ${formatShortDate(value.end)}` : "Выбрать период"}
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <DatePicker
+            type="range"
+            value={range}
+            onChange={setRange}
+            maxDate={new Date().toISOString().slice(0, 10)}
+            locale="ru"
+            size="sm"
+            allowSingleDateInRange
+          />
+          <Group gap="xs" grow>
+            {value && (
+              <Button
+                size="xs"
+                variant="subtle"
+                color="gray"
+                onClick={() => {
+                  setRange([null, null]);
+                  onReset();
+                  setOpened(false);
+                }}
+              >
+                Сбросить
+              </Button>
+            )}
+            <Button size="xs" color="brand" onClick={apply} disabled={!valid}>
+              Применить
+            </Button>
+          </Group>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+// ── Динамика отдельно по лонгам и шортсам ──────────────────────────────────
+// Два независимых графика вместо одного общего: у шортсов и лонгов разная
+// природа охвата, и в общем ряду они смешиваются — всплеск одного шортса читается
+// как «канал вырос», хотя лонги в это же время могли просесть. Оси времени у
+// обоих графиков одинаковые (сервер добивает пропущенные дни нулями), поэтому
+// карточки можно сравнивать взглядом.
+function ContentTypeChart({
+  title,
+  hint,
+  points,
+  totals,
+  color,
+}: {
+  title: string;
+  hint: string;
+  points: DailyPoint[];
+  totals: ContentSplitRow | null;
+  color: string;
+}) {
+  const views = points.reduce((s, p) => s + p.views, 0);
+  const gained = points.reduce((s, p) => s + p.subscribersGained, 0);
+  // Карточку показываем ВСЕГДА — и когда контента такого типа за период не было.
+  // Пустое место молча съедало бы вопрос «а где шортсы?»: непонятно, то ли их
+  // нет, то ли раздел сломался.
+  const empty = points.length === 0 || views === 0;
+
+  return (
+    // h=100% + flex-колонка: соседняя карточка может быть пустой («данных нет»),
+    // и без растяжки соседи разной высоты — на десктопе это видно сразу.
+    // Grid.Col тянет колонки по высоте строки, карточка занимает её целиком.
+    <Box
+      className="an-surface"
+      p="md"
+      h="100%"
+      style={{ display: "flex", flexDirection: "column" }}
+    >
+      <Group justify="space-between" align="flex-start" wrap="nowrap" mb={2}>
+        <div style={{ minWidth: 0 }}>
+          <Text fw={600}>{title}</Text>
+          <Text size="xs" c="dimmed">
+            {hint}
+          </Text>
+        </div>
+      </Group>
+
+      {empty ? (
+        <Center style={{ flex: 1, minHeight: 248 }}>
+          <Stack align="center" gap={4}>
+            <IconChartArcs size={26} style={{ color: "var(--mantine-color-dimmed)" }} />
+            <Text size="sm" c="dimmed" ta="center">
+              Данных за выбранный период нет
+            </Text>
+          </Stack>
+        </Center>
+      ) : (
+        <>
+          <Group gap="lg" mb="sm" mt="xs">
+            <div>
+              <Text size="xs" c="dimmed">
+                Просмотры
+              </Text>
+              <Text fw={700}>{formatFull(views)}</Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed">
+                Подписчиков
+              </Text>
+              <Text fw={700}>
+                {gained > 0 ? `+${formatFull(gained)}` : formatFull(gained)}
+              </Text>
+            </div>
+            {/* Средний досмотр отдаёт только сводный разрез (contentSplit) — по
+                дням его взвешенно не пересчитать, берём готовый за период. */}
+            {totals && (
+              <div>
+                <Text size="xs" c="dimmed">
+                  Ср. досмотр
+                </Text>
+                <Text fw={700}>{Math.round(totals.avgViewPercentage)}%</Text>
+              </div>
+            )}
+          </Group>
+          <AreaChart
+            h={200}
+            data={points.map((d) => ({
+              date: formatShortDate(d.date),
+              Просмотры: d.views,
+            }))}
+            dataKey="date"
+            series={[{ name: "Просмотры", color }]}
+            curveType="monotone"
+            withGradient
+            withDots={false}
+            valueFormatter={(v) => formatFull(v)}
+            gridAxis="y"
+            tickLine="none"
+          />
+        </>
+      )}
+    </Box>
+  );
+}
+
+function ContentTypeCharts({
+  split,
+  totals,
+}: {
+  split: DailySplit | null;
+  totals: ContentSplit | null;
+}) {
+  // Совсем нет разбивки (API не отдал тип контента) — секции нет, общий график
+  // динамики остаётся в «подробностях». А вот если один из типов пуст —
+  // карточку всё равно рисуем с «данных нет»: иначе непонятно, то ли контента
+  // такого не было, то ли раздел не догрузился.
+  if (!split || (!split.long && !split.shorts)) return null;
+
+  return (
+    <Grid columns={8} gutter="md">
+      <Grid.Col span={{ base: 8, lg: 4 }}>
+        <ContentTypeChart
+          title="Обычные видео"
+          hint="Просмотры лонгов по дням"
+          points={split.long ?? []}
+          totals={totals?.long ?? null}
+          color="brand.6"
+        />
+      </Grid.Col>
+      <Grid.Col span={{ base: 8, lg: 4 }}>
+        <ContentTypeChart
+          title="Шортсы"
+          hint="Просмотры шортсов по дням"
+          points={split.shorts ?? []}
+          totals={totals?.shorts ?? null}
+          color="teal.6"
+        />
+      </Grid.Col>
+    </Grid>
+  );
+}
+
 function GrowthSection({
   sub,
   days,
+  subscribersNow,
+  hiddenSubscribers,
   onOpenVideo,
 }: {
   sub: SubscriberDynamicsData;
   days: number;
+  // Текущее число подписчиков — точка отсчёта для кривой «всего подписчиков»
+  // (историю общего счётчика YouTube не отдаёт, восстанавливаем её назад по приросту).
+  subscribersNow: number;
+  hiddenSubscribers: boolean;
   onOpenVideo: (v: SubscriberTimelineVideo) => void;
 }) {
   const tl = sub.timeline as SubscriberTimeline;
   const gran = tl.granularity;
   const drivers = tl.videos;
-  const colorById = new Map(drivers.map((v, i) => [v.id, VIDEO_COLORS[i % VIDEO_COLORS.length]]));
+  // Мемо, потому что обе карты уходят в зависимости showTip (useCallback) — без
+  // этого он пересобирался бы на каждый рендер.
+  const colorById = useMemo(
+    () => new Map(drivers.map((v, i) => [v.id, VIDEO_COLORS[i % VIDEO_COLORS.length]])),
+    [drivers]
+  );
 
   const hasOther = tl.buckets.some((b) => b.other > 0);
   const hasSubs = tl.buckets.some((b) => b.totalGained > 0);
   const hasViews = tl.buckets.some((b) => b.views > 0);
   const hasReleases = tl.buckets.some((b) => b.releases.length > 0);
 
-  // Общая сетка отрезков для обоих графиков: одна строка = один отрезок времени.
+  // ⚠️ Реконструкция кривой «всего подписчиков» отсюда УБРАНА вместе с линейным
+  // графиком: она восстанавливала абсолютный счётчик назад от текущего числа, а
+  // YouTube округляет subscriberCount выше 1000 — то есть цифры были оценкой.
+  // Понедельный график ниже копит ПРИРОСТ за период, а его YouTube отдаёт точно.
+
+  // Строка = отрезок времени. Каждый драйвер — своя секция столбца, плюс «Другое»
+  // (прирост, который не удалось отнести к конкретному ролику).
   const rows = tl.buckets.map((b) => {
-    const row: Record<string, number | string> = {
-      label: bucketLabel(b.key, gran),
-      Просмотры: b.views,
-    };
-    for (const v of drivers) row[v.id] = b.gainedByVideo[v.id] ?? 0;
-    if (hasOther) row[OTHER_KEY] = b.other;
+    const row: Record<string, string | number> = { label: bucketLabel(b.key, gran) };
+    for (const v of drivers) row[v.title || v.id] = b.gainedByVideo[v.id] ?? 0;
+    if (hasOther) row["Другое"] = b.other;
     return row;
   });
+
+  // Серии стека в том же порядке и теми же цветами, что лидерборд под графиком.
+  const barSeries = [
+    ...drivers.map((v) => ({ name: v.title || v.id, color: colorById.get(v.id) as string })),
+    ...(hasOther ? [{ name: "Другое", color: OTHER_COLOR }] : []),
+  ];
+
+  // Понедельный рост: буквы ТЗ — «растущий график, сколько за неделю пришло».
+  // Копим сумму от начала периода, в тултипе видно и прирост недели, и итог.
+  const weekly = useMemo(() => {
+    const byWeek = new Map<string, number>();
+    for (const b of tl.buckets) {
+      const d = new Date(`${b.key.length === 7 ? `${b.key}-01` : b.key}T00:00:00Z`);
+      if (Number.isNaN(d.getTime())) continue;
+      // Понедельник этой недели — канонический ключ.
+      const day = (d.getUTCDay() + 6) % 7;
+      d.setUTCDate(d.getUTCDate() - day);
+      const key = d.toISOString().slice(0, 10);
+      byWeek.set(key, (byWeek.get(key) ?? 0) + b.totalGained);
+    }
+    let acc = 0;
+    return Array.from(byWeek.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, gained]) => {
+        acc += gained;
+        return { label: bucketLabel(key, "week"), Подписчики: acc, gained };
+      });
+  }, [tl.buckets]);
+
+  // Ось Y столбцов всегда от нуля — иначе секции стека врут по площади.
+  // (Прежний расчёт домена был нужен накопленной ЛИНИИ; она уехала в понедельный
+  // график ниже, где домен считается отдельно.)
+  // Отрезок по подписи — тултипу нужна раскладка прироста по видео, а линия её
+  // в payload не несёт (в отличие от прежнего стека).
+  const bucketByLabel = useMemo(
+    () => new Map(tl.buckets.map((b) => [bucketLabel(b.key, gran), b])),
+    [tl.buckets, gran]
+  );
+
+  // Главный драйвер отрезка — им красим точку на линии, чтобы цвет ролика
+  // остался считываемым и без столбцов.
+  const topDriverByLabel = new Map<string, string | null>(
+    tl.buckets.map((b) => {
+      let top: string | null = null;
+      let max = 0;
+      for (const v of drivers) {
+        const g = b.gainedByVideo[v.id] ?? 0;
+        if (g > max) {
+          max = g;
+          top = v.id;
+        }
+      }
+      return [bucketLabel(b.key, gran), top];
+    })
+  );
 
   // Релизы по подписи отрезка — для рейки превью под нижним графиком.
   const releasesByLabel: Record<string, TimelineRelease[]> = {};
@@ -801,10 +1455,6 @@ function GrowthSection({
     if (b.releases.length) releasesByLabel[bucketLabel(b.key, gran)] = b.releases;
   }
 
-  const subSeries = [
-    ...drivers.map((v) => ({ name: v.id, color: colorById.get(v.id) as string })),
-    ...(hasOther ? [{ name: OTHER_KEY, color: OTHER_COLOR }] : []),
-  ];
   const titleById = new Map<string, string>([
     ...drivers.map((v) => [v.id, v.title] as const),
     [OTHER_KEY, "Другое"],
@@ -853,22 +1503,67 @@ function GrowthSection({
     }, 500);
   }, [clearHide]);
   const showTip = useCallback(
-    (x: number, y: number, label: string, payload: TooltipItem[]) => {
+    (x: number, y: number, label: string) => {
       clearHide();
-      const items = payload
-        .filter((p) => (p.value ?? 0) > 0)
-        .map((p) => ({ key: String(p.dataKey ?? ""), value: p.value ?? 0, color: p.color ?? "" }));
+      // Раскладку по видео берём из самого отрезка: у линии в payload лежит только
+      // суммарный прирост.
+      const b = bucketByLabel.get(label);
+      const items = b
+        ? [
+            ...drivers
+              .map((v) => ({
+                key: v.id,
+                value: b.gainedByVideo[v.id] ?? 0,
+                color: cssVar(colorById.get(v.id) as string),
+              }))
+              .filter((i) => i.value > 0),
+            ...(b.other > 0
+              ? [{ key: OTHER_KEY, value: b.other, color: cssVar(OTHER_COLOR) }]
+              : []),
+          ].sort((a, c) => c.value - a.value)
+        : [];
       // Клампим X, чтобы карточка не уезжала за края графика.
       const w = wrapRef.current?.offsetWidth ?? 600;
       const cx = Math.min(Math.max(x, 160), w - 160);
-      setTip((prev) => (prev && prev.label === label ? prev : { x: cx, y, label, items }));
+      const next: TipState = {
+        x: cx,
+        y,
+        label,
+        // Абсолютный счётчик больше не показываем (см. комментарий выше).
+        total: null,
+        gained: b?.totalGained ?? 0,
+        lost: b?.totalLost ?? 0,
+        items,
+      };
+      setTip((prev) => (prev && prev.label === label ? prev : next));
     },
-    [clearHide]
+    [bucketByLabel, clearHide, colorById, drivers]
   );
   useEffect(() => clearHide, [clearHide]);
 
+  // Точка линии в цвете главного драйвера отрезка: цвет ролика остаётся
+  // считываемым и без столбцов (кольцо цветом фона отделяет точку от линии).
+  const renderDot = (props: { cx?: number; cy?: number; payload?: { label?: string } }) => {
+    const { cx, cy, payload } = props;
+    const label = payload?.label ?? "";
+    if (cx == null || cy == null) return <g key={`dot-${label}`} />;
+    const top = topDriverByLabel.get(label);
+    const color = top ? cssVar(colorById.get(top) as string) : "var(--mantine-color-teal-6)";
+    return (
+      <circle
+        key={`dot-${label}`}
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill={color}
+        stroke="var(--mantine-color-body)"
+        strokeWidth={2}
+      />
+    );
+  };
+
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Group justify="space-between" mb="md" wrap="nowrap" gap="sm">
         <Text fw={600}>Рост канала {periodLabel(days)}</Text>
         <Group gap="sm" wrap="nowrap">
@@ -885,46 +1580,34 @@ function GrowthSection({
         </Group>
       </Group>
 
-      {/* Верхний график — просмотры во времени (ось X скрыта: общая с нижним). */}
-      {hasViews && (
-        <Box mb="xs">
-          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            Просмотры
-          </Text>
-          <AreaChart
-            h={130}
-            data={rows}
-            dataKey="label"
-            series={[{ name: "Просмотры", color: "brand.6" }]}
-            curveType="monotone"
-            withGradient
-            withDots={false}
-            withXAxis={false}
-            valueFormatter={(v) => formatFull(v)}
-            gridAxis="y"
-            tickLine="none"
-            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
-          />
-        </Box>
-      )}
+      {/* ⚠️ График просмотров отсюда УБРАН (решение владельца): он дублировал
+          YouTube Studio. Оставляем только то, чего в Studio нет — атрибуцию
+          подписчиков по роликам и понедельный рост. */}
 
-      {/* Нижний график — прирост подписчиков, столбец разложен по видео-драйверам. */}
+      {/* Прирост подписчиков — СТОЛБЦЫ С НАКОПЛЕНИЕМ: один столбец = отрезок
+          времени, секции внутри = ролики, которые привели этих подписчиков.
+          Именно этого нет в Studio: там виден общий прирост, но не видно, какой
+          ролик его дал. Под осью строчкой — когда какие ролики вышли. */}
       {hasSubs ? (
         <Box ref={wrapRef} style={{ position: "relative" }} onMouseLeave={scheduleHide}>
           <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            Новые подписчики — по видео-драйверам
+            Новые подписчики по роликам
           </Text>
           <BarChart
-            h={210}
+            h={230}
             data={rows}
             dataKey="label"
             type="stacked"
-            series={subSeries}
+            series={barSeries}
             withLegend={false}
             gridAxis="y"
             tickLine="none"
-            valueFormatter={(v) => formatFull(v)}
-            yAxisProps={{ width: 48, tickFormatter: (v: number) => formatCount(v) }}
+            valueFormatter={(v: number) => formatFull(v)}
+            yAxisProps={{
+              width: 52,
+              allowDecimals: false,
+              tickFormatter: (v: number) => formatCount(v),
+            }}
             xAxisProps={{
               interval: 0,
               height: xAxisHeight,
@@ -938,7 +1621,6 @@ function GrowthSection({
             }}
             tooltipProps={{
               isAnimationActive: false,
-              // Контент recharts — только сенсор позиции; видимую карточку рисуем сами.
               content: (props: any) => (
                 <TooltipSensor
                   active={props.active}
@@ -971,6 +1653,55 @@ function GrowthSection({
         <Text size="sm" c="dimmed">
           За период подписки почти не менялись.
         </Text>
+      )}
+
+      {/* Второй график — ПОНЕДЕЛЬНЫЙ рост: накопленная кривая от начала периода.
+          Смысл именно в накоплении: дневная «динамика» скачет и по ней не видно,
+          растёт канал или топчется. Тут линия идёт вверх ровно настолько,
+          насколько канал реально прибавил. */}
+      {weekly.length > 1 && (
+        <Box mt="lg">
+          <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
+            Рост по неделям
+          </Text>
+          <AreaChart
+            h={180}
+            data={weekly}
+            dataKey="label"
+            series={[{ name: "Подписчики", color: "teal.6" }]}
+            curveType="monotone"
+            withGradient
+            withDots
+            gridAxis="y"
+            tickLine="none"
+            valueFormatter={(v: number) => formatFull(v)}
+            yAxisProps={{
+              width: 52,
+              allowDecimals: false,
+              tickFormatter: (v: number) => formatCount(v),
+            }}
+            tooltipProps={{
+              isAnimationActive: false,
+              content: ({ active, label, payload }: any) => {
+                if (!active || !payload?.length) return null;
+                const row = weekly.find((w) => w.label === label);
+                return (
+                  <Paper radius="md" p="xs" withBorder shadow="sm">
+                    <Text size="xs" c="dimmed">
+                      неделя с {label}
+                    </Text>
+                    <Text size="sm" fw={600}>
+                      +{formatCount(row?.gained ?? 0)} за неделю
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      всего с начала периода: {formatCount(row?.Подписчики ?? 0)}
+                    </Text>
+                  </Paper>
+                );
+              },
+            }}
+          />
+        </Box>
       )}
 
       {/* Легенда-лидерборд: видео-драйверы (цвет = серия стека), клик → разбор. */}
@@ -1012,8 +1743,9 @@ function GrowthSection({
       )}
 
       <Text size="xs" c="dimmed" mt="md">
-        Цвет столбца = ролик, который привёл этих подписчиков. Внизу — когда вышли ролики. Клик по
-        видео открывает разбор упаковки.
+        Столбец — сколько подписчиков пришло за отрезок, секции внутри — какие ролики их привели.
+        Внизу строчкой видно, когда какие ролики вышли. Наведи на столбец, чтобы увидеть раскладку;
+        клик по ролику открывает разбор упаковки. Нижний график — накопленный рост по неделям.
       </Text>
     </Paper>
   );
@@ -1111,6 +1843,11 @@ type TipState = {
   x: number;
   y: number;
   label: string;
+  // Накопленное число подписчиков на конец отрезка; null — кривую строим по
+  // приросту (счётчик канала скрыт), тогда шапка тултипа показывает только его.
+  total: number | null;
+  gained: number;
+  lost: number;
   items: { key: string; value: number; color: string }[];
 };
 
@@ -1128,12 +1865,12 @@ function TooltipSensor({
   payload?: TooltipItem[];
   label?: string | number;
   coordinate?: { x?: number; y?: number };
-  onShow: (x: number, y: number, label: string, payload: TooltipItem[]) => void;
+  onShow: (x: number, y: number, label: string) => void;
   onHide: () => void;
 }) {
   useEffect(() => {
     if (active && payload && payload.length && coordinate?.x != null) {
-      onShow(coordinate.x, coordinate.y ?? 0, String(label ?? ""), payload);
+      onShow(coordinate.x, coordinate.y ?? 0, String(label ?? ""));
     } else {
       onHide();
     }
@@ -1157,7 +1894,6 @@ function GrowthTipCard({
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
-  const total = tip.items.reduce((s, i) => s + i.value, 0);
   return (
     <Paper
       withBorder
@@ -1177,11 +1913,30 @@ function GrowthTipCard({
         pointerEvents: "auto",
       }}
     >
-      <Text fw={600} size="sm">
-        {tip.label}
-      </Text>
+      <Group justify="space-between" gap="xs" wrap="nowrap">
+        <Text fw={600} size="sm">
+          {tip.label}
+        </Text>
+        {tip.total != null && (
+          <Text size="sm" fw={700} style={{ fontVariantNumeric: "tabular-nums" }}>
+            {formatFull(tip.total)}
+          </Text>
+        )}
+      </Group>
       <Text size="xs" c="dimmed" mb="xs">
-        Новых подписчиков: <b>+{formatFull(total)}</b>
+        {tip.total != null ? "всего подписчиков · " : ""}
+        <Text span c="teal" fw={700} inherit>
+          +{formatFull(tip.gained)}
+        </Text>
+        {tip.lost > 0 && (
+          <>
+            {" / "}
+            <Text span c="red" fw={700} inherit>
+              −{formatFull(tip.lost)}
+            </Text>
+          </>
+        )}{" "}
+        за отрезок
       </Text>
       <Stack gap={8}>
         {tip.items.map((it) => {
@@ -1355,7 +2110,7 @@ function AudienceSection({ a, days }: { a: AudienceData; days: number }) {
   ].filter((b) => b.items.length > 0);
 
   return (
-    <Paper withBorder radius="lg" p="md">
+    <Paper radius="lg" p={0} bg="transparent">
       <Text fw={600} mb="md">
         Аудитория {periodLabel(days)}
       </Text>
@@ -1414,9 +2169,8 @@ function VideoCard({
   const er = engagementRate(video);
   return (
     <Paper
-      withBorder
       radius="lg"
-      className="yt-video-card"
+      className="an-surface yt-video-card"
       role="button"
       tabIndex={0}
       onClick={() => onOpen(video)}
@@ -1665,10 +2419,13 @@ type AnalyzeState =
 function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: string }) {
   const dispatch = useAppDispatch();
   const [st, setSt] = useState<AnalyzeState>({ s: "idle" });
+  // CTR превью: API его не отдаёт, поэтому берём цифрой из Studio, если юзер ввёл.
+  const [ctr, setCtr] = useState<string | number>("");
 
   const run = async () => {
     setSt({ s: "loading" });
-    const res = await apiAnalyzeVideo(projectId, videoId);
+    const num = typeof ctr === "number" ? ctr : ctr ? Number(String(ctr).replace(",", ".")) : NaN;
+    const res = await apiAnalyzeVideo(projectId, videoId, Number.isFinite(num) ? num : null);
     if (res.ok) {
       dispatch(bumpRequestsUsed()); // остаток квоты в шапке/биллинге не отстаёт
       setSt({ s: "ready", data: res.data });
@@ -1680,15 +2437,37 @@ function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: str
   if (st.s === "idle") {
     return (
       <Box>
-        <Button
-          fullWidth
-          color="brand"
-          leftSection={<IconSparkles size={18} />}
-          onClick={run}
-        >
-          Разобрать видео с ИИ
-        </Button>
-        <Text size="xs" c="dimmed" ta="center" mt={6}>
+        <Group gap="xs" wrap="nowrap" mb="xs">
+          <Tooltip
+            multiline
+            w={260}
+            withArrow
+            label="CTR превью YouTube по API не отдаёт — он есть только в Studio. Введи цифру оттуда, и я разберу кликабельность по ней."
+          >
+            <NumberInput
+              size="sm"
+              w={150}
+              min={0}
+              max={100}
+              step={0.1}
+              decimalScale={1}
+              placeholder="CTR из Studio"
+              suffix=" %"
+              value={ctr}
+              onChange={setCtr}
+              aria-label="CTR превью из YouTube Studio, проценты"
+            />
+          </Tooltip>
+          <Button
+            style={{ flex: 1 }}
+            color="brand"
+            leftSection={<IconSparkles size={18} />}
+            onClick={run}
+          >
+            Разобрать видео с ИИ
+          </Button>
+        </Group>
+        <Text size="xs" c="dimmed" ta="center">
           Разберу название, описание и удержание по методике и предложу улучшения. Тратит 1 запрос.
         </Text>
       </Box>

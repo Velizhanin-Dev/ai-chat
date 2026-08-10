@@ -1,44 +1,36 @@
 import type { Thumbnail, User } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { normalizeRefRole, sanitizeSpec, type ThumbnailRow } from "./thumbnails";
+import {
+  normalizeRefRole,
+  sanitizeSpec,
+  THUMBNAIL_GENERATE_QUOTA_COST,
+  THUMBNAIL_SPEC_QUOTA_COST,
+  type ThumbnailRow,
+} from "./thumbnails";
 import { getSessionUser } from "./auth";
-import { isAdmin } from "./admin";
+import { isAdmin } from "./admin-role";
 import { getSettings, isLaunchLocked } from "./settings";
 import { getQuotaState } from "./quota";
 import { assertOwnedProject } from "./youtube";
 import { apiError } from "./http";
 import { prisma } from "./prisma";
+// toRow/spendQuota вынесены в thumbnails-row.ts (нужны фоновому воркеру, где нет
+// сессии). Реэкспортируем, чтобы прежние импорты из thumbnails-server работали.
+export { toRow, spendQuota } from "./thumbnails-row";
 
 // ── Общий гейт для всех роутов генератора превью ────────────────────────────
-// Раздел пока АДМИН-ОНЛИ (как и страница — она лежит в route-group (locked)).
-// Открыть всем = снять этот флаг И вынести страницу из (locked); остальная
-// логика (квота, гейт тарифа) уже готова и включится сама.
-export const THUMBNAILS_ADMIN_ONLY = true;
+// Раздел открыт всем залогиненным (страница вынесена из route-group (locked),
+// в меню помечена бетой). Флаг оставлен как рубильник: поставить true — раздел
+// снова станет админ-онли (тогда и страницу вернуть в (locked)).
+export const THUMBNAILS_ADMIN_ONLY = false;
 
-// Сколько единиц квоты стоит одна сгенерированная картинка. Картинка у Nano
-// Banana Pro дороже обычного ответа чата (~$0.13-0.15 против центов), но
-// считаем как один запрос — так понятнее пользователю.
-export const THUMBNAIL_QUOTA_COST = 1;
+// Стоимость операций генератора превью — в ./thumbnails (общий клиент/сервер).
+export { THUMBNAIL_GENERATE_QUOTA_COST, THUMBNAIL_SPEC_QUOTA_COST };
 
 type Denied = { ok: false; res: NextResponse };
 type Allowed = { ok: true; user: User; conversationId: string };
 
 // Строка БД → то, что уходит клиенту. Файл отдаём ссылкой, не инлайним.
-export function toRow(t: Thumbnail): ThumbnailRow {
-  return {
-    id: t.id,
-    kind: t.kind === "generation" ? "generation" : "reference",
-    role: normalizeRefRole(t.role),
-    label: t.label,
-    url: `/api/thumbnails/${t.id}/file`,
-    mimeType: t.mimeType,
-    bytes: t.bytes,
-    refIds: t.refIds,
-    spec: t.spec ? sanitizeSpec(t.spec) : null,
-    model: t.model,
-    createdAt: t.createdAt.toISOString(),
-  };
-}
 
 // Авторизация + владение проектом (+ pre-launch и админ-онли). Возвращает
 // внутренний id проекта — дальше работаем только с ним, не с сырым вводом.
@@ -109,9 +101,3 @@ export async function checkQuota(user: User): Promise<Denied | null> {
 }
 
 // Списание после УСПЕШНОЙ генерации (провал квоту не тратит). Fire-and-forget.
-export async function spendQuota(user: User, cost = THUMBNAIL_QUOTA_COST): Promise<void> {
-  if (isAdmin(user)) return;
-  await prisma.user
-    .update({ where: { id: user.id }, data: { requestsUsed: { increment: cost } } })
-    .catch((err) => console.error("[thumbnails] quota increment error:", err));
-}

@@ -4,8 +4,18 @@ import type {
   VideoDetail,
   VideoAnalysis,
   VideoPage,
+  ChannelAnalysisRow,
+  DiagnoseKind,
 } from "./youtube-types";
 import type { BriefAutofill } from "./brief";
+import type { JobView } from "@/lib/jobs";
+import {
+  waitForJob,
+  rememberJob,
+  forgetJob,
+  recallJob,
+  apiActiveJobs,
+} from "@/lib/jobs-client";
 
 // ── Клиентские обёртки над /api/integrations/youtube/* ──────────────────────
 
@@ -80,14 +90,21 @@ export async function apiYouTubeDisconnect(projectId: string): Promise<Result<nu
   }
 }
 
+// Период: пресет (число дней) ИЛИ произвольный диапазон из календаря.
+export type PeriodSelection = number | { start: string; end: string };
+
 export async function apiYouTubeData(
   projectId: string,
-  period: number,
+  period: PeriodSelection,
   refresh = false
 ): Promise<Result<YouTubeData>> {
   try {
+    const range =
+      typeof period === "number"
+        ? `period=${period}`
+        : `start=${encodeURIComponent(period.start)}&end=${encodeURIComponent(period.end)}`;
     const res = await fetch(
-      `/api/integrations/youtube/data?${q(projectId)}&period=${period}${refresh ? "&refresh=1" : ""}`,
+      `/api/integrations/youtube/data?${q(projectId)}&${range}${refresh ? "&refresh=1" : ""}`,
       { cache: "no-store" }
     );
     const data = (await res.json().catch(() => ({}))) as YouTubeData & {
@@ -185,26 +202,114 @@ export function prefetchVideoDetail(projectId: string, videoId: string, publishe
 // ИИ-разбор видео (тратит 1 запрос квоты). Возвращает summary + варианты упаковки.
 export async function apiAnalyzeVideo(
   projectId: string,
-  videoId: string
+  videoId: string,
+  // CTR превью из YouTube Studio (API его не отдаёт); null — не вводили.
+  manualCtr?: number | null
 ): Promise<Result<VideoAnalysis>> {
   try {
     const res = await fetch("/api/integrations/youtube/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, videoId }),
+      body: JSON.stringify({ projectId, videoId, manualCtr: manualCtr ?? null }),
     });
     const data = (await res.json().catch(() => ({}))) as {
-      analysis?: VideoAnalysis;
+      job?: JobView;
       error?: string;
       code?: string;
     };
-    if (!res.ok || !data.analysis) {
+    if (!res.ok || !data.job) {
       return { ok: false, error: data.error || "Не удалось разобрать видео", code: data.code };
     }
-    return { ok: true, data: data.analysis };
+    // Разбор ФОНОВЫЙ: сервер отдал id задачи, считает воркер. Модалка ролика живёт
+    // недолго, поэтому тут просто ждём результат; задача при этом переживает уход
+    // со страницы — если вернуться, её видно в /api/jobs.
+    try {
+      const job = await waitForJob(data.job.id);
+      if (job.status !== "done") {
+        return { ok: false, error: job.error || "Не удалось разобрать видео" };
+      }
+      return { ok: true, data: (job.result as { analysis: VideoAnalysis }).analysis };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Не удалось разобрать видео" };
+    }
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
+}
+
+// ── Разбор канала по параметрам продвижения ──────────────────────────────────
+
+// История разборов проекта (свежие сверху). Квоту не тратит.
+export async function apiChannelAnalyses(
+  projectId: string
+): Promise<Result<ChannelAnalysisRow[]>> {
+  try {
+    const res = await fetch(`/api/integrations/youtube/diagnose?${q(projectId)}`, {
+      cache: "no-store",
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      analyses?: ChannelAnalysisRow[];
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.analyses) {
+      return { ok: false, error: data.error || "Не удалось загрузить разборы", code: data.code };
+    }
+    return { ok: true, data: data.analyses };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Новый разбор канала — ТРАТИТ 1 запрос квоты. manualCtr — цифра из YouTube Studio
+// (API её не отдаёт), null/undefined = не вводили.
+export async function apiDiagnoseChannel(args: {
+  projectId: string;
+  kind: DiagnoseKind;
+  periodDays: number;
+  manualCtr?: number | null;
+}): Promise<Result<ChannelAnalysisRow>> {
+  try {
+    const res = await fetch("/api/integrations/youtube/diagnose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(args),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      job?: JobView;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.job) {
+      return { ok: false, error: data.error || "Не удалось разобрать канал", code: data.code };
+    }
+    // Разбор ФОНОВЫЙ: сервер отдал id задачи, считает воркер. Ждём результат тут,
+    // но задача переживает уход со страницы — вернувшись, её подхватит
+    // findPendingDiagnoseJob (см. ниже).
+    rememberJob("channel_diagnose", args.projectId, data.job.id);
+    try {
+      return { ok: true, data: await awaitDiagnoseJob(data.job.id) };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Не удалось разобрать канал" };
+    } finally {
+      forgetJob("channel_diagnose", args.projectId);
+    }
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+// Дождаться готового разбора по id задачи.
+export async function awaitDiagnoseJob(jobId: string): Promise<ChannelAnalysisRow> {
+  const job = await waitForJob(jobId);
+  if (job.status !== "done") throw new Error(job.error || "Не удалось разобрать канал");
+  return (job.result as { analysis: ChannelAnalysisRow }).analysis;
+}
+
+// Незавершённый разбор канала в этом проекте (после возврата на страницу).
+export async function findPendingDiagnoseJob(projectId: string): Promise<string | null> {
+  const jobs = await apiActiveJobs({ projectId, kind: "channel_diagnose" });
+  return jobs.length ? jobs[0].id : recallJob("channel_diagnose", projectId);
 }
 
 // Промпт для ассистента «переписать хук» + запись в черновик чата (ключ должен
@@ -216,6 +321,39 @@ export function writeHookPrompt(userId: string, videoTitle: string): void {
     `Помоги переписать хук (первые 15–30 секунд) для ролика «${videoTitle}». ` +
     `Удержание проседает в начале — нужен более цепляющий заход, чтобы зрители не уходили. ` +
     `Дай 3 варианта сильного хука с учётом методики.`;
+  try {
+    localStorage.setItem(CHAT_DRAFT_KEY, JSON.stringify({ userId, text }));
+  } catch {
+    /* приватный режим / квота — не критично */
+  }
+}
+
+// Промпт «слабый CTR — перепиши превью по ВИСП». В отличие от хука, тут важно НЕ
+// просить абстрактные варианты, а принести ассистенту РЕАЛЬНЫЕ ролики канала с их
+// текущими названиями и цифрами: он разбирает, что не так с существующей упаковкой,
+// и переписывает её. Без этого списка ответ был бы общей лекцией про ВИСП.
+export function writeThumbTextsPrompt(
+  userId: string,
+  videos: { title: string; views: number; retention?: number | null }[]
+): void {
+  // Берём до 8 роликов: больше не нужно (лимит артефактов в ответе всё равно
+  // режет), а промпт раздувается.
+  const list = videos
+    .slice(0, 8)
+    .map((v, i) => {
+      const ret = v.retention != null ? `, досмотр ${Math.round(v.retention)}%` : "";
+      return `${i + 1}. «${v.title}» — ${formatCount(v.views)} просмотров${ret}`;
+    })
+    .join("\n");
+
+  const text =
+    `У меня слабый CTR превью. Разбери упаковку моих реальных роликов и перепиши её.\n\n` +
+    `Вот что уже вышло на канале:\n${list}\n\n` +
+    `По каждому: скажи коротко, что не так с текущим названием и текстом на превью ` +
+    `(что не цепляет, где схлопывается интрига, где превью дублирует название), ` +
+    `и дай переписанный вариант — новое название и текст на превью по ВИСП ` +
+    `(выгода, интрига, срочность, причастность) с одной из трёх эмоций в будущее: ` +
+    `страх, надежда, любопытство. Заходы по роликам должны быть РАЗНЫЕ.`;
   try {
     localStorage.setItem(CHAT_DRAFT_KEY, JSON.stringify({ userId, text }));
   } catch {

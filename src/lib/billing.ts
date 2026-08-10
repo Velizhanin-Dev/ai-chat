@@ -13,6 +13,7 @@ import {
   cloudFindByInvoice,
   type CloudPaymentParams,
 } from "./cloudpayments";
+import { notifyPaymentSuccess } from "./telegram";
 
 // ── Биллинг: разовая оплата подписки через ТБанк ────────────────────────────
 // MVP: оплата даёт доступ на PERIOD_DAYS дней (продление — новый платёж). При
@@ -100,7 +101,7 @@ async function markPaid(
   if (!payment || payment.status === "CONFIRMED") return;
 
   const expires = new Date(Date.now() + PERIOD_DAYS * 86400000);
-  await prisma.$transaction([
+  const [, user] = await prisma.$transaction([
     prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -121,6 +122,23 @@ async function markPaid(
       },
     }),
   ]);
+
+  // Уведомление в телеграм — ровно один раз на платёж (выше ранний return при
+  // уже CONFIRMED, так что повторный вебхук/синк дубля не даст). Best-effort:
+  // оплата уже применена, падение телеграма её не должно откатывать.
+  void (async () => {
+    const plans = await getPlans();
+    const label = plans.find((p) => p.id === payment.planId)?.label ?? payment.planId;
+    await notifyPaymentSuccess({
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+      planLabel: label,
+      amountKopecks: payment.amount,
+      provider: payment.provider,
+      expiresAt: expires,
+    });
+  })().catch((err) => console.error("[billing] telegram notify error:", err));
 }
 
 // ── CloudPayments (зарубежные карты) ────────────────────────────────────────

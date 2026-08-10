@@ -2,81 +2,18 @@
 
 import Link from "next/link";
 import { Box, Button, Group, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from "@mantine/core";
-import {
-  IconBolt,
-  IconBrandYoutube,
-  IconBulb,
-  IconCalendarMonth,
-  IconChartLine,
-  IconDeviceMobile,
-  IconMovie,
-  IconPhoto,
-  IconTextCaption,
-} from "@tabler/icons-react";
+import { IconBrandYoutube } from "@tabler/icons-react";
 import { useAppDispatch } from "@/store/hooks";
 import { prefillInput } from "@/store/chatSlice";
+import { SUGGESTIONS } from "./suggestions";
 
 // Стартовый экран пустого чата: «что я умею». Плитки — не декорация, а готовые
 // запросы: клик подставляет текст в композер (через chatSlice.prefillInput), юзер
-// дополняет под себя и отправляет. Формулировки — под категории роутера знаний
-// (short/long/content_plan/method), чтобы плитка сразу попадала в нужный слой базы.
+// дополняет под себя и отправляет. Сам список — в ./suggestions (общий с лентой
+// быстрых действий над полем ввода, QuickActions).
 //
 // Если канал не подключён — первой идёт primary-кнопка «Подключить канал»: с ним
 // ассистент разбирает канал по цифрам, без него отвечает вслепую.
-
-interface Suggestion {
-  icon: React.ReactNode;
-  title: string;
-  // Что уедет в поле ввода. Оставляем «незаконченным» там, где нужна конкретика
-  // от пользователя — он допишет свою тему перед отправкой.
-  prompt: string;
-}
-
-const SUGGESTIONS: Suggestion[] = [
-  {
-    icon: <IconTextCaption size={20} />,
-    title: "Названия по ВИСП",
-    prompt: "Придумай 7 названий для ролика на тему: ",
-  },
-  {
-    icon: <IconPhoto size={20} />,
-    title: "Текст на превью",
-    prompt:
-      "Придумай 5 вариантов текста на превью (3-5 слов) для ролика на тему: ",
-  },
-  {
-    icon: <IconCalendarMonth size={20} />,
-    title: "Контент-план на месяц",
-    prompt: "Собери контент-план на месяц для моего канала",
-  },
-  {
-    icon: <IconDeviceMobile size={20} />,
-    title: "Сценарий шортса",
-    prompt: "Напиши сценарий шортса на тему: ",
-  },
-  {
-    icon: <IconMovie size={20} />,
-    title: "Сценарий для видео",
-    prompt: "Напиши сценарий длинного ролика на тему: ",
-  },
-  {
-    icon: <IconBolt size={20} />,
-    title: "Хук и опенинг",
-    prompt:
-      "Дай 5 вариантов захода на первые 10 секунд, чтобы не отваливались. Тема ролика: ",
-  },
-  {
-    icon: <IconBulb size={20} />,
-    title: "Идеи тем",
-    prompt: "Накидай 10 тем для роликов в моей нише",
-  },
-  {
-    icon: <IconChartLine size={20} />,
-    title: "Почему не залетело",
-    prompt:
-      "Разбери, почему ролик не набрал просмотров. Название, превью и цифры такие: ",
-  },
-];
 
 export default function ChatWelcome({
   projectId,

@@ -18,14 +18,17 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   addMessage,
   setLoading,
+  setSearching,
   setStreamingContent,
   appendStreamingContent,
   finalizeStreaming,
   setError,
+  prefillConsumed,
 } from "@/store/chatSlice";
 import type { ChatMessage } from "@/store/chatSlice";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import { ymGoal } from "@/lib/metrika";
+import QuickActions from "./QuickActions";
 import { v4 as uuidv4 } from "uuid";
 
 const EMPTY: ChatMessage[] = [];
@@ -206,14 +209,17 @@ export default function ChatInput({
     }
   }, [inputFocusSignal]);
 
-  // Подстановка запроса из плиток стартового экрана. Реагируем на рост seq
-  // (а не на текст) — повторный клик по той же плитке тоже должен срабатывать.
+  // Подстановка запроса извне: плитки стартового экрана, быстрые действия, а также
+  // переходы из ДРУГИХ разделов («Сгенерировать сценарий» в контент-плане, шаги
+  // дорожной карты). ⚠️ Работает по модели «потребления», а НЕ по росту seq: при
+  // переходе из другого раздела prefill ставится до монтирования этого компонента,
+  // и сравнение счётчиков молча теряло текст. Забрали → гасим (prefillConsumed),
+  // поэтому повторный клик по той же плитке тоже срабатывает.
   const prefill = useAppSelector((s) => s.chat.prefill);
-  const prevPrefillSeq = useRef(prefill.seq);
   useEffect(() => {
-    if (prevPrefillSeq.current === prefill.seq) return;
-    prevPrefillSeq.current = prefill.seq;
+    if (!prefill.text) return;
     setInput(prefill.text);
+    dispatch(prefillConsumed());
     const el = textareaRef.current;
     if (el) {
       el.focus();
@@ -222,7 +228,7 @@ export default function ChatInput({
         el.selectionStart = el.selectionEnd = el.value.length;
       });
     }
-  }, [prefill]);
+  }, [prefill, dispatch]);
 
   // ── Остановка генерации ───────────────────────────────────────────────────
   // Рвём fetch AbortController'ом. Сервер видит обрыв через req.signal и НЕ
@@ -331,7 +337,7 @@ export default function ChatInput({
             const data = line.slice(6);
             if (data === "[DONE]") break;
 
-            let parsed: { token?: string; error?: string };
+            let parsed: { token?: string; error?: string; searching?: boolean };
             try {
               parsed = JSON.parse(data);
             } catch {
@@ -341,6 +347,9 @@ export default function ChatInput({
             // Ошибку стрима пробрасываем НАРУЖУ (не глотаем catch'ем парсинга),
             // иначе в историю попадёт пустой ответ вместо алерта об ошибке.
             if (parsed.error) throw new Error(parsed.error);
+            // Сервер сообщил, что перед генерацией идёт веб-поиск — индикатор
+            // покажет «Ищу в интернете» (поиск заметно добавляет к TTFT).
+            if (parsed.searching) dispatch(setSearching(true));
             if (parsed.token) {
               fullContent += parsed.token;
               typewriter.push(parsed.token);
@@ -403,6 +412,11 @@ export default function ChatInput({
     // Textarea — unstyled, сливается с поверхностью; фокус показываем кольцом
     // на самой поверхности (:focus-within), чтобы не терять видимость фокуса.
     <Box px={{ base: 4, sm: "md" }} pb="md" pt="xs" style={{ flexShrink: 0 }}>
+      {/* Быстрые действия — те же готовые запросы, что на стартовом экране, но
+          лентой над полем ввода: после первого сообщения стартовый экран
+          пропадает, и функционал иначе становится недоступен. При исчерпанном
+          доступе не показываем — там CTA на тариф, писать всё равно нельзя. */}
+      {!locked && <QuickActions />}
       {locked ? (
         // Доступ исчерпан — вместо поля ввода CTA на оформление тарифа. История
         // чатов остаётся доступной (скролл выше), писать нельзя.

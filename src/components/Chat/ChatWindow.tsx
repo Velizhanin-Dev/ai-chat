@@ -18,6 +18,7 @@ import type { ChatMessage } from "@/store/chatSlice";
 import { splitConnectCta } from "@/lib/chat-markers";
 import { apiYouTubeStatus } from "@/lib/youtube-client";
 import Markdown from "./Markdown";
+import MessageFooter from "./MessageFooter";
 import ThinkingIndicator from "./ThinkingIndicator";
 import ConnectYouTubeCta from "./ConnectYouTubeCta";
 import ChatWelcome from "./ChatWelcome";
@@ -233,6 +234,7 @@ export default function ChatWindow() {
                     {parsed!.cta && showCta && activeId && (
                       <ConnectYouTubeCta projectId={activeId} />
                     )}
+                    <MessageFooter content={parsed!.text} createdAt={msg.createdAt} />
                   </>
                 )}
               </Paper>

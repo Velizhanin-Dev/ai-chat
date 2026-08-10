@@ -12,7 +12,13 @@ import { HAIKU_MODEL, haikuCost } from "./llm/claude";
 import { GLM_MODEL, glmComplete, glmCost } from "./llm/glm";
 import type { LlmProvider } from "./llm/types";
 
-export type QueryCategory = "chat" | "short" | "long" | "method" | "content_plan";
+export type QueryCategory =
+  | "chat"
+  | "short"
+  | "long"
+  | "method"
+  | "content_plan"
+  | "ideas";
 
 type RouterMeta = { userId?: string | null; conversationId?: string | null };
 
@@ -43,6 +49,7 @@ const ROUTER_SYSTEM = `Ты — классификатор запросов к �
 - chat — приветствие, болтовня, благодарность, мета-вопрос о тебе, короткое уточнение без новой темы.
 - short — просьба придумать/написать сценарий, хук, идею, превью или название для КОРОТКОГО видео (рилс, reels, шортс, shorts, tiktok, тикток, клип, ВИСП).
 - long — просьба про сценарий/структуру/хук/удержание ДЛИННОГО видео (YouTube 5+ минут, ролик, лонг, выпуск).
+- ideas — просьба придумать ТЕМЫ / идеи роликов / варианты НАЗВАНИЯ / текст на превью, БЕЗ полного сценария и БЕЗ месячной сетки («накидай идей», «придумай 7 названий», «о чём снять», «дай темы»).
 - content_plan — просьба собрать КОНТЕНТ-ПЛАН / контент план / сетку роликов / план на месяц / список тем роликов с раскруткой (несколько видео сразу, а не один сценарий).
 - method — вопрос по методике/теории без генерации артефакта (удержание, темы, превью, монтаж, SEO, продвижение, как работает YouTube).
 
@@ -59,6 +66,7 @@ const ROUTER_SYSTEM = `Ты — классификатор запросов к �
 Примеры:
 «long | удержание досматриваемость вовлечение зритель первые секунды хук крючок»,
 «short | рилс идея хук зацепка заход вирусность формат»,
+«ideas | темы идеи названия превью триггер ВИСП боль ца кликабельность CTR»,
 «content_plan | контент-план сетка ролики темы месяц названия превью лестница ханта боль ца», «chat |».`;
 
 function mapCategory(category: QueryCategory): RouteDecision {
@@ -83,10 +91,20 @@ function mapCategory(category: QueryCategory): RouteDecision {
       // Контент-план: эталон месячной сетки + книга (темы/боли/удержание) +
       // закрытый TG (ВИСП — движок кликбейт-названий и текста на превью).
       return { ...base, contentPlan: true, book: true, tgClosed: true, youtube: true };
+    case "ideas":
+      // Темы / идеи / названия / текст на превью. Весь движок упаковки живёт в
+      // закрытом TG (банк слов ВИСП, порядок сборки названия, слабые слова под нож,
+      // банк залетевших названий) + глава книги про техники превью. Эталон месячной
+      // сетки НЕ грузим: просят идеи, а не план — иначе ответ уедет в формат таблицы.
+      return { ...base, book: true, tgClosed: true, youtube: true };
     case "long":
     case "method":
-      // Длинные сценарии и методика: релевантные куски книги (поиск).
-      return { ...base, book: true, youtube: true };
+      // Длинные сценарии и методика: релевантные куски книги (поиск) + закрытый TG.
+      // ⚠️ tgClosed тут ОБЯЗАТЕЛЕН: раньше на «напиши сценарий» слой ВИСП/названий
+      // не грузился вообще, и модель собирала упаковку из общих копирайтерских
+      // шаблонов вместо моих формулировок. Слой режется бюджетом ретрива (~30k
+      // символов), промпт не взрывается.
+      return { ...base, book: true, tgClosed: true, youtube: true };
     case "chat":
     default:
       // Болтовня: только хребет, ничего не подгружаем.
@@ -97,18 +115,40 @@ function mapCategory(category: QueryCategory): RouteDecision {
 /** Грубая keyword-эвристика на случай ошибки LLM-роутера. */
 function heuristicCategory(text: string): QueryCategory {
   const t = text.toLowerCase();
-  const isPlan = /(контент[\s-]?план|контентплан|сетк[аиу] ролик|план (?:роликов|на месяц|видео)|плана роликов)/.test(t);
+  const isPlan =
+    /(контент[\s-]?план|контентплан|сетк[аиу] ролик|план (?:роликов|на месяц|видео)|плана роликов|тем[ыу] на месяц|темы на \d)/.test(
+      t
+    );
   const isShort = /(рилс|reels|шортс|shorts|tiktok|тикток|висп|клип)/.test(t);
-  const wantsGen = /(сценари|напиши|придума|сделай|хук|заход|идею|идей|сними|превью|назван)/.test(t);
+  const wantsGen =
+    /(сценари|напиши|придума|сделай|сгенер|накида|накин|подкин|накидыв|дай \d|дай идей|дай тем|хук|заход|иде[яюийе]|сними|превью|назван|заголов|вариант)/.test(
+      t
+    );
+  // Просят ТЕМЫ/НАЗВАНИЯ, а не сценарий — отдельная ветка: там нужен слой упаковки
+  // (ВИСП, банк триггеров, банк залетевших названий), а не структура длинного видео.
+  const isScenario = /(сценари|структур[ауы] ролик|раскадров|по секунд)/.test(t);
+  const isIdeas =
+    !isScenario &&
+    /(иде[яюийе]|темы|тему|тем для|тем на|о чём снять|о чем снять|про что снять|назван|заголов|превью)/.test(
+      t
+    );
   if (isPlan) return "content_plan";
   if (isShort) return "short";
+  if (isIdeas) return "ideas";
   if (wantsGen && /(ролик|видео|лонг|выпуск|youtube|ютуб|канал)/.test(t)) return "long";
   if (wantsGen) return "long";
   if (/(как|почему|что такое|зачем|удержани|монтаж|seo|продвиж|тег|алгоритм)/.test(t)) return "method";
   return "chat";
 }
 
-const VALID: QueryCategory[] = ["chat", "short", "long", "method", "content_plan"];
+const VALID: QueryCategory[] = [
+  "chat",
+  "short",
+  "long",
+  "method",
+  "content_plan",
+  "ideas",
+];
 
 // Таймаут LLM-роутера: провайдер (особенно GLM/OpenRouter под нагрузкой) может
 // зависнуть, а сам вызов classify без ограничения ждёт вечно и блокирует ответ.
@@ -241,7 +281,11 @@ export async function routeQuery(
   try {
     const out = await withRouterTimeout(classify(provider, ctx, meta), ROUTER_TIMEOUT_MS);
     const [catPart, ...kw] = out.split("|");
-    const word = catPart.toLowerCase().trim().replace(/[^a-z]/g, "");
+    // ⚠️ Подчёркивание НЕ срезаем: раньше было /[^a-z]/g, и «content_plan» от роутера
+    // превращался в «contentplan», не проходил VALID.includes и МОЛЧА откатывался на
+    // грубую keyword-эвристику. То есть корректная классификация контент-плана
+    // выбрасывалась всегда, а «накидай тем на месяц» уезжало в chat (ноль слоёв базы).
+    const word = catPart.toLowerCase().trim().replace(/[^a-z_]/g, "");
     const keywords = kw.join("|").trim();
     const category = (VALID.includes(word as QueryCategory)
       ? word

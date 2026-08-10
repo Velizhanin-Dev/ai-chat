@@ -41,6 +41,10 @@ export interface YouTubeVideo {
   viewCount: number;
   likeCount: number;
   commentCount: number;
+  // Теги ролика. Уже приходят в part=snippet (то есть оплачены квотой), но раньше
+  // маппер их выбрасывал. Это живая лексика ниши словами самого автора — то, чем
+  // модель отличает конкретного клиента от «вообще эксперта в этой сфере».
+  tags?: string[];
   // Дизлайки: публичного счётчика у YouTube с 2021 нет, но Analytics по своему
   // каналу их отдаёт. undefined = аналитика недоступна (в ER не учитываем).
   dislikeCount?: number;
@@ -113,6 +117,7 @@ export interface SubscriberTimelineBucket {
   key: string; // канонический старт отрезка: YYYY-MM-DD (день/неделя) или YYYY-MM (месяц)
   views: number;
   totalGained: number; // весь прирост за отрезок (из дневного ряда канала)
+  totalLost: number; // отписки за отрезок — нужны для восстановления кривой «всего подписчиков»
   gainedByVideo: Record<string, number>; // videoId → сколько привёл в этом отрезке
   other: number; // прирост, не отнесённый к топ-драйверам
   releases: TimelineRelease[]; // ролики, вышедшие в этот отрезок
@@ -219,6 +224,13 @@ export interface ChannelSnapshotPeriod {
 }
 export interface ChannelSnapshot {
   title: string;
+  // Описание канала словами самого автора (как он себя позиционирует). Уже приходит
+  // из fetchChannelInfo, но в снимок раньше не попадало.
+  about?: string;
+  // Лексика ниши: теги последних роликов, дедуплицированные. Это те слова, которыми
+  // о теме говорит сам клиент и его зрители, — по ним модель отличает конкретного
+  // эксперта от «вообще специалиста в этой сфере».
+  nicheWords?: string[];
   subscribers: number;
   totalViews: number;
   videoCount: number;
@@ -226,6 +238,158 @@ export interface ChannelSnapshot {
   topVideos: ChannelSnapshotVideo[];
   traffic: { label: string; pct: number }[];
   subscriberDrivers: { title: string; net: number }[];
+}
+
+// ── Разбор канала по параметрам органического продвижения ─────────────────────
+// Кнопка «Разобрать канал» в разделе «Канал». Сервер собирает цифры из Analytics
+// API (ChannelDiagnostics), модель выставляет по каждому параметру балл 0-100 и
+// говорит, что чинить (ChannelAnalysisResult). Круг в UI = params со score.
+
+// Что разбираем. У лонгов 7 параметров продвижения, у шортсов — свои 6
+// параметров конверсии (см. src/lib/channel-params.ts).
+export type DiagnoseKind = "all" | "long" | "shorts";
+
+// Окна разбора: 0 = за всё время жизни канала.
+export const DIAGNOSE_PERIODS = [7, 28, 90, 365, 0] as const;
+export type DiagnosePeriod = (typeof DIAGNOSE_PERIODS)[number];
+
+// Ключи параметров: лонги (7) и шортсы (6). Union — один тип на оба режима.
+// Порядок и состав семёрки — канон из закрытого TG («7 параметров органического
+// продвижения», чек-лист «что упало»), см. knowledge-base-tg-closed.ts.
+export type LongParamKey =
+  | "first30" // удержание в первые 30 секунд
+  | "retention" // удержание на всей длине
+  | "avgDuration" // среднее время просмотра
+  | "ctr" // кликабельность (превью + название)
+  | "engagement" // вовлечение (лайки+дизлайки+комменты / просмотры)
+  | "subscribe" // конверсия в подписку (правило одного процента)
+  | "afterWatch"; // поведение аудитории после просмотра
+export type ShortsParamKey =
+  | "sRetention" // удержание шортса
+  | "sFirst3" // удержание в первые 3 секунды
+  | "sFirst30" // удержание в первые 30 секунд (шортс сейчас до 3 минут)
+  | "sLike" // конверсия в лайк
+  | "sShare" // конверсия в репост (топ-драйвер виральности)
+  | "sSubscribe" // конверсия в подписку
+  | "sComment"; // конверсия в комментарий
+export type ParamKey = LongParamKey | ShortsParamKey;
+
+// Измеренное значение параметра (то, что реально дал API).
+export interface DiagnosticsMetric {
+  key: ParamKey;
+  // Число в единицах параметра; null — измерить не удалось (нет данных/API молчит).
+  value: number | null;
+  // Готовая строка для UI и промпта, напр. «42,3 %» или «4 мин 12 с».
+  display: string;
+  // Откуда цифра / чем заменили (прокси). Идёт в промпт, чтобы модель не врала.
+  note?: string;
+}
+
+// Ролик, попавший в разбор (топ по просмотрам за период) — модель по ним видит
+// разброс, а не только среднее по каналу.
+export interface DiagnosticsVideo {
+  id: string;
+  title: string;
+  views: number;
+  retention: number | null; // средний % досмотра
+  avgDuration: number | null; // среднее время просмотра, секунды
+  durationSec: number;
+  // Доля зрителей, оставшихся к N-й секунде: «3»/«30» → проценты. Отметки зависят
+  // от среза (шортсы — 3 и 30, лонги — 30). null — кривой нет или ролик короче отметки.
+  retentionAt: Record<string, number | null>;
+  likes: number;
+  comments: number;
+  publishedAt: string;
+}
+
+// Снимок цифр канала под разбор. Кладётся в ChannelAnalysis.metrics, чтобы
+// старый разбор в истории читался без повторного похода в YouTube.
+export interface ChannelDiagnostics {
+  kind: DiagnoseKind;
+  periodDays: number; // 0 = за всё время
+  rangeStart: string; // YYYY-MM-DD
+  rangeEnd: string;
+  channel: {
+    title: string;
+    subscribers: number;
+    totalViews: number;
+    videoCount: number;
+  };
+  totals: {
+    views: number;
+    minutes: number;
+    subscribersGained: number;
+    subscribersLost: number;
+    likes: number;
+    dislikes: number;
+    comments: number;
+    shares: number;
+    avgViewPercentage: number;
+    avgViewDuration: number; // секунды
+  };
+  // Предыдущее равное окно — для трендов («растёт/падает»). null — не получили.
+  prevTotals: { views: number; avgViewPercentage: number; subscribersGained: number } | null;
+  metrics: DiagnosticsMetric[]; // по одному на каждый параметр режима
+  traffic: TrafficSource[] | null;
+  videos: DiagnosticsVideo[];
+  // CTR, введённый руками из YouTube Studio (API его не отдаёт). null — не вводили.
+  manualCtr: number | null;
+  // Что не удалось измерить и почему — уходит в промпт и в подсказки UI.
+  notes: string[];
+}
+
+// Вердикт модели по одному параметру. score — заполнение сектора круга.
+export interface ParamVerdict {
+  key: ParamKey;
+  score: number; // 0-100
+  verdict: "good" | "ok" | "bad";
+  fact: string; // цифра канала против нормы, одной строкой
+  why: string; // что это значит на практике
+  todo: string[]; // 1-3 конкретных действия
+}
+
+// Результат разбора (кладётся в ChannelAnalysis.result).
+export interface ChannelAnalysisResult {
+  params: ParamVerdict[];
+  overall: number; // 0-100, средний балл
+  summary: string; // общий вывод, живым языком (markdown)
+  priority: string[]; // 1-3 главных фокуса на ближайшие ролики
+}
+
+// Строка истории разборов (GET /api/integrations/youtube/diagnose).
+export interface ChannelAnalysisRow {
+  id: string;
+  kind: DiagnoseKind;
+  periodDays: number;
+  overallScore: number;
+  createdAt: string;
+  manualCtr: number | null;
+  metrics: ChannelDiagnostics;
+  result: ChannelAnalysisResult;
+}
+
+// Метрики одного типа контента (шортсы или обычные видео) за период.
+export interface ContentSplitRow {
+  views: number;
+  subscribersGained: number;
+  avgViewPercentage: number;
+}
+
+// Разрез «шортсы против лонгов»: кто реально приводит подписчиков. null внутри —
+// такого контента за период не было.
+export interface ContentSplit {
+  shorts: ContentSplitRow | null;
+  long: ContentSplitRow | null;
+}
+
+// Дневной ряд ОТДЕЛЬНО по шортсам и лонгам (dimensions=day,creatorContentType).
+// Нужен, чтобы рисовать динамику двумя разными графиками: у шортсов и лонгов
+// разная природа охвата, и в одном графике общий ряд их смешивает — всплеск
+// шортса читается как «канал вырос», хотя лонги могли просесть.
+// null у ветки — такого контента за период не было (график не рисуем).
+export interface DailySplit {
+  shorts: DailyPoint[] | null;
+  long: DailyPoint[] | null;
 }
 
 // Ответ GET /api/integrations/youtube/data (дашборд «Канал»).
@@ -246,6 +410,19 @@ export interface YouTubeData {
   subscribers?: SubscriberDynamics | null;
   // Аудитория за период (демография/гео/устройства); null — данных недостаточно.
   audience?: AudienceData | null;
+  // Подписчики по каждому ролику за период (videoId → пришло/ушло). Из этого
+  // считается конверсия в подписку на ролик — в Studio её нет. Пусто — не получили.
+  subsByVideo?: Record<string, { gained: number; lost: number }> | null;
+  // Разрез «шортсы против лонгов» за период; null — API не разделил контент.
+  contentSplit?: ContentSplit | null;
+  // Дневная динамика ОТДЕЛЬНО по шортсам и лонгам (два графика в разделе);
+  // null — API не отдал разбивку по типу контента.
+  dailySplit?: DailySplit | null;
+  // ВСЕ ролики, набравшие просмотры за период (до 200), с удержанием — источник
+  // для матрицы «что чинить» и очереди на переделку. Отдельно от `videos`: та
+  // лента грузится постранично по скроллу, и матрица на ней зависела бы от того,
+  // сколько пользователь докрутил. Пусто — Analytics не отдал разрез по видео.
+  periodVideos?: YouTubeVideo[];
   // Когда данные реально дёрнуты из YouTube (ISO). При отдаче из кэша — время
   // исходного запроса, а не текущее. UI показывает «обновлено …».
   fetchedAt?: string;

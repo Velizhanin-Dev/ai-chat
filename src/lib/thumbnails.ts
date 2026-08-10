@@ -27,6 +27,11 @@ export interface ThumbnailRow {
   spec: ThumbnailSpec | null;
   model: string;
   createdAt: string;
+  // Вариации: перегенерация из редактора ссылается на исходное превью.
+  // null — корень группы (или референс).
+  parentId: string | null;
+  // Референс с «применять всегда» — держит единый стиль превью на канале.
+  pinned: boolean;
 }
 
 // Что нейронка предлагает по методике (шаг «Предложить заголовки»).
@@ -54,9 +59,160 @@ export function normalizeRefRole(v: unknown): RefRole {
   return v === "object" || v === "style" ? v : "speaker";
 }
 
-// Пресеты стиля под ЦА. Ключевая мысль методики: превью конгруэнтно аудитории,
-// а не «красиво». Для масс-сегмента вылизанность СНИЖАЕТ CTR (кейс «Живой
-// русской бани»: дизайнерские превью уронили канал, вернули «говнястые» — вырос).
+// ── Стили превью ────────────────────────────────────────────────────────────
+// ⚠️ Стиль и ЦА — ДВЕ РАЗНЫЕ ОСИ. Раньше они были слиты в один пресет («Масс-сегмент
+// / DIY» по сути и был стилем «на коленке», а «Строгий B2B» — «стильным»), поэтому
+// нельзя было сделать, например, стильное превью для масс-сегмента. Теперь стиль
+// отвечает за ПОДАЧУ (насколько причёсано, что в кадре), ЦА — за ограничения
+// (кегль текста, палитра, регистр эмоции). Пять стилей доступны любой ЦА.
+//
+// Опора из базы (knowledge-base-tg-closed.ts:856): «Для медийных топов — лаконичный
+// "дорогой" минимализм (лицо само тянет клик); для ноунеймов — "павлиний хвост",
+// максимально ярко».
+
+/** Нужно ли фото спикера: обязательно / можно без него / стиль без людей. */
+export type SpeakerNeed = "required" | "optional" | "none";
+
+export interface ThumbSubStyle {
+  id: string;
+  label: string;
+  hint: string;
+  prompt: string;
+  speaker: SpeakerNeed;
+}
+
+export interface ThumbStyle {
+  id: string;
+  label: string;
+  hint: string; // подсказка в UI, по-русски
+  prompt: string; // что уходит в модель, по-английски
+  speaker: SpeakerNeed;
+  /** Примеры для галереи выбора: /images/thumb-styles/<id>/*. Только для глаза
+   *  пользователя — в модель НЕ уходят (решение владельца). */
+  examples: string[];
+  subStyles?: ThumbSubStyle[];
+}
+
+export const THUMB_STYLES: ThumbStyle[] = [
+  {
+    id: "standard",
+    label: "Стандартный",
+    hint: "Спикер справа с эмоцией и жестом, текст в левом верхнем углу (главное слово цветом и крупнее), на фоне — объект из ролика с красными кружками и стрелками на важном.",
+    speaker: "required",
+    examples: [],
+    prompt:
+      "STANDARD LAYOUT — follow the placement literally:\n" +
+      "- Place the speaker in the RIGHT part of the frame, with a clear emotion on the face and some hand gesture.\n" +
+      "- Put the caption in the UPPER LEFT part of the frame. The key word is set in a different colour and slightly larger type than the rest of the caption.\n" +
+      "- The background is the OBJECT the video is about. Mark its important elements with red circles and/or red arrows drawn on top.\n" +
+      "- The object must hit the viewer's sense of belonging: it should be something the viewer already owns or wants to own, shown exactly in the state depicted.",
+  },
+  {
+    id: "homemade",
+    label: "Состряпанное на коленке",
+    hint: "Методика зовёт это «говнопревью». Максимально колхозный вариант для низкобюджетных продуктов и ниш: обычное фото, стандартный шрифт поверх и несоизмеримо огромная стрелка на важное. Вылизанность здесь СНИЖАЕТ CTR.",
+    speaker: "optional",
+    examples: [],
+    prompt:
+      "DELIBERATELY CRUDE ('kolkhoz') LAYOUT — this cheapness is intentional, do not beautify:\n" +
+      "- Base is a plain, ordinary, amateur-looking photograph of the subject, as if grabbed from the internet. No studio lighting, no retouching, no artistic composition.\n" +
+      "- The caption is written straight on top of that photo in a plain default heavy sans-serif, as if typed in a basic editor. No effects, no gradients, no glow, no shadows, no designer polish.\n" +
+      "- MANDATORY: one absurdly oversized arrow pointing at an important element of the object. The arrow must be disproportionately huge — far bigger than any designer would allow.\n" +
+      "Suits low-budget products and niches. Any polish here LOWERS click-through.",
+  },
+  {
+    id: "styled",
+    label: "Стильный",
+    hint: "Затемнённый фон съёмки, спикер крупно (чуть ниже плеч), добрая улыбка — в том числе глазами, контур отделяет от фона, обязательно рука с выразительным жестом.",
+    speaker: "required",
+    examples: [],
+    prompt:
+      "POLISHED LAYOUT — follow the placement literally:\n" +
+      "- Darken the background the speaker was filmed against, so the speaker separates from it.\n" +
+      "- Place the speaker LARGE in the frame, cropped just below the shoulders.\n" +
+      "- The face must carry a warm, kind, friendly emotion — a genuine smile that reaches the eyes, not just the mouth.\n" +
+      "- Separate the speaker from the background with a visible outline/rim around the speaker's silhouette.\n" +
+      "- MANDATORY: include the speaker's hand or hands making a meaningful gesture (pointing up, pointing at camera, OK sign, thumbs up, open palm, victory sign or similar).",
+  },
+  {
+    id: "showing",
+    label: "«Щас покажу»",
+    hint: "Спикер с грозной эмоцией, план крупнее обычного; объект — в левом нижнем углу, спикер одной рукой его держит, второй показывает на важную часть. Можно обвести красным.",
+    speaker: "required",
+    examples: [],
+    prompt:
+      "'LOOK AT THIS' LAYOUT — follow the placement literally:\n" +
+      "- The speaker carries a stern, grim, serious emotion. Not a smile.\n" +
+      "- Frame tighter than usual: a closer shot of the speaker.\n" +
+      "- The object the video is about is visible in the LOWER LEFT part of the frame.\n" +
+      "- Parts of the speaker's hands must be visible: one hand holds the object, the other hand points at an important part of that object.\n" +
+      "- Optionally mark that important part with a light red circle.",
+  },
+  // ⚠️ ЕДИНСТВЕННЫЙ СТИЛЬ, ПРОМПТ КОТОРОГО НЕ ПРИСЛАН ВЛАДЕЛЬЦЕМ. Остальные четыре
+  // — его дословные формулировки из рабочего чата (4 августа 2026). Подстили ниже —
+  // ЧЕРНОВИК, собранный по упоминаниям в базе (док.фильмы для Гребенюка, Циан как
+  // источник оттестированных объявлений, «для медийных топов — дорогой минимализм»,
+  // knowledge-base-tg-closed.ts:856). Придут его формулировки — заменить дословно.
+  {
+    id: "special",
+    label: "Спецпроекты",
+    hint: "Отдельная эстетика под формат: документальный фильм, рекламно-каталожный кадр или медийный топ. ЧЕРНОВИК — ждём формулировки.",
+    speaker: "optional",
+    examples: [],
+    prompt: "",
+    subStyles: [
+      {
+        id: "doc",
+        label: "Документальный фильм",
+        hint: "Кинематографичный кадр, киношная цветокоррекция, крупный титр. Без кликбейт-плашек и стрелок.",
+        speaker: "optional",
+        prompt:
+          "Cinematic documentary key art: filmic colour grading, anamorphic-style shallow depth of field, dramatic motivated lighting, muted contrasty palette. Title set as a restrained film-poster caption. No clickbait plates, no arrows, no stickers, no saturated YouTube styling.",
+      },
+      {
+        id: "catalog",
+        label: "Рекламно-каталожный",
+        hint: "Как объявления на агрегаторах (Циан и подобные): объект как товар, чистый фон, плашка с ключевым параметром.",
+        speaker: "none",
+        prompt:
+          "Catalogue/classified-ad aesthetic: the object presented as merchandise on a clean uncluttered background, even commercial lighting, a single tidy label plate carrying the key parameter (price, size, term). Sober trustworthy palette. Looks like a paid listing, not like entertainment content.",
+      },
+      {
+        id: "media",
+        label: "Медийный топ",
+        hint: "Как у известного спикера: дорогой минимализм, лицо крупно, почти без текста. Лицо само тянет клик.",
+        speaker: "required",
+        prompt:
+          "Premium personality-led key art: the face very large and beautifully lit, near-zero text (at most two words), sophisticated restrained palette, editorial magazine quality. The recognisable person is the entire hook — nothing competes with the face.",
+      },
+    ],
+  },
+];
+
+export function thumbStyleById(id: string): ThumbStyle {
+  return THUMB_STYLES.find((s) => s.id === id) ?? THUMB_STYLES[0];
+}
+
+export function thumbSubStyleById(
+  styleId: string,
+  subId: string
+): ThumbSubStyle | null {
+  const st = THUMB_STYLES.find((s) => s.id === styleId);
+  return st?.subStyles?.find((s) => s.id === subId) ?? null;
+}
+
+/** Нужно ли на этом стиле (с учётом подстиля) фото спикера. */
+export function speakerNeedFor(styleId: string, subId: string): SpeakerNeed {
+  const sub = thumbSubStyleById(styleId, subId);
+  if (sub) return sub.speaker;
+  return thumbStyleById(styleId).speaker;
+}
+
+// ── Целевая аудитория ───────────────────────────────────────────────────────
+// Вторая ось (первая — стиль выше). Ключевая мысль методики: превью конгруэнтно
+// аудитории, а не «красиво». Кейс «Живой русской бани»: дизайнерские превью
+// уронили канал, вернули «говнястые» — вырос. ЦА задаёт ОГРАНИЧЕНИЯ (кегль,
+// палитра, регистр эмоции), а не раскладку кадра — раскладка живёт в стиле.
 export interface AudiencePreset {
   id: string;
   label: string;
@@ -68,16 +224,16 @@ export const AUDIENCE_PRESETS: AudiencePreset[] = [
   {
     id: "mass",
     label: "Масс-сегмент / DIY",
-    hint: "Стройка, ремонт, дача. Намеренно «всратое» превью: фото + стрелка + жирный текст. Вылизанность здесь снижает CTR.",
+    hint: "Стройка, ремонт, дача, авто. Простые слова, крупно, без изысков — «павлиний хвост» работает лучше сдержанности.",
     prompt:
-      "Deliberately crude, unpolished thumbnail: plain photo, hand-drawn-looking arrow and circle, fat outlined text, no gradients, no glow, no designer polish. Polish LOWERS click-through for this audience.",
+      "Mass-market DIY audience: loud saturated colours, maximum contrast, simple everyday objects, nothing abstract or conceptual. Bright and busy beats tasteful and restrained here.",
   },
   {
     id: "b2b",
     label: "Строгий B2B / финансы",
     hint: "Сухо, серая база, красный только акцентом. Утрированные эмоции снижают статус спикера.",
     prompt:
-      "Dry, restrained, high-status thumbnail: desaturated grey base, red used only as a small accent, composed serious expression, no theatrical emotion, no clutter. Exaggerated emotion would lower the speaker's status here.",
+      "B2B / finance audience: desaturated grey base, red only as a small accent, composed serious expression, no theatrical open-mouth emotion, no clutter. Exaggerated emotion lowers the speaker's status with this audience.",
   },
   {
     id: "senior",
@@ -139,6 +295,9 @@ export interface ThumbnailSpec {
   // Палитра словами + почему (психология цвета под нишу/ЦА).
   palette: string;
   audiencePreset: string;
+  // Стиль подачи (THUMB_STYLES) и подстиль для «Спецпроектов». Отдельная ось от ЦА.
+  style: string;
+  subStyle: string;
   // Сколько людей в кадре: 0 (без спикера), 1 (по умолчанию), 2 (максимум).
   peopleCount: number;
   niche: string;
@@ -157,6 +316,8 @@ export const EMPTY_SPEC: ThumbnailSpec = {
   supportObject: "",
   emotion: "",
   palette: "",
+  style: "standard",
+  subStyle: "",
   audiencePreset: "neutral",
   peopleCount: 1,
   niche: "",
@@ -176,6 +337,8 @@ export const SPEC_LIMITS: Record<keyof ThumbnailSpec, number> = {
   emotion: 200,
   palette: 200,
   audiencePreset: 20,
+  style: 24,
+  subStyle: 24,
   peopleCount: 1,
   niche: 120,
   audience: 200,
@@ -186,6 +349,56 @@ export const SPEC_LIMITS: Record<keyof ThumbnailSpec, number> = {
 export const MAX_REFERENCES = 6;
 export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 
+// Стоимость операций генератора превью в единицах квоты запросов.
+// Одна сгенерированная картинка — тяжёлая операция (Nano Banana Pro ~$0.13-0.15),
+// поэтому списывает 10 запросов; «Предложить по методике» — обычный текстовый
+// вызов, 1 запрос. Чистые константы, общие клиенту (оптимистичное списание в
+// шапке) и серверу (реальное списание в quota).
+export const THUMBNAIL_GENERATE_QUOTA_COST = 10;
+export const THUMBNAIL_SPEC_QUOTA_COST = 1;
+
+// ── Пунктуация: у картинки и у названия РАЗНЫЕ правила ──────────────────────
+//
+// ⚠️ НЕ ПУТАТЬ (на этом уже ошибались):
+//  • ТЕКСТ НА КАРТИНКЕ — знаков препинания нет ВООБЩЕ. Ни точки, ни запятой, ни
+//    «?», ни «!», ни «|», ни «/». На мелком превью в ленте любой знак читается
+//    как грязь и отъедает кегль у главного слова.
+//  • НАЗВАНИЕ РОЛИКА — знаки нужны и разрешены: «.», «?», «!», «|», «/». Ими и
+//    режется мысль. Запрещены только запятые, двоеточия, точки с запятой,
+//    тире-разделители, кавычки, скобки и многоточия.
+//
+// Чистим ЗДЕСЬ, в санитайзере, а не просьбой в промпте: image-модель рисует ровно
+// те символы, что мы дали между [TEXT]…[/TEXT], и «не рисуй запятую» она нарушит
+// именно тогда, когда запятая есть во входе. Чиним вход.
+//
+// ⚠️ Дефис в классы НЕ ставим: он нужен внутри слов («из-за», «онлайн-курс»).
+// Тире-разделитель убираем отдельным правилом — только когда оно окружено
+// пробелами. Иначе «из-за» превращается в «из за».
+const DASH_SEPARATOR = /\s+[—–-]\s+/g;
+
+// Текст на картинке: под нож всё, включая «?», «!», «|» и «/».
+const THUMB_TEXT_PUNCT = /[.,;:!?|/«»"'“”„()\[\]{}…]/g;
+
+export function stripThumbTextPunctuation(s: string): string {
+  return s
+    .replace(DASH_SEPARATOR, " ")
+    .replace(THUMB_TEXT_PUNCT, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Название ролика: «.», «?», «!», «|», «/» остаются — они и делят мысль.
+const TITLE_PUNCT = /[,;:«»"'“”„()\[\]{}…]/g;
+
+export function stripTitlePunctuation(s: string): string {
+  return s
+    .replace(DASH_SEPARATOR, " ")
+    .replace(TITLE_PUNCT, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([|/?!.])/g, "$1")
+    .trim();
+}
+
 export function sanitizeSpec(input: unknown): ThumbnailSpec {
   const o = (input ?? {}) as Record<string, unknown>;
   const str = (key: keyof ThumbnailSpec): string => {
@@ -193,16 +406,20 @@ export function sanitizeSpec(input: unknown): ThumbnailSpec {
     return typeof v === "string" ? v.trim().slice(0, SPEC_LIMITS[key]) : "";
   };
   const people = Number(o.peopleCount);
+  const styleId = thumbStyleById(str("style")).id;
   return {
     videoSummary: str("videoSummary"),
-    videoTitle: str("videoTitle"),
+    videoTitle: stripTitlePunctuation(str("videoTitle")),
     instructions: str("instructions"),
-    thumbText: str("thumbText"),
-    keyWord: str("keyWord"),
+    // Пунктуацию срезаем на входе — см. stripThumbTextPunctuation выше.
+    thumbText: stripThumbTextPunctuation(str("thumbText")),
+    keyWord: stripThumbTextPunctuation(str("keyWord")),
     supportObject: str("supportObject"),
     emotion: str("emotion"),
     palette: str("palette"),
     audiencePreset: audiencePresetById(str("audiencePreset")).id,
+    style: styleId,
+    subStyle: thumbSubStyleById(styleId, str("subStyle"))?.id ?? "",
     peopleCount: people === 0 || people === 2 ? people : 1,
     niche: str("niche"),
     audience: str("audience"),
@@ -211,14 +428,21 @@ export function sanitizeSpec(input: unknown): ThumbnailSpec {
   };
 }
 
-// Минимум, без которого генерировать бессмысленно.
+// Минимум, без которого генерировать бессмысленно: выбран стиль (у «Спецпроектов»
+// ещё и подстиль — у самого стиля своего промпта нет) и сказано, о чём ролик.
 export function isSpecReady(spec: ThumbnailSpec): boolean {
+  const style = thumbStyleById(spec.style);
+  if (style.subStyles?.length && !thumbSubStyleById(spec.style, spec.subStyle)) {
+    return false;
+  }
   return Boolean(spec.instructions.trim() || spec.videoSummary.trim());
 }
 
 // ── Сборка промпта ──────────────────────────────────────────────────────────
 
-interface PromptRef {
+// Экспортируется, потому что мастер собирает ТОТ ЖЕ промпт на клиенте для экрана
+// предпросмотра: человек должен видеть ровно то, что уйдёт в модель, а не похожее.
+export interface PromptRef {
   role: RefRole;
   label: string;
 }
@@ -346,6 +570,20 @@ clickability must be removed. Hand test: cover any single element — the topic 
 - ${peopleRule}`
   );
 
+  // Стиль — дословные раскладки от владельца (позиции спикера, текста, объекта).
+  // Ставим ПОСЛЕ общей композиции и явно говорим, что он её перебивает: правила
+  // выше универсальные, а тут конкретная схема кадра под выбранный вариант.
+  const style = thumbStyleById(spec.style);
+  const sub = thumbSubStyleById(spec.style, spec.subStyle);
+  const styleText = [style.prompt, sub?.prompt].filter(Boolean).join("\n");
+  if (styleText) {
+    parts.push(
+      `# STYLE — the exact frame layout for this thumbnail
+These placements OVERRIDE the generic composition rules above wherever they disagree.
+${styleText}`
+    );
+  }
+
   if (people > 0) {
     parts.push(
       `# EMOTION
@@ -414,10 +652,17 @@ yellow-versus-purple — viewers do not read it.`
 - No glossy AI look: no plastic skin, no symmetrical CGI face, no lens flares, no neon rim light on
   everything, no floating particles or fake bokeh confetti. It must look like a real photograph.
 - No gibberish, mangled or half-formed letters anywhere. No Latin text at all.
+- NO PUNCTUATION AT ALL in the rendered text: no full stops, commas, semicolons, colons, dashes,
+  ellipses, quotation marks, brackets, and no "?", "!", "|" or "/" either. Words only. Any mark is
+  visual noise at thumbnail size and steals weight from the key word.
 - No YouTube interface, play button, duration badge, progress bar, border or frame.
-- No thin, small or low-contrast type. No script or decorative fonts.${
+- No thin, small or low-contrast type. No script or decorative fonts.
+- The caption must sit STRICTLY HORIZONTAL on a level baseline. Do not rotate, tilt, skew, arc,
+  curve, or step the text; no rising or falling baseline, no perspective, no wavy or diagonal
+  layout. Every line is flat and parallel to the bottom edge of the frame. Tilted text reads as
+  amateur and hurts legibility at thumbnail size.${
       spec.videoTitle
-        ? `\n- Do not draw the video title anywhere. It is given only so the thumbnail does not repeat it, delimited by markers: [TITLE]${spec.videoTitle}[/TITLE]. The title carries the rational/SEO part, the thumbnail carries emotion.`
+        ? `\n- HARD RULE: the thumbnail text must NEVER duplicate the video title. Do not draw the title anywhere, and do not paraphrase it. It is given only so the thumbnail avoids repeating it, delimited by markers: [TITLE]${spec.videoTitle}[/TITLE]. Title and thumbnail must say DIFFERENT things: the title carries the rational/SEO part, the thumbnail carries the emotional hook. A viewer must get two pieces of information, not the same one twice.`
         : ""
     }`
   );

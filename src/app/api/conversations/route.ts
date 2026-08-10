@@ -8,6 +8,7 @@ import { getPlans } from "@/lib/plans";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { attachPendingConnection } from "@/lib/youtube";
+import { track } from "@/lib/achievements-server";
 
 // Список диалогов текущего пользователя — только метаданные (id/title/даты),
 // без сообщений. Сообщения тянутся лениво по клику (GET /api/conversations/[id]).
@@ -100,6 +101,10 @@ export async function POST(req: Request) {
     // черновик подключения прицепился бы к чужому по смыслу проекту). Best-effort:
     // не вышло — проект живёт, канал подключат в настройках проекта.
     if (body.attachChannel === true) await attachPendingConnection(user.id, conv.id);
+    // Геймификация (docs/achievements.md): проект создан, а бриф пройден — иначе
+    // создание бы не прошло валидацию выше. Fire-and-forget.
+    track(user.id, "project_created");
+    track(user.id, "brief_done");
     const conversation: ConversationMeta = {
       id: conv.id,
       title: conv.title,

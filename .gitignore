@@ -7,3 +7,6 @@ out/
 next-env.d.ts
 /data
 .claude
+# Выгрузки почт для рассылки (персональные данные) — см. scripts/export-emails.mjs
+emails*.txt
+emails*.csv

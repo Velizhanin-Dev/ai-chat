@@ -8,14 +8,17 @@ import { getPlans, type PublicPlan } from "./plans";
 // квота не исчерпана. Счётчик израсходованного — User.requestsUsed (сбрасывается
 // при выдаче/смене тарифа). Источник правды — сервер (см. /api/chat).
 
-// Пробный тариф выдаётся при регистрации ВСЕГО на 1 час (срок), а число запросов
-// в этот час — из Plan.limits.requests для тарифа "start" (правится в админке).
+// Пробный тариф выдаётся при регистрации на СРОК из настроек (AppSettings.trialHours,
+// правится в админке), а число запросов в этот срок — из Plan.limits.requests для
+// тарифа "start" (редактор тарифов). Две разные ручки: время и объём.
 export const TRIAL_PLAN_ID = "start";
-export const TRIAL_DURATION_MS = 60 * 60 * 1000; // 1 час
+// Дефолт на случай, когда настройки недоступны (и старое поведение — 1 час).
+export const TRIAL_DURATION_MS = 60 * 60 * 1000;
 
-// Момент окончания пробного тарифа от «сейчас» (или от заданной точки).
-export function trialExpiresAt(from: Date = new Date()): Date {
-  return new Date(from.getTime() + TRIAL_DURATION_MS);
+// Момент окончания пробного тарифа. hours — из настроек; без него берём дефолт.
+export function trialExpiresAt(hours?: number, from: Date = new Date()): Date {
+  const ms = hours && hours > 0 ? hours * 60 * 60 * 1000 : TRIAL_DURATION_MS;
+  return new Date(from.getTime() + ms);
 }
 
 export type QuotaReason = "ok" | "expired" | "quota";

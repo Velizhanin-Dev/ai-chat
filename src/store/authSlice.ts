@@ -74,10 +74,11 @@ const authSlice = createSlice({
     setPlan(state, action: PayloadAction<PlanId>) {
       if (state.user) state.user.plan = action.payload;
     },
-    // Оптимистично списываем 1 запрос на клиенте после успешного ответа — чтобы
+    // Оптимистично списываем запросы на клиенте после успешного ответа — чтобы
     // остаток квоты в биллинге не отставал до следующей гидратации с сервера.
-    bumpRequestsUsed(state) {
-      if (state.user) state.user.requestsUsed += 1;
+    // По умолчанию 1 (ответ чата/разбор), генерация превью списывает 10.
+    bumpRequestsUsed(state, action: PayloadAction<number | undefined>) {
+      if (state.user) state.user.requestsUsed += action.payload ?? 1;
     },
     loggedOut(state) {
       state.user = null;

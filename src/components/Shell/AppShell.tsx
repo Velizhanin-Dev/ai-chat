@@ -18,6 +18,7 @@ import {
   Menu,
   ScrollArea,
   Skeleton,
+  Badge,
   useMantineColorScheme,
   useComputedColorScheme,
 } from "@mantine/core";
@@ -31,10 +32,12 @@ import {
   IconPlus,
   IconMessageCircle,
   IconShieldLock,
+  IconHelpCircle,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { loggedOut } from "@/store/authSlice";
 import { apiLogout } from "@/lib/auth-client";
+import { apiSupportUnread } from "@/lib/support-client";
 import { readIntendedPlan, clearIntendedPlan } from "@/lib/intended-plan";
 import { useChatAccess } from "@/hooks/useChatAccess";
 import { startBriefing, hydrate, resetChat } from "@/store/chatSlice";
@@ -46,12 +49,17 @@ import Logo from "@/components/Brand/Logo";
 import RequestsRing from "@/components/Chat/RequestsRing";
 import SettingsModal from "@/components/Settings/SettingsModal";
 import TopNav from "@/components/Shell/TopNav";
+import {
+  ProjectHeaderProvider,
+  ProjectHeaderTitle,
+  ProjectHeaderActions,
+} from "@/components/Shell/ProjectHeaderTitle";
 
 // Обвязка приложения показывается на экране без проекта (/app) и на страницах
 // проекта (/{projectId}/chat|channel|creatives|thumbnails|settings). Всё остальное
 // (лендинг, auth, /admin, /legal, /brief, /payment, 404/500) — «голое».
 const PROJECT_TAB_RE =
-  /^\/[^/]+\/(chat|channel|creatives|thumbnails|settings)(\/|$)/;
+  /^\/[^/]+\/(chat|channel|creatives|content-plan|thumbnails|settings)(\/|$)/;
 
 function initials(name: string) {
   return name
@@ -161,13 +169,46 @@ export default function AppShellLayout({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, pathname, access.ready, access.locked]);
 
-  // Обвязку (шапка/сайдбар/TopNav) навешиваем на /app и страницы проекта; всё
-  // остальное рендерится «голым», своим layout.
-  const onBareRoute = !(pathname === "/app" || PROJECT_TAB_RE.test(pathname));
+  // Обвязку (шапка/сайдбар/TopNav) навешиваем на /app, /support и страницы
+  // проекта; всё остальное рендерится «голым», своим layout.
+  const supportActive = pathname === "/support";
+  const onBareRoute = !(
+    pathname === "/app" ||
+    supportActive ||
+    PROJECT_TAB_RE.test(pathname)
+  );
 
-  // Раздел «Канал» — дашборд во всю ширину области (без центрированной колонки
-  // maw 900, которая нужна чату/настройкам для читаемости). Остальные — в колонке.
-  const wideRoute = /^\/[^/]+\/channel(?:\/|$)/.test(pathname);
+  // ── Непрочитанные ответы поддержки (бейдж на кнопке в сайдбаре) ────────────
+  // Дешёвый count (индекс (role, readAt)) с поллингом раз в 30 секунд — чтобы
+  // ответ поддержки замечался быстро. На странице /support счётчик гасим сразу:
+  // её открытие помечает ответы прочитанными на сервере.
+  const [supportUnread, setSupportUnread] = useState(0);
+  useEffect(() => {
+    if (!user) {
+      setSupportUnread(0);
+      return;
+    }
+    if (supportActive) {
+      setSupportUnread(0);
+      return;
+    }
+    let alive = true;
+    const tick = () =>
+      void apiSupportUnread().then((n) => {
+        if (alive) setSupportUnread(n);
+      });
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [user?.id, supportActive]);
+
+  // Разделы-дашборды («Аналитика», «Контент-план») — во всю ширину области, без
+  // центрированной колонки maw 900, которая нужна чату/настройкам для читаемости.
+  // Канбан-доске и графикам узкая колонка ломает раскладку. Остальные — в колонке.
+  const wideRoute = /^\/[^/]+\/(channel|content-plan)(?:\/|$)/.test(pathname);
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");
@@ -195,6 +236,11 @@ export default function AppShellLayout({
   const handleSelect = (id: string) => {
     // Открываем проект сменой URL; activeId синхронит ProjectLayout.
     router.push(`/${id}/chat`);
+    close();
+  };
+
+  const handleSupport = () => {
+    router.push("/support");
     close();
   };
 
@@ -226,14 +272,30 @@ export default function AppShellLayout({
         padding={0}
       >
         <AppShell.Header>
-          <Group h="100%" px="md" justify="space-between">
-            <Group gap="sm">
-              <Burger opened={opened} onClick={toggle} hiddenFrom="lg" size="sm" />
-              <Logo href="/" />
+          {/* На мобиле/планшете (< lg) в шапке тесно: оставляем только знак
+              логотипа, а вместо «VELIZHANIN AI» — название текущего проекта.
+              Действия над проектом (переименовать/удалить) — справа, рядом с
+              кружком квоты. Отдельной строки-заголовка на странице проекта
+              больше нет (дублировала название и съедала высоту). */}
+          <ProjectHeaderProvider>
+            <Group h="100%" px="md" justify="space-between" wrap="nowrap" gap="sm">
+              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                <Burger opened={opened} onClick={toggle} hiddenFrom="lg" size="sm" />
+                <Box hiddenFrom="lg" style={{ flexShrink: 0, display: "flex" }}>
+                  <Logo href="/" iconOnly />
+                </Box>
+                <Box visibleFrom="lg" style={{ flexShrink: 0 }}>
+                  <Logo href="/" />
+                </Box>
+                <ProjectHeaderTitle />
+              </Group>
+              <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                <ProjectHeaderActions />
+                {/* Кружок остатка квоты запросов (как в Claude Code). */}
+                <RequestsRing />
+              </Group>
             </Group>
-            {/* Кружок остатка квоты запросов (как в Claude Code). */}
-            <RequestsRing />
-          </Group>
+          </ProjectHeaderProvider>
         </AppShell.Header>
 
         <AppShell.Navbar p="sm">
@@ -337,6 +399,49 @@ export default function AppShellLayout({
             </Button>
 
             <Divider mb="sm" />
+
+            {/* Техподдержка — отдельная страница /support, только залогиненным
+                (у гостя нет треда). Бейдж — непрочитанные ответы поддержки. */}
+            {user && (
+              <UnstyledButton
+                onClick={handleSupport}
+                w="100%"
+                p="xs"
+                mb="sm"
+                style={{
+                  borderRadius: 8,
+                  background: supportActive
+                    ? "var(--mantine-color-brand-light)"
+                    : "transparent",
+                }}
+              >
+                <Group gap="xs" wrap="nowrap">
+                  <IconHelpCircle
+                    size={18}
+                    style={{
+                      flexShrink: 0,
+                      color: supportActive
+                        ? "var(--mantine-color-brand-filled)"
+                        : "var(--mantine-color-dimmed)",
+                    }}
+                  />
+                  <Text
+                    size="sm"
+                    style={{ flex: 1, minWidth: 0 }}
+                    truncate
+                    fw={supportActive ? 500 : 400}
+                    c={supportActive ? undefined : "dimmed"}
+                  >
+                    Нужна помощь? Напишите нам
+                  </Text>
+                  {supportUnread > 0 && (
+                    <Badge size="sm" circle color="brand" style={{ flexShrink: 0 }}>
+                      {supportUnread}
+                    </Badge>
+                  )}
+                </Group>
+              </UnstyledButton>
+            )}
 
             <Group justify="space-between" px={4} mb="sm">
               <Text size="xs" c="dimmed">

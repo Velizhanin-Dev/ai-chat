@@ -2,6 +2,8 @@ import { randomBytes } from "crypto";
 import type { YouTubeIntegration, YouTubePendingConnection } from "@prisma/client";
 import { prisma } from "./prisma";
 import type {
+  ContentSplit,
+  DailySplit,
   YouTubeChannelInfo,
   YouTubeVideo,
   DailyPoint,
@@ -91,8 +93,11 @@ const STATS_CACHE_MAX = 500; // грубый потолок против рос�
 type CachedStats = { at: number; data: YouTubeData };
 const statsCache = new Map<string, CachedStats>();
 
-export function statsCacheKey(conversationId: string, days: number): string {
-  return `${conversationId}:${days}`;
+// Ключ кэша дашборда. Период — строкой, а не числом: кроме пресетов (7/28/90/365)
+// бывает произвольный диапазон («2026-07-01_2026-07-20»), и у него должна быть
+// своя запись кэша, иначе диапазоны затирали бы друг друга.
+export function statsCacheKey(conversationId: string, period: string): string {
+  return `${conversationId}:${period}`;
 }
 
 export function getCachedStats(key: string): YouTubeData | null {
@@ -164,8 +169,25 @@ async function fetchChannelSnapshot(accessToken: string): Promise<ChannelSnapsho
       }
     : null;
 
+  // Лексика ниши из тегов последних роликов: дедуп без учёта регистра, порядок
+  // сохраняем (сначала теги свежих видео). Обрезаем — это подсказка, а не словарь.
+  const seenTag = new Set<string>();
+  const nicheWords: string[] = [];
+  for (const v of videos) {
+    for (const t of v.tags ?? []) {
+      const key = t.trim().toLowerCase();
+      if (!key || key.length > 40 || seenTag.has(key)) continue;
+      seenTag.add(key);
+      nicheWords.push(t.trim());
+      if (nicheWords.length >= 25) break;
+    }
+    if (nicheWords.length >= 25) break;
+  }
+
   return {
     title: channel.title,
+    about: channel.description?.trim().slice(0, 600) || undefined,
+    nicheWords: nicheWords.length ? nicheWords : undefined,
     subscribers: channel.subscriberCount,
     totalViews: channel.viewCount,
     videoCount: channel.videoCount,
@@ -392,7 +414,7 @@ const YT_FETCH_TIMEOUT_MS = 10_000;
 // GET к API YouTube с Bearer-токеном. На не-2xx бросает ошибку с .status (401/403
 // = токен протух/отозван → переподключение). По таймауту — AbortError (ловится
 // best-effort-обёртками, вернут null/[]; на дашборде — обычная ошибка загрузки).
-async function ytGet<T>(url: string, accessToken: string): Promise<T> {
+export async function ytGet<T>(url: string, accessToken: string): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), YT_FETCH_TIMEOUT_MS);
   try {
@@ -575,6 +597,8 @@ export async function fetchRecentVideos(
       viewCount: Number(st.viewCount ?? 0),
       likeCount: Number(st.likeCount ?? 0),
       commentCount: Number(st.commentCount ?? 0),
+      // Теги уже пришли в part=snippet — раньше маппер их молча выбрасывал.
+      tags: s.tags ?? [],
     };
   });
   return { videos, nextPageToken };
@@ -597,12 +621,39 @@ export function periodRanges(days: number): {
 } {
   const end = new Date();
   const curStart = new Date(end.getTime() - (days - 1) * DAY_MS);
-  const prevEnd = new Date(curStart.getTime() - DAY_MS);
+  return periodRangesFor(ymd(curStart), ymd(end));
+}
+
+// Сколько дней в диапазоне включительно (обе границы — YYYY-MM-DD).
+export function daysBetween(start: string, end: string): number {
+  const ms = Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`);
+  return Math.floor(ms / DAY_MS) + 1;
+}
+
+// То же, но для ПРОИЗВОЛЬНОГО диапазона («выбрать период» календарём):
+// предыдущее окно — такой же длины, вплотную перед началом текущего.
+export function periodRangesFor(
+  start: string,
+  end: string
+): {
+  current: { start: string; end: string };
+  previous: { start: string; end: string };
+} {
+  const days = Math.max(1, daysBetween(start, end));
+  const curStartMs = Date.parse(`${start}T00:00:00Z`);
+  const prevEnd = new Date(curStartMs - DAY_MS);
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * DAY_MS);
   return {
-    current: { start: ymd(curStart), end: ymd(end) },
+    current: { start, end },
     previous: { start: ymd(prevStart), end: ymd(prevEnd) },
   };
+}
+
+// Валидация даты из запроса: строго YYYY-MM-DD и существующая дата.
+export function isValidYmd(v: string | null): v is string {
+  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  return Number.isFinite(t) && ymd(new Date(t)) === v;
 }
 
 // Временной ряд аналитики за окно [startDate, endDate] (просмотры/минуты/подписчики).
@@ -804,6 +855,82 @@ async function fetchVideoSnippets(
   return out;
 }
 
+// Все ролики, набравшие просмотры ЗА ПЕРИОД, с метриками для матрицы «что чинить»
+// (dimensions=video, до 200 строк — потолок Analytics API).
+//
+// Зачем отдельно от ленты видео: лента грузится постранично по скроллу, и матрица,
+// построенная на ней, показывала лишь то, что пользователь успел докрутить. Здесь
+// же — срез за выбранный период целиком, независимо от прокрутки.
+//
+// Analytics отдаёт только id и цифры, поэтому названия/превью/длительность
+// добираем из Data API (нужна и длительность — по ней отличаем шортсы от лонгов).
+export async function fetchPeriodVideos(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<YouTubeVideo[]> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "views,averageViewPercentage,averageViewDuration,estimatedMinutesWatched",
+      dimensions: "video",
+      sort: "-views",
+      maxResults: "200",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const rows = (data.rows ?? [])
+      .map((r) => ({
+        id: String(r[0]),
+        views: Number(r[1] ?? 0),
+        avgViewPercentage: Number(r[2] ?? 0),
+        avgViewDuration: Number(r[3] ?? 0),
+        watchMinutes: Number(r[4] ?? 0),
+      }))
+      .filter((r) => r.views > 0);
+    if (rows.length === 0) return [];
+
+    // Метаданные — пачками по 50 (лимит videos.list).
+    const meta: Record<string, NonNullable<VideosResponse["items"]>[number]> = {};
+    for (let i = 0; i < rows.length; i += 50) {
+      const ids = rows.slice(i, i + 50).map((r) => r.id);
+      const vd = await ytGet<VideosResponse>(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${ids.join(",")}`,
+        accessToken
+      );
+      for (const v of vd.items ?? []) meta[v.id] = v;
+    }
+
+    return rows.flatMap((r) => {
+      const v = meta[r.id];
+      // Ролик удалён/приватный — метаданных нет, в матрицу его не берём
+      // (без длительности не отличить шортс от лонга).
+      if (!v) return [];
+      return [
+        {
+          id: r.id,
+          title: v.snippet?.title ?? "Видео",
+          thumbnail: pickThumb(v.snippet?.thumbnails),
+          publishedAt: v.snippet?.publishedAt ?? "",
+          duration: v.contentDetails?.duration ?? "",
+          viewCount: r.views,
+          likeCount: Number(v.statistics?.likeCount ?? 0),
+          commentCount: Number(v.statistics?.commentCount ?? 0),
+          avgViewPercentage: r.avgViewPercentage,
+          avgViewDuration: r.avgViewDuration,
+          watchMinutes: r.watchMinutes,
+        } satisfies YouTubeVideo,
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
 // Видео, которые принесли/увели больше всего подписчиков за период (dimensions=
 // video). Возвращаем топ по приросту с заголовками/превью, отсортированные по net.
 export async function fetchSubscriberVideos(
@@ -842,6 +969,173 @@ export async function fetchSubscriberVideos(
       .sort((a, b) => b.net - a.net);
   } catch {
     return [];
+  }
+}
+
+// Подписчики по КАЖДОМУ ролику за период (не только топ-10) — из этого считается
+// конверсия в подписку на ролик, которой нет в Studio: там абсолютные подписчики,
+// а правило одного процента работает только в процентах. Один запрос на 200 строк.
+export async function fetchVideoSubs(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<Record<string, { gained: number; lost: number }>> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "subscribersGained,subscribersLost",
+      dimensions: "video",
+      sort: "-subscribersGained",
+      maxResults: "200",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const out: Record<string, { gained: number; lost: number }> = {};
+    for (const r of data.rows ?? []) {
+      out[String(r[0])] = { gained: Number(r[1] ?? 0), lost: Number(r[2] ?? 0) };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Тип контента из dimensions=creatorContentType.
+// ⚠️ API отдаёт значения в НИЖНЕМ регистре и camelCase — "shorts",
+// "videoOnDemand", "liveStream", "creatorContentTypeUnspecified" — а НЕ
+// "SHORTS"/"VIDEO_ON_DEMAND", как можно подумать по докам. Сравнение с "SHORTS"
+// молча не срабатывало, и весь трафик шортсов уезжал в «обычные видео».
+// Нормализуем в одном месте, чтобы грабли не расползались по вызывающим.
+//   null — "unspecified": это не контент, а хвост без привязки к типу (обычно
+//   подписчики не с видео). В разрезах его не показываем.
+export function contentTypeOf(value: unknown): "shorts" | "long" | null {
+  const s = String(value).toLowerCase();
+  if (s === "shorts") return "shorts";
+  if (s.includes("unspecified")) return null;
+  // Обычные видео, трансляции, истории — всё это «не шортсы».
+  return "long";
+}
+
+// Разрез «шортсы против лонгов» за период (dimensions=creatorContentType): кто
+// реально приводит подписчиков. В Studio это разнесено по разным экранам.
+export async function fetchContentSplit(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<ContentSplit | null> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "views,subscribersGained,averageViewPercentage",
+      dimensions: "creatorContentType",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const rows = data.rows ?? [];
+    if (rows.length === 0) return null;
+    const zero = () => ({ views: 0, subscribersGained: 0, avgViewPercentage: 0 });
+    const acc = { shorts: zero(), long: zero() };
+    let hasShorts = false;
+    let hasLong = false;
+    for (const r of rows) {
+      const kind = contentTypeOf(r[0]);
+      if (!kind) continue; // "unspecified" — не контент, в разрез не идёт
+      const isShorts = kind === "shorts";
+      const target = isShorts ? acc.shorts : acc.long;
+      const views = Number(r[1] ?? 0);
+      // Проценты складываем взвешенно по просмотрам (иначе редкий тип перекосит).
+      const total = target.views + views;
+      target.avgViewPercentage =
+        total > 0
+          ? (target.avgViewPercentage * target.views + Number(r[3] ?? 0) * views) / total
+          : 0;
+      target.views = total;
+      target.subscribersGained += Number(r[2] ?? 0);
+      if (isShorts) hasShorts = true;
+      else hasLong = true;
+    }
+    return { shorts: hasShorts ? acc.shorts : null, long: hasLong ? acc.long : null };
+  } catch {
+    return null;
+  }
+}
+
+// Дневной ряд ОТДЕЛЬНО по шортсам и лонгам (dimensions=day,creatorContentType).
+// Один запрос вместо двух: API сам разносит строки по типу контента, а мы
+// раскладываем их в два ряда. Дни, где типа не было, добиваем нулями — иначе
+// график рвётся и полосы двух карточек не совпадают по оси времени.
+// best-effort: при ошибке/пустом ответе null, графики просто не рисуем.
+export async function fetchDailySplit(
+  accessToken: string,
+  startDate: string,
+  endDate: string
+): Promise<DailySplit | null> {
+  try {
+    const p = new URLSearchParams({
+      ids: "channel==MINE",
+      startDate,
+      endDate,
+      metrics: "views,estimatedMinutesWatched,subscribersGained,subscribersLost",
+      dimensions: "day,creatorContentType",
+      sort: "day",
+    });
+    const data = await ytGet<AnalyticsResponse>(
+      `https://youtubeanalytics.googleapis.com/v2/reports?${p.toString()}`,
+      accessToken
+    );
+    const rows = data.rows ?? [];
+    if (rows.length === 0) return null;
+
+    const shorts = new Map<string, DailyPoint>();
+    const long = new Map<string, DailyPoint>();
+    const days = new Set<string>();
+
+    for (const r of rows) {
+      const date = String(r[0]);
+      const kind = contentTypeOf(r[1]);
+      if (!kind) continue; // "unspecified" — не контент, график по нему не строим
+      days.add(date);
+      const bucket = kind === "shorts" ? shorts : long;
+      const prev = bucket.get(date);
+      const point: DailyPoint = {
+        date,
+        views: (prev?.views ?? 0) + Number(r[2] ?? 0),
+        minutes: (prev?.minutes ?? 0) + Number(r[3] ?? 0),
+        subscribersGained: (prev?.subscribersGained ?? 0) + Number(r[4] ?? 0),
+        subscribersLost: (prev?.subscribersLost ?? 0) + Number(r[5] ?? 0),
+      };
+      bucket.set(date, point);
+    }
+
+    const sortedDays = Array.from(days).sort();
+    const fill = (m: Map<string, DailyPoint>): DailyPoint[] | null =>
+      m.size === 0
+        ? null
+        : sortedDays.map(
+            (d) =>
+              m.get(d) ?? {
+                date: d,
+                views: 0,
+                minutes: 0,
+                subscribersGained: 0,
+                subscribersLost: 0,
+              }
+          );
+
+    const s = fill(shorts);
+    const l = fill(long);
+    if (!s && !l) return null;
+    return { shorts: s, long: l };
+  } catch {
+    return null;
   }
 }
 
@@ -931,7 +1225,7 @@ export async function fetchSubscriberTimeline(
   const ensure = (key: string): SubscriberTimelineBucket => {
     let b = buckets.get(key);
     if (!b) {
-      b = { key, views: 0, totalGained: 0, gainedByVideo: {}, other: 0, releases: [] };
+      b = { key, views: 0, totalGained: 0, totalLost: 0, gainedByVideo: {}, other: 0, releases: [] };
       buckets.set(key, b);
       order.push(key);
     }
@@ -941,6 +1235,7 @@ export async function fetchSubscriberTimeline(
     const b = ensure(bucketKeyFor(dp.date, gran));
     b.views += dp.views;
     b.totalGained += dp.subscribersGained;
+    b.totalLost += dp.subscribersLost;
   }
 
   // Разложить прирост по драйверам и посчитать суммарный вклад каждого.

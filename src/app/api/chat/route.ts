@@ -4,12 +4,13 @@ import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
-import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
+import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { getQuotaState } from "@/lib/quota";
 import { prisma } from "@/lib/prisma";
+import { track } from "@/lib/achievements-server";
 
 // Сборка system-промпта (методика/голос/знания) вынесена в src/lib/llm/system.ts
 // (buildSystem) — её переиспользует и ИИ-разбор видео. route.ts отвечает за
@@ -62,12 +63,22 @@ async function resolveChannelContext(
       );
       return { channelBlock: null, nudge: alreadyNudged ? "gentle" : "active" };
     }
-    const snap = await withTimeout(
-      getChannelSnapshotCached(conversationId, integ),
-      CHANNEL_SNAPSHOT_TIMEOUT_MS,
-      null
-    );
-    return { channelBlock: snap ? buildChannelBlock(snap) : null, nudge: "off" };
+    const [snap, lastCtr] = await Promise.all([
+      withTimeout(getChannelSnapshotCached(conversationId, integ), CHANNEL_SNAPSHOT_TIMEOUT_MS, null),
+      // CTR превью API не отдаёт; берём последнюю цифру, которую юзер сам ввёл в
+      // разборе канала — чтобы в чате можно было говорить о кликабельности предметно.
+      prisma.channelAnalysis
+        .findFirst({
+          where: { conversationId, manualCtr: { not: null } },
+          orderBy: { createdAt: "desc" },
+          select: { manualCtr: true, createdAt: true },
+        })
+        .catch(() => null),
+    ]);
+    return {
+      channelBlock: snap ? buildChannelBlock(snap, lastCtr?.manualCtr ?? null) : null,
+      nudge: "off",
+    };
   } catch (err) {
     console.error("[chat] channel context error:", err);
     return { channelBlock: null, nudge: "off" };
@@ -222,13 +233,26 @@ export async function POST(request: NextRequest) {
         ? buildFullSystem(route.category, aboutYou, brief, userName, channel.channelBlock, channel.nudge)
         : buildSystem(
             route,
-            route.searchQuery || lastUser,
+            // Слова ниши клиента подмешиваем в запрос к базе: без них BM25 ранжирует
+            // по терминам методики от роутера и тащит теорию вместо нишевой фактуры
+            // (см. withBriefTerms в brief.ts). Токенов не стоит — меняется ранжирование.
+            withBriefTerms(route.searchQuery || lastUser, brief),
             aboutYou,
             brief,
             userName,
             channel.channelBlock,
             channel.nudge
           );
+
+    // Веб-поиск: только на OpenRouter (плагин `web`), только если включён в админке,
+    // и только на содержательных запросах — на «привет / спасибо» (category === "chat")
+    // искать нечего, а каждый результат стоит денег (~$0.004).
+    const webSearch =
+      provider === "openrouter" &&
+      settings.webSearch.enabled &&
+      route.category !== "chat"
+        ? settings.webSearch.maxResults
+        : 0;
 
     const encoder = new TextEncoder();
 
@@ -249,6 +273,12 @@ export async function POST(request: NextRequest) {
         try {
           send(": ping\n\n");
 
+          // Веб-поиск включён — говорим клиенту, чтобы индикатор показал «Ищу в
+          // интернете» вместо обычной цепочки «думаю». Отдельное SSE-событие, а не
+          // токен: до первого токена стрим и так молчит, а поиск заметно добавляет
+          // к TTFT — без подписи это выглядит как «завис».
+          if (webSearch > 0) send(`data: ${JSON.stringify({ searching: true })}\n\n`);
+
           // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
           // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
           const strategy = getStrategy(provider);
@@ -261,6 +291,7 @@ export async function POST(request: NextRequest) {
             model: settings.openrouterModel,
             orParams: settings.openrouterParams,
             orProvider: settings.openrouterProvider,
+            webSearch,
             meta: { userId: sessionUser.id, conversationId },
           })) {
             if (request.signal.aborted) break;
@@ -287,6 +318,10 @@ export async function POST(request: NextRequest) {
               })
               .catch((err) => console.error("[chat] requestsUsed increment error:", err));
           }
+
+          // Геймификация: засчитываем действие (docs/achievements.md).
+          // Fire-and-forget, админов тоже считаем — ачивки не про биллинг.
+          if (!stopped && assistantText.trim()) track(sessionUser.id, "chat_message");
 
           // Успешный ответ — дописываем пару «вопрос+ответ» в историю. Вложенный
           // create обновляет диалог (триггерит @updatedAt → свежие сверху).
