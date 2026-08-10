@@ -1,5 +1,6 @@
 import type { User } from "@prisma/client";
 import { getPlans, type PublicPlan } from "./plans";
+import { prisma } from "./prisma";
 
 // ── Квоты запросов и срок тарифа ────────────────────────────────────────────
 // Один ответ ассистента (kind=chat, без классификации) = 1 единица лимита.
@@ -69,4 +70,56 @@ export async function getQuotaState(
     ok: reason === "ok",
     reason,
   };
+}
+
+// ── Персональная выдача пробного периода после массового сброса ──────────────
+//
+// ⚠️ Почему не разовым updateMany по всем юзерам: тогда срок отсчитывался бы от
+// момента нажатия кнопки в админке. Нажали в 11:00 при сроке 3 часа — у всех
+// истекло в 14:00, и человек, открывший письмо в 15:00, упирается в закрытую
+// дверь, хотя ему только что написали «доступ открыт».
+//
+// Поэтому кнопка ставит только МЕТКУ (AppSettings.trialResetAt), а сам период
+// выдаётся здесь — при первом заходе конкретного человека, от его времени.
+// Условие выдачи: метка сброса новее, чем последняя выдача этому юзеру
+// (User.trialGrantedAt). После выдачи trialGrantedAt = now > метки, поэтому
+// повторно не сработает — сколько бы страниц человек ни открыл.
+export async function maybeGrantTrial<T extends {
+  id: string;
+  plan: string;
+  planExpiresAt: Date | null;
+  trialGrantedAt: Date | null;
+}>(user: T, deps: { trialResetAt: string | null; trialHours: number }): Promise<T> {
+  const { trialResetAt, trialHours } = deps;
+  if (!trialResetAt) return user;
+
+  const resetAt = new Date(trialResetAt);
+  if (Number.isNaN(resetAt.getTime())) return user;
+  // Уже выдавали после этой метки — ничего не делаем (это самый частый случай,
+  // и он не стоит ни одного лишнего запроса).
+  if (user.trialGrantedAt && user.trialGrantedAt >= resetAt) return user;
+
+  // Платный тариф не трогаем: сброс — только для пробных. Платившие отсекаются
+  // тут же по факту платного тарифа, а тех, кто на бесплатном, но когда-то платил,
+  // отсекает проверка платежей ниже.
+  const plans = await getPlans();
+  const plan = plans.find((p) => p.id === user.plan);
+  if (!plan || plan.priceRub > 0) return user;
+
+  const paid = await prisma.payment.count({
+    where: { userId: user.id, status: "CONFIRMED" },
+  });
+  if (paid > 0) return user;
+
+  const now = new Date();
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      planExpiresAt: trialExpiresAt(trialHours, now),
+      requestsUsed: 0,
+      trialGrantedAt: now,
+    },
+  });
+  console.log(`[trial] выдан заново юзеру ${user.id} на ${trialHours} ч`);
+  return { ...user, ...updated } as T;
 }
