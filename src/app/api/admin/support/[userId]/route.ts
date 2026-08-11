@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError, readJson } from "@/lib/http";
+import { sendToChat, escapeHtml } from "@/lib/telegram";
 import {
   normalizeSupportRole,
   sanitizeSupportContent,
@@ -69,7 +70,7 @@ export async function POST(
 
   const exists = await prisma.user.findUnique({
     where: { id: params.userId },
-    select: { id: true },
+    select: { id: true, telegramChatId: true },
   });
   if (!exists) return apiError("Пользователь не найден", 404);
 
@@ -77,6 +78,17 @@ export async function POST(
     data: { userId: exists.id, role: "admin", content },
     select: { id: true, role: true, content: true, createdAt: true },
   });
+
+  // Человек писал из Telegram — ответ должен прийти туда же, а не только на сайт.
+  // Best-effort: ответ уже сохранён, падение телеграма его не отменяет.
+  if (exists.telegramChatId) {
+    void sendToChat(
+      exists.telegramChatId,
+      `<b>Поддержка VELIZHANIN AI</b>
+
+${escapeHtml(content)}`
+    ).catch(() => {});
+  }
 
   return NextResponse.json({ message: toRow(created) });
 }

@@ -433,8 +433,19 @@ function Dashboard({
   const matrixEmpty = matrix.points.length < 3;
   // Порядок очереди: сперва то, где теряем больше всего — «кликнули и ушли» на
   // хорошем охвате, потом непроданный хороший контент, потом провалы.
+  // Порядок очереди = где переделка даст больше всего.
+  //
+  // ⚠️ ПЕРВЫМИ идут ролики со СЛАБОЙ УПАКОВКОЙ (packaging): досмотр выше медианы
+  // канала, а просмотров мало — контент people держит, просто на него не кликают.
+  // Тут переделка превью и названия — самая дешёвая работа с самым предсказуемым
+  // результатом: ролик уже доказал, что его смотрят.
+  // Дальше — «кликнули и ушли» (bait): охват есть, но контент не удержал, это уже
+  // перемонтаж, работа дороже. В конце — провалы (fail), где не сработало ничто.
+  //
+  // Раньше первым шёл bait, и очередь предлагала перемонтировать видео, оставляя
+  // без внимания те, которым достаточно новой обложки.
   const fixQueue = useMemo(() => {
-    const rank: Record<string, number> = { bait: 0, packaging: 1, fail: 2, works: 3 };
+    const rank: Record<string, number> = { packaging: 0, bait: 1, fail: 2, works: 3 };
     return matrix.points
       .filter((p) => p.quadrant !== "works")
       .sort((a, b) => rank[a.quadrant] - rank[b.quadrant] || b.video.viewCount - a.video.viewCount)
@@ -1400,8 +1411,12 @@ function GrowthSection({
     ...(hasOther ? [{ name: "Другое", color: OTHER_COLOR }] : []),
   ];
 
-  // Понедельный рост: буквы ТЗ — «растущий график, сколько за неделю пришло».
-  // Копим сумму от начала периода, в тултипе видно и прирост недели, и итог.
+  // Понедельный прирост: сколько подписчиков пришло ЗА КАЖДУЮ неделю.
+  //
+  // ⚠️ Раньше тут копилась сумма от начала периода — и это оказалось хуже: у
+  // накопленной кривой линия физически не может пойти вниз, поэтому падение
+  // прироста (186 за неделю → 80 на следующей) читалось как продолжение роста.
+  // Теперь точка = прирост своей недели, и провал виден сразу.
   const weekly = useMemo(() => {
     const byWeek = new Map<string, number>();
     for (const b of tl.buckets) {
@@ -1413,12 +1428,14 @@ function GrowthSection({
       const key = d.toISOString().slice(0, 10);
       byWeek.set(key, (byWeek.get(key) ?? 0) + b.totalGained);
     }
-    let acc = 0;
+    let total = 0;
     return Array.from(byWeek.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([key, gained]) => {
-        acc += gained;
-        return { label: bucketLabel(key, "week"), Подписчики: acc, gained };
+        total += gained;
+        // total оставляем для тултипа — «сколько всего за период» полезно видеть,
+        // но рисуем именно недельный прирост.
+        return { label: bucketLabel(key, "week"), Подписчики: gained, total };
       });
   }, [tl.buckets]);
 
@@ -1662,7 +1679,7 @@ function GrowthSection({
       {weekly.length > 1 && (
         <Box mt="lg">
           <Text size="xs" c="dimmed" mb={4} tt="uppercase" fw={600} lts={0.3}>
-            Рост по неделям
+            Прирост по неделям
           </Text>
           <AreaChart
             h={180}
@@ -1691,10 +1708,10 @@ function GrowthSection({
                       неделя с {label}
                     </Text>
                     <Text size="sm" fw={600}>
-                      +{formatCount(row?.gained ?? 0)} за неделю
+                      +{formatCount(row?.Подписчики ?? 0)} за неделю
                     </Text>
                     <Text size="xs" c="dimmed">
-                      всего с начала периода: {formatCount(row?.Подписчики ?? 0)}
+                      всего с начала периода: {formatCount(row?.total ?? 0)}
                     </Text>
                   </Paper>
                 );
@@ -1745,7 +1762,7 @@ function GrowthSection({
       <Text size="xs" c="dimmed" mt="md">
         Столбец — сколько подписчиков пришло за отрезок, секции внутри — какие ролики их привели.
         Внизу строчкой видно, когда какие ролики вышли. Наведи на столбец, чтобы увидеть раскладку;
-        клик по ролику открывает разбор упаковки. Нижний график — накопленный рост по неделям.
+        клик по ролику открывает разбор упаковки. Нижний график — прирост по каждой неделе: видно, ускоряется канал или замедляется.
       </Text>
     </Paper>
   );

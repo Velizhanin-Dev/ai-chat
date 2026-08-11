@@ -44,8 +44,12 @@ import ParamWheel, { verdictColor } from "./ParamWheel";
 // Новый разбор тратит 1 запрос квоты, поэтому по умолчанию показываем последний
 // сохранённый, а не гоним модель заново.
 
+// ⚠️ Сводного режима «Весь канал» тут НЕТ намеренно. Он считал канал семёркой
+// параметров лонгов — включая CTR, которого у шортсов не существует, — и мешал
+// в одну кучу два разных типа контента: у шортсов охваты и досмотры на порядок
+// другие, поэтому усреднённые цифры не значили ничего и совет выходил неверный
+// («поднимите CTR» каналу, который живёт шортсами). Разбираем раздельно.
 const KIND_OPTIONS = [
-  { value: "all", label: "Весь канал" },
   { value: "long", label: "Видео" },
   { value: "shorts", label: "Шортсы" },
 ];
@@ -97,7 +101,7 @@ export default function ChannelDiagnostics({ projectId, opened, onClose, onUpgra
   const [stage, setStage] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const [kind, setKind] = useState<DiagnoseKind>("all");
+  const [kind, setKind] = useState<DiagnoseKind>("long");
   const [periodDays, setPeriodDays] = useState<number>(28);
   const [ctr, setCtr] = useState<string | number>("");
 

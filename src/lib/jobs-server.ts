@@ -21,6 +21,21 @@ export type JobHandler = (ctx: {
   payload: Record<string, unknown>;
 }) => Promise<unknown>;
 
+// Ошибка, которую НЕ надо повторять: повторная попытка либо снова упадёт, либо
+// (хуже) заново заплатит провайдеру за уже сделанную работу. Бросается из
+// обработчика — воркер сразу помечает задачу проваленной, минуя ретраи.
+export class FatalJobError extends Error {
+  readonly fatal = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "FatalJobError";
+  }
+}
+
+export function isFatalJobError(err: unknown): boolean {
+  return Boolean((err as { fatal?: boolean } | null)?.fatal);
+}
+
 // Реестр обработчиков. Заполняется в job-handlers.ts — так модуль очереди не
 // тянет за собой генерацию картинок и YouTube-клиент (воркер импортирует всё, а
 // роуты — только эту библиотеку).
@@ -153,9 +168,11 @@ export async function completeJob(jobId: string, result: unknown): Promise<void>
 export async function failJob(
   jobId: string,
   attempts: number,
-  message: string
+  message: string,
+  // Окончательный сбой — не повторять (см. FatalJobError).
+  fatal = false
 ): Promise<void> {
-  const retry = attempts < JOB_MAX_ATTEMPTS;
+  const retry = !fatal && attempts < JOB_MAX_ATTEMPTS;
   await prisma.job.update({
     where: { id: jobId },
     data: retry

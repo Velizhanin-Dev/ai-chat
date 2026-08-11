@@ -49,6 +49,7 @@ import Logo from "@/components/Brand/Logo";
 import RequestsRing from "@/components/Chat/RequestsRing";
 import SettingsModal from "@/components/Settings/SettingsModal";
 import TopNav from "@/components/Shell/TopNav";
+import TelegramSupportButton from "@/components/Support/TelegramSupportButton";
 import {
   ProjectHeaderProvider,
   ProjectHeaderTitle,
@@ -403,6 +404,7 @@ export default function AppShellLayout({
             {/* Техподдержка — отдельная страница /support, только залогиненным
                 (у гостя нет треда). Бейдж — непрочитанные ответы поддержки. */}
             {user && (
+              <>
               <UnstyledButton
                 onClick={handleSupport}
                 w="100%"
@@ -441,6 +443,14 @@ export default function AppShellLayout({
                   )}
                 </Group>
               </UnstyledButton>
+
+              {/* Вторая дверь в ту же поддержку: многим быстрее написать в
+                  телеграм, чем открывать раздел. Тред общий — ответ придёт и
+                  сюда, и в личку бота. */}
+              <Box mt={6} mb="sm">
+                <TelegramSupportButton size="xs" fullWidth variant="subtle" />
+              </Box>
+              </>
             )}
 
             <Group justify="space-between" px={4} mb="sm">

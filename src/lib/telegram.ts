@@ -22,6 +22,11 @@ export function telegramConfigured(): boolean {
 }
 
 // Экранирование под parse_mode=HTML (только эти три символа значимы).
+// Экспортируем: ответ поддержки в личку собирается в роуте админки.
+export function escapeHtml(v: string): string {
+  return esc(v);
+}
+
 function esc(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -56,8 +61,15 @@ const APP_URL = (() => {
 // action — кнопка под сообщением (inline_keyboard); ссылки строим от APP_URL,
 // который всегда публичный, но URL всё равно проверяем: с непубличным Bot API
 // отвергает ВСЁ сообщение (BUTTON_URL_INVALID), а уведомление важнее кнопки.
-async function send(html: string, action?: { text: string; url: string }): Promise<void> {
-  if (!token || !chatId) {
+async function send(
+  html: string,
+  action?: { text: string; url: string },
+  // Кому шлём. По умолчанию — админский чат (TELEGRAM_CHAT_ID); для ответа
+  // пользователю в его личку передаём его chat_id (см. sendToChat).
+  toChatId?: string
+): Promise<void> {
+  const target = toChatId ?? chatId;
+  if (!token || !target) {
     console.warn("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID не заданы — уведомление не отправлено");
     return;
   }
@@ -67,7 +79,7 @@ async function send(html: string, action?: { text: string; url: string }): Promi
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId,
+        chat_id: target,
         text: html,
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -89,6 +101,13 @@ async function send(html: string, action?: { text: string; url: string }): Promi
   } catch (err) {
     console.error("[telegram] ошибка отправки:", err);
   }
+}
+
+// Ответ поддержки пользователю в личку бота. Тем же ботом, что шлёт уведомления
+// админу, — отдельный токен не нужен. Best-effort: человек в любом случае увидит
+// ответ в разделе поддержки на сайте.
+export async function sendToChat(chatIdTo: string, html: string): Promise<void> {
+  await send(html, undefined, chatIdTo);
 }
 
 // Уведомление о новом вопросе в поддержку: от кого + текст + кнопка на ответ.
