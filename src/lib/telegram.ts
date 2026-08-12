@@ -17,11 +17,33 @@ const PROD_APP_URL = "https://ai.velizhanin.com";
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
 
+// ⚠️⚠️ Эмодзи собираем из кодов, а НЕ пишем символом в исходнике. Причина — баг
+// минификатора SWC (Next 14): символ вне BMP (а все эмодзи такие) внутри ШАБЛОННОЙ
+// строки эмитится с УДВОЕННЫМ слэшем — `\\uD83D\\uDCB0` вместо `💰`, и
+// в телеграм улетает текст «💰» вместо 💰. Ловили вживую на уведомлении
+// об оплате: там оптимизатор свернул массив строк в один шаблон, и эмодзи сломался,
+// а в соседнем уведомлении о поддержке массив остался массивом — и там всё было
+// цело. То есть баг зависит от того, как оптимизатор свернёт код, и «переписать
+// покрасивее» его в любой момент вернёт. String.fromCodePoint не проходит через
+// экранирование вовсе, поэтому от вёрстки кода не зависит.
+const EMOJI = {
+  money: String.fromCodePoint(0x1f4b0), // 💰
+  card: String.fromCodePoint(0x1f4b3), // 💳
+  sos: String.fromCodePoint(0x1f198), // 🆘
+  speech: String.fromCodePoint(0x1f4ac), // 💬
+  warning: String.fromCodePoint(0x26a0), // ⚠ (BMP, но держим тут же — чтобы список был один)
+};
+
 export function telegramConfigured(): boolean {
   return Boolean(token && chatId);
 }
 
 // Экранирование под parse_mode=HTML (только эти три символа значимы).
+// Экспортируем: ответ поддержки в личку собирается в роуте админки.
+export function escapeHtml(v: string): string {
+  return esc(v);
+}
+
 function esc(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -56,8 +78,15 @@ const APP_URL = (() => {
 // action — кнопка под сообщением (inline_keyboard); ссылки строим от APP_URL,
 // который всегда публичный, но URL всё равно проверяем: с непубличным Bot API
 // отвергает ВСЁ сообщение (BUTTON_URL_INVALID), а уведомление важнее кнопки.
-async function send(html: string, action?: { text: string; url: string }): Promise<void> {
-  if (!token || !chatId) {
+async function send(
+  html: string,
+  action?: { text: string; url: string },
+  // Кому шлём. По умолчанию — админский чат (TELEGRAM_CHAT_ID); для ответа
+  // пользователю в его личку передаём его chat_id (см. sendToChat).
+  toChatId?: string
+): Promise<void> {
+  const target = toChatId ?? chatId;
+  if (!token || !target) {
     console.warn("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID не заданы — уведомление не отправлено");
     return;
   }
@@ -67,7 +96,7 @@ async function send(html: string, action?: { text: string; url: string }): Promi
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId,
+        chat_id: target,
         text: html,
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -91,6 +120,13 @@ async function send(html: string, action?: { text: string; url: string }): Promi
   }
 }
 
+// Ответ поддержки пользователю в личку бота. Тем же ботом, что шлёт уведомления
+// админу, — отдельный токен не нужен. Best-effort: человек в любом случае увидит
+// ответ в разделе поддержки на сайте.
+export async function sendToChat(chatIdTo: string, html: string): Promise<void> {
+  await send(html, undefined, chatIdTo);
+}
+
 // Уведомление о новом вопросе в поддержку: от кого + текст + кнопка на ответ.
 export async function notifySupportMessage(params: {
   userId: string;
@@ -100,13 +136,36 @@ export async function notifySupportMessage(params: {
 }): Promise<void> {
   const link = `${APP_URL}/admin/support?user=${encodeURIComponent(params.userId)}`;
   const html = [
-    "🆘 <b>Вопрос в поддержку</b>",
+    `${EMOJI.sos} <b>Вопрос в поддержку</b>`,
     "",
     `<b>От:</b> ${esc(params.name)} (${esc(params.email)})`,
     "",
     esc(clamp(params.content)),
   ].join("\n");
-  await send(html, { text: "💬 Ответить в админке", url: link });
+  await send(html, { text: `${EMOJI.speech} Ответить в админке`, url: link });
+}
+
+// Письмо не ушло — зовём администратора. Нужно именно уведомление, а не запись в
+// лог: сброс пароля был сломан незаметно (Unisender отвечал «Api mode is off»,
+// письмо не уходило, человек видел «Проверьте почту»), и узнать об этом можно было
+// только случайно. Причина всегда на нашей стороне — ключ, доступ по API,
+// неподтверждённый адрес отправителя.
+//
+// ⚠️ Адрес получателя НЕ пишем: уведомление уходит в общий чат, а знать, кто
+// восстанавливает пароль, админу для починки не требуется.
+export async function notifyMailFailure(params: {
+  kind: string;
+  reason: string;
+}): Promise<void> {
+  const html = [
+    `${EMOJI.warning} <b>Письмо не отправлено</b>`,
+    "",
+    `<b>Что:</b> ${esc(params.kind)}`,
+    `<b>Причина:</b> ${esc(params.reason)}`,
+    "",
+    "Человек остался без письма и об этом не знает. Проверь ключ Unisender и что в кабинете включён доступ по API.",
+  ].join("\n");
+  await send(html);
 }
 
 // Уведомление об успешной оплате тарифа. Шлётся из markPaid (billing.ts) — там
@@ -139,12 +198,12 @@ export async function notifyPaymentSuccess(params: {
   });
   const link = `${APP_URL}/admin/payments`;
   const html = [
-    "💰 <b>Оплата тарифа</b>",
+    `${EMOJI.money} <b>Оплата тарифа</b>`,
     "",
     `<b>Кто:</b> ${esc(params.name)} (${esc(params.email)})`,
     `<b>Тариф:</b> ${esc(params.planLabel)}`,
     `<b>Сумма:</b> ${esc(rub)} ₽ · ${esc(providerLabel)}`,
     `<b>Доступ до:</b> ${esc(until)}`,
   ].join("\n");
-  await send(html, { text: "💳 Платежи в админке", url: link });
+  await send(html, { text: `${EMOJI.card} Платежи в админке`, url: link });
 }

@@ -27,6 +27,7 @@ const ITEMS = [
   { label: "Аналитика", seg: "channel", adminOnly: false, beta: false },
   { label: "Контент-план", seg: "content-plan", adminOnly: false, beta: true },
   { label: "Генератор превью", seg: "thumbnails", adminOnly: false, beta: true },
+  { label: "Конкуренты", seg: "competitors", adminOnly: true, beta: true },
   { label: "Настройки", seg: "settings", adminOnly: false, beta: false },
 ] as const;
 

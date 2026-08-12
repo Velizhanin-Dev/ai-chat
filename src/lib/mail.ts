@@ -23,7 +23,22 @@ function parseFrom(value: string): { name: string; email: string } {
   return { name: value, email: value };
 }
 
-async function send(to: string, subject: string, html: string, devLink?: string) {
+// Чем закончилась отправка. Раньше send() возвращал void и молча глотал ошибку
+// провайдера — из-за этого сброс пароля был сломан незаметно: Unisender отвечал
+// «Api mode is off» (в кабинете выключен доступ по API), письмо не уходило, а
+// человек видел бодрое «Проверьте почту». Теперь исход возвращаем наверх.
+export type MailResult = "sent" | "not_configured" | "failed";
+
+export function mailConfigured(): boolean {
+  return Boolean(apiKey && listId);
+}
+
+async function send(
+  to: string,
+  subject: string,
+  html: string,
+  devLink?: string
+): Promise<MailResult> {
   // В dev всегда логируем ссылку — чтобы пройти флоу без реальной почты.
   if (devLink && process.env.NODE_ENV !== "production") {
     console.log(`[mail] ${subject} → ${to}\n  ${devLink}`);
@@ -32,7 +47,7 @@ async function send(to: string, subject: string, html: string, devLink?: string)
     console.warn(
       `[mail] UNISENDER_API_KEY/UNISENDER_LIST_ID не заданы — письмо "${subject}" не отправлено (${to})`
     );
-    return;
+    return "not_configured";
   }
 
   const { name, email } = parseFrom(FROM);
@@ -60,19 +75,22 @@ async function send(to: string, subject: string, html: string, devLink?: string)
       code?: string;
       result?: { errors?: { code?: string; message?: string }[] } | unknown;
     };
-    // Ошибка уровня API (неверный ключ, нет прав и т.п.).
+    // Ошибка уровня API (неверный ключ, выключен доступ по API, нет прав и т.п.).
     if (data.error) {
       console.error(`[mail] Unisender API error: ${data.error} (${data.code ?? "?"})`);
-      return;
+      return "failed";
     }
     // Ошибка по конкретному адресу (при error_checking=1 result — массив).
     const result = data.result as { errors?: { message?: string }[] }[] | undefined;
     const msgErrors = Array.isArray(result) ? result[0]?.errors : undefined;
     if (msgErrors && msgErrors.length) {
       console.error("[mail] Unisender send error", msgErrors);
+      return "failed";
     }
+    return "sent";
   } catch (err) {
     console.error("[mail] исключение при отправке", err);
+    return "failed";
   }
 }
 
@@ -89,9 +107,9 @@ function template(opts: { heading: string; body: string; cta: string; link: stri
   </div>`;
 }
 
-export async function sendVerificationEmail(to: string, token: string): Promise<void> {
+export async function sendVerificationEmail(to: string, token: string): Promise<MailResult> {
   const link = `${APP_URL}/verify-email?token=${token}`;
-  await send(
+  return send(
     to,
     "Подтвердите почту — Велижанин AI",
     template({
@@ -104,9 +122,9 @@ export async function sendVerificationEmail(to: string, token: string): Promise<
   );
 }
 
-export async function sendPasswordResetEmail(to: string, token: string): Promise<void> {
+export async function sendPasswordResetEmail(to: string, token: string): Promise<MailResult> {
   const link = `${APP_URL}/reset-password?token=${token}`;
-  await send(
+  return send(
     to,
     "Сброс пароля — Велижанин AI",
     template({

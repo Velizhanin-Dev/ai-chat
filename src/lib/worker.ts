@@ -1,4 +1,10 @@
-import { claimJob, completeJob, failJob, getJobHandler } from "@/lib/jobs-server";
+import {
+  claimJob,
+  completeJob,
+  failJob,
+  getJobHandler,
+  isFatalJobError,
+} from "@/lib/jobs-server";
 import { isJobKind } from "@/lib/jobs";
 import "@/lib/job-handlers"; // регистрация обработчиков (побочный эффект импорта)
 
@@ -49,7 +55,7 @@ async function runOne(): Promise<boolean> {
     // Текст ошибки увидит пользователь — поэтому человеческий, без стеков.
     const msg = err instanceof Error ? err.message : "Не удалось выполнить задачу";
     console.error(`[worker] ${job.kind} ${job.id} failed (попытка ${job.attempts}):`, err);
-    await failJob(job.id, job.attempts, msg).catch((e) =>
+    await failJob(job.id, job.attempts, msg, isFatalJobError(err)).catch((e) =>
       console.error("[worker] не смог записать ошибку задачи:", e)
     );
   }

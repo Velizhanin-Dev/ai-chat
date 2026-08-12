@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { registerJobHandler, enqueueJob } from "@/lib/jobs-server";
+import { registerJobHandler, enqueueJob, FatalJobError } from "@/lib/jobs-server";
 import { getSettings } from "@/lib/settings";
 import { generateImage } from "@/lib/llm/image";
 import { readUpload, saveUpload, IMAGE_MIME_EXT } from "@/lib/uploads";
@@ -73,7 +73,21 @@ registerJobHandler("thumbnail_generate", async ({ userId, conversationId, payloa
   });
 
   const mime = IMAGE_MIME_EXT[image.mime] ? image.mime : "image/jpeg";
-  const filePath = await saveUpload(image.data, { mime, dir: conversationId });
+
+  // ⚠️ Картинка УЖЕ оплачена провайдеру (~$0.14). Если сохранение упадёт —
+  // например, из-за прав на папку, — задача уйдёт на повторную попытку и
+  // сгенерирует её ЗАНОВО, за новые деньги, ничего не дав пользователю.
+  // Поэтому сбой записи помечаем как окончательный: пусть человек нажмёт сам,
+  // когда причина устранена, а мы не будем молча жечь бюджет ретраями.
+  let filePath: string;
+  try {
+    filePath = await saveUpload(image.data, { mime, dir: conversationId });
+  } catch (err) {
+    console.error("[thumbnails] не удалось сохранить картинку:", err);
+    throw new FatalJobError(
+      "Картинка сгенерирована, но её не удалось сохранить на диск. Сообщите в поддержку — это наша проблема, не ваша."
+    );
+  }
 
   const row = await prisma.thumbnail.create({
     data: {

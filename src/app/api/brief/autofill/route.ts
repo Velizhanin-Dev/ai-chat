@@ -159,6 +159,7 @@ ${videoLines}
       book: false,
       youtube: false,
       contentPlan: false,
+      charisma: false,
       searchQuery: "",
     };
 

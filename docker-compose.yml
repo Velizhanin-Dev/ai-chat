@@ -56,9 +56,14 @@ services:
       # только пути. См. src/lib/uploads.ts.
       UPLOAD_DIR: /app/data/uploads
     volumes:
-      # Папка рядом с проектом на хосте. Контейнер работает под uid 1001 (nextjs),
-      # поэтому при первом деплое на хосте: mkdir -p data/uploads && chown -R 1001:1001 data/uploads
-      - ./data/uploads:/app/data/uploads
+      # ⚠️ ИМЕНОВАННЫЙ volume, а НЕ bind-mount папки с хоста. Причина: контейнер
+      # работает под uid 1001, а созданная на хосте папка принадлежит root —
+      # приложение падало с EACCES на mkdir внутри /app/data/uploads, уже ПОСЛЕ
+      # оплаченной генерации картинки. Docker при создании именованного volume
+      # копирует владельца из образа (там 1001), поэтому права сходятся сами и
+      # никакого chown на хосте делать не надо.
+      # Бэкап: docker run --rm -v creative-chat_uploads:/d -v "$PWD":/b alpine tar czf /b/uploads.tar.gz -C /d .
+      - uploads:/app/data/uploads
 
   caddy:
     image: caddy:2-alpine
@@ -75,3 +80,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy/data:/data # сюда Caddy кладёт выписанные сертификаты
       - ./data/caddy/config:/config
+
+volumes:
+  # Пользовательские файлы генератора превью: загруженные фото-референсы и
+  # готовые обложки. В БД лежат только пути, сами файлы — здесь.
+  uploads:

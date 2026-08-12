@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Box, Stack, Text, ThemeIcon } from "@mantine/core";
+import { Alert, Box, Group, Stack, Text, ThemeIcon } from "@mantine/core";
 import { IconAlertCircle, IconHeadset } from "@tabler/icons-react";
 import type { SupportMessageRow } from "@/lib/support";
 import { apiSendSupportMessage, apiSupportMessages } from "@/lib/support-client";
 import SupportChat from "@/components/Support/SupportChat";
+import TelegramSupportButton from "@/components/Support/TelegramSupportButton";
 
 // Чат техподдержки (/support) — отдельная страница внутри обвязки приложения
 // (сайдбар + шапка), не пер-проектная: тред один на пользователя. Человек пишет
@@ -93,9 +94,14 @@ export default function SupportPage() {
           background: "var(--mantine-color-body)",
         }}
       >
-        <Text fw={600} fz="1rem" lh={1.2} style={{ padding: "14px 16px" }}>
-          Поддержка VELIZHANIN&nbsp;AI
-        </Text>
+        <Group justify="space-between" wrap="nowrap" gap="sm" style={{ padding: "10px 16px" }}>
+          <Text fw={600} fz="1rem" lh={1.2}>
+            Поддержка VELIZHANIN&nbsp;AI
+          </Text>
+          {/* Тот же тред, только со стороны Telegram: человеку удобнее писать
+              туда, а админ отвечает всё там же — в /admin/support. */}
+          <TelegramSupportButton size="xs" />
+        </Group>
       </Box>
 
       {error && (

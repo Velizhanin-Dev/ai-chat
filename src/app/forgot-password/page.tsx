@@ -11,14 +11,18 @@ import {
   Text,
   ThemeIcon,
   Group,
+  Alert,
 } from "@mantine/core";
-import { IconMailCheck, IconArrowLeft } from "@tabler/icons-react";
+import { IconMailCheck, IconArrowLeft, IconAlertCircle } from "@tabler/icons-react";
 import AuthLayout from "@/components/Auth/AuthLayout";
 import { apiForgotPassword } from "@/lib/auth-client";
 
 export default function ForgotPasswordPage() {
   const [sent, setSent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Ошибка бывает ровно одна и не зависит от того, есть ли такой аккаунт:
+  // отправка писем недоступна (503). Всё остальное отвечает нейтральным ok.
+  const [error, setError] = useState<string | null>(null);
 
   const form = useForm({
     mode: "uncontrolled",
@@ -30,10 +34,16 @@ export default function ForgotPasswordPage() {
 
   const submit = async (values: { email: string }) => {
     setLoading(true);
-    // Ответ сервера всегда ok (без энумерации) — просто показываем экран «письмо
-    // отправлено» вне зависимости от того, есть такой аккаунт или нет.
-    await apiForgotPassword(values.email);
+    setError(null);
+    // На успех сервер всегда отвечает ok (без энумерации) — показываем экран
+    // «письмо отправлено» вне зависимости от того, есть такой аккаунт или нет.
+    // Ошибка приходит, только когда почта не настроена и письмо не уйдёт НИКОМУ.
+    const res = await apiForgotPassword(values.email);
     setLoading(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
     setSent(values.email);
   };
 
@@ -90,6 +100,11 @@ export default function ForgotPasswordPage() {
     >
       <form onSubmit={form.onSubmit(submit)}>
         <Stack gap="md">
+          {error && (
+            <Alert color="red" icon={<IconAlertCircle size={18} />}>
+              {error}
+            </Alert>
+          )}
           <TextInput
             label="Email"
             placeholder="you@example.com"
