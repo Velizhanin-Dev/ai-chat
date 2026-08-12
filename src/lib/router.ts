@@ -35,6 +35,9 @@ export interface RouteDecision {
   youtube: boolean;
   /** Подключить эталон контент-плана (месячная сетка роликов). */
   contentPlan: boolean;
+  /** Подключить карту харизмы (9 типов DISC) — ТОЛЬКО когда про неё спросили явно.
+   *  В обычной работе тип применяется молча, внутри артефакта. */
+  charisma: boolean;
   /** Запрос для поиска по книге/форматам — расширен ключевыми словами от роутера. */
   searchQuery: string;
 }
@@ -78,6 +81,7 @@ function mapCategory(category: QueryCategory): RouteDecision {
     book: false,
     youtube: false,
     contentPlan: false,
+    charisma: false,
     searchQuery: "",
   };
   // YouTube-транскрипты — широкий разговорный слой, релевантен любой генерации/
@@ -110,6 +114,24 @@ function mapCategory(category: QueryCategory): RouteDecision {
       // Болтовня: только хребет, ничего не подгружаем.
       return { ...base, category: "chat" };
   }
+}
+
+/**
+ * Спросили ли ПРЯМО про карту харизмы / типы личности.
+ *
+ * Отдельным флагом, а не категорией роутера: слой тяжёлый (все 9 типов) и нужен
+ * редко, а лишний вызов LLM тут не нужен — вопрос всегда содержит одно из этих слов.
+ *
+ * ⚠️ Набор намеренно узкий. Слова «звезда», «император», «сердечный» — названия
+ * архетипов, но в обычной речи встречаются сплошь и рядом («сделай про звёзд»), и по
+ * ним слой цеплялся бы к половине запросов.
+ */
+export function asksAboutCharisma(text: string): boolean {
+  // ⚠️ Окончания перечисляем классом [а-яё], а НЕ через \w: в JS без флага `u`
+  // \w — это [A-Za-z0-9_], кириллицу он не матчит, и «очаровательную акулу» мимо.
+  return /(харизм|\bdisc\b|тип(?:а|ы|ов|у)? личност|типаж|архетип|кот леопольд|айрон ?фист|iron ?fist|очаровательн[а-яё]* акул|кайфушник|жизнь в кайф|самый последовательн)/i.test(
+    text
+  );
 }
 
 /** Грубая keyword-эвристика на случай ошибки LLM-роутера. */
@@ -265,14 +287,18 @@ export async function routeQuery(
   meta: RouterMeta = {}
 ): Promise<RouteDecision> {
   const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  // Про типы харизмы спрашивают явно — флаг считаем по тексту, до всех веток:
+  // вопрос «а какие вообще бывают типы?» проходит и как болтовня, и как правка.
+  const charisma = asksAboutCharisma(lastUser);
   // Очевидная болтовня — сразу chat, без вызова LLM-роутера.
-  if (isObviousChat(lastUser)) return mapCategory("chat");
+  if (isObviousChat(lastUser)) return { ...mapCategory("chat"), charisma };
   // Правка предыдущего результата — не перезагружаем слои (исходник в истории,
   // она в кэше). category "long" → thinking остаётся включён, но book=false.
   if (isEditFollowup(lastUser, messages)) {
     const d = mapCategory("long");
     d.book = false;
     d.youtube = false;
+    d.charisma = charisma;
     d.searchQuery = lastUser;
     return d;
   }
@@ -291,11 +317,13 @@ export async function routeQuery(
       ? word
       : heuristicCategory(lastUser)) as QueryCategory;
     const decision = mapCategory(category);
+    decision.charisma = charisma;
     // Поисковый запрос = ключевые слова от роутера + сам вопрос (расширение recall).
     decision.searchQuery = `${keywords} ${lastUser}`.trim();
     return decision;
   } catch {
     const decision = mapCategory(heuristicCategory(lastUser));
+    decision.charisma = charisma;
     decision.searchQuery = lastUser;
     return decision;
   }
@@ -313,6 +341,7 @@ export function fullModeRoute(lastUser: string): RouteDecision {
     book: true,
     youtube: true,
     contentPlan: true,
+    charisma: true,
     searchQuery: lastUser,
   };
 }

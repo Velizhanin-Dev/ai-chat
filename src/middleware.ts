@@ -62,6 +62,8 @@ export const config = {
     "/:projectId/creatives/:path*",
     "/:projectId/content-plan",
     "/:projectId/content-plan/:path*",
+    "/:projectId/competitors",
+    "/:projectId/competitors/:path*",
     "/:projectId/thumbnails",
     "/:projectId/thumbnails/:path*",
     "/:projectId/settings",
