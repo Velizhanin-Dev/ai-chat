@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/http";
 import { createCloudPayment } from "@/lib/billing";
+import { sanitizeUtm } from "@/lib/utm";
 
 // Создать платёж CloudPayments (зарубежная карта) за тариф и вернуть параметры для
 // клиентского виджета. Сам виджет открывается на клиенте; подтверждение — вебхук.
@@ -13,7 +14,7 @@ export async function POST(req: Request) {
   const planId = typeof body?.planId === "string" ? body.planId : "";
   if (!planId) return apiError("Не указан тариф", 400);
 
-  const res = await createCloudPayment(user, planId);
+  const res = await createCloudPayment(user, planId, sanitizeUtm(body?.utm));
   if (!res.ok) return apiError(res.error || "Не удалось создать платёж", 400);
   return NextResponse.json({ params: res.params });
 }

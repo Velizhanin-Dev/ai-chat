@@ -25,6 +25,8 @@ import { authenticated } from "@/store/authSlice";
 import { apiPaymentStatus } from "@/lib/auth-client";
 import { writeIntendedPlan } from "@/lib/intended-plan";
 import { ymGoal } from "@/lib/metrika";
+import { utmGoalParams } from "@/lib/utm";
+import { readPaymentAttribution } from "@/lib/utm-client";
 
 // Страница результата платежа (ТБанк возвращает сюда на SuccessURL/FailURL).
 // Отдельная от /chat: на /chat результат перекрывался бы модалкой блокировки/
@@ -54,7 +56,17 @@ export default function PaymentResultPage() {
     void apiPaymentStatus(order).then((res) => {
       if (res.ok && res.data.status === "CONFIRMED") {
         if (res.data.user) dispatch(authenticated(res.data.user));
-        ymGoal("payment_success", { order });
+        // Цель с ЦЕННОСТЬЮ (order_price) — тогда в отчётах Метрики по источникам
+        // видно не только число покупок, но и выручку. Метки шлём явно: человек
+        // часто платит в другом визите, и сама Метрика припишет покупку direct.
+        ymGoal("payment_success", {
+          order,
+          ...(res.data.planId ? { plan: res.data.planId } : {}),
+          ...(res.data.amount != null
+            ? { order_price: res.data.amount / 100, currency: "RUB" }
+            : {}),
+          ...utmGoalParams(readPaymentAttribution()),
+        });
         setPhase("success");
       } else {
         // NEW/обрабатывается — вебхук подтвердит позже.

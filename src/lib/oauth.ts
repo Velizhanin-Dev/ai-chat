@@ -3,6 +3,7 @@ import type { User } from "@prisma/client";
 import { prisma } from "./prisma";
 import { trialExpiresAt } from "./quota";
 import { getSettings } from "./settings";
+import { utmToRow, EMPTY_TOUCH, type UtmTouch } from "./utm";
 
 // ── OAuth-вход (VK ID / Яндекс) ─────────────────────────────────────────────
 // Authorization Code flow. VK ID — с PKCE (S256). Сессию после колбэка ставим
@@ -198,9 +199,13 @@ export async function fetchOAuthProfile(
 
 // ── Найти/создать пользователя по соц-профилю ───────────────────────────────
 
+// touch — первое касание из cookie (см. src/lib/utm-server.ts). Пишется ТОЛЬКО
+// при создании нового аккаунта: у существующего юзера источник регистрации
+// перетирать нельзя, иначе отчёт по источникам поедет на каждом входе.
 export async function findOrCreateOAuthUser(
   provider: OAuthProvider,
-  profile: OAuthProfile
+  profile: OAuthProfile,
+  touch: UtmTouch = EMPTY_TOUCH
 ): Promise<User> {
   // 1. Уже привязанный соц-аккаунт.
   const linked = await prisma.oAuthAccount.findUnique({
@@ -237,6 +242,9 @@ export async function findOrCreateOAuthUser(
       name: profile.name,
       emailVerified: email ? new Date() : null,
       planExpiresAt: trialExpiresAt(trialHours),
+      ...utmToRow(touch),
+      utmReferrer: touch.referrer || null,
+      utmLanding: touch.landing || null,
       oauthAccounts: {
         create: { provider, providerAccountId: profile.providerAccountId },
       },

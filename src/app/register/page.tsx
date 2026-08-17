@@ -22,6 +22,8 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { authenticated } from "@/store/authSlice";
 import { apiRegister } from "@/lib/auth-client";
 import { ymGoal } from "@/lib/metrika";
+import { utmGoalParams } from "@/lib/utm";
+import { readFirstTouch } from "@/lib/utm-client";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -71,7 +73,7 @@ export default function RegisterPage() {
     // Регистрация сразу логинит и ведёт в приложение (экран выбора/создания
     // проекта); подтверждение почты убрали.
     dispatch(authenticated(res.data.user));
-    ymGoal("signup");
+    ymGoal("signup", utmGoalParams(readFirstTouch()));
     router.push("/app");
   };
 

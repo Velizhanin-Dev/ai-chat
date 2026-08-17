@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError, readJson } from "@/lib/http";
 import { getPlans } from "@/lib/plans";
+import { rowToUtm, utmLabel } from "@/lib/utm";
 import type { AdminUserRow } from "../route";
 
 // Управление конкретным пользователем из админки: смена роли / тарифа / срока
@@ -39,6 +40,9 @@ async function buildRow(id: string): Promise<AdminUserRow | null> {
     requestsLimit: plan ? plan.limits.requests : null,
     projectCount,
     lastSeenAt: u.lastSeenAt ? u.lastSeenAt.toISOString() : null,
+    source: utmLabel(rowToUtm(u)),
+    sourceReferrer: u.utmReferrer,
+    sourceLanding: u.utmLanding,
     createdAt: u.createdAt.toISOString(),
   };
 }

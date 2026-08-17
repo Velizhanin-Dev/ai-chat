@@ -9,6 +9,7 @@ import { signSession, sessionCookie } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
+import { readUtmTouchCookie } from "@/lib/utm-server";
 
 // Колбэк OAuth: сверяем state, обмениваем code на профиль, находим/создаём
 // юзера, ставим сессию и редиректим на next (по умолчанию /chat). Любая
@@ -59,7 +60,9 @@ export async function GET(
       verifier: saved.verifier,
       deviceId,
     });
-    const user = await findOrCreateOAuthUser(provider, profile);
+    // Метку первого касания на сервере видно только через cookie: сюда мы попали
+    // после редиректов на провайдера, localStorage тут недоступен.
+    const user = await findOrCreateOAuthUser(provider, profile, readUtmTouchCookie());
 
     // Режим «до запуска»: внутрь только админов (см. логин).
     if (isLaunchLocked(await getSettings()) && !isAdmin(user)) {

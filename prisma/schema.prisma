@@ -278,6 +278,17 @@ model User {
   // Последний визит — обновляется при входе и (с троттлингом) на любом
   // авторизованном запросе через getSessionUser. null = ни разу после введения поля.
   lastSeenAt    DateTime?
+  // Первое касание: по какой ссылке человек попал к нам ВПЕРВЫЕ (см. src/lib/utm.ts).
+  // Пишется один раз при регистрации и больше не меняется — это «откуда он пришёл».
+  // Метку на момент покупки хранит Payment (там она может быть другой).
+  // referrer/landing заполняются и без utm — по ним видно органику и прямые заходы.
+  utmSource     String?
+  utmMedium     String?
+  utmCampaign   String?
+  utmContent    String?
+  utmTerm       String?
+  utmReferrer   String?
+  utmLanding    String?
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
   tokens        VerificationToken[]
@@ -455,6 +466,14 @@ model Payment {
   provider       String    @default("tbank")
   tbankPaymentId String? // внешний id транзакции (ТБанк PaymentId / CloudPayments TransactionId)
   rebillId       String?
+  // Метка на момент оформления платежа (last-touch, см. src/lib/utm-client.ts).
+  // Отдельно от меток юзера: человек мог прийти впервые из телеграма, а купить —
+  // после рассылки. Пусто, если меток не было вовсе (тогда в отчёте берём метку юзера).
+  utmSource      String?
+  utmMedium      String?
+  utmCampaign    String?
+  utmContent     String?
+  utmTerm        String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   paidAt         DateTime?

@@ -14,6 +14,7 @@ import {
   type CloudPaymentParams,
 } from "./cloudpayments";
 import { notifyPaymentSuccess } from "./telegram";
+import { utmToRow, rowToUtm, utmLabel, EMPTY_UTM, type Utm } from "./utm";
 
 // ── Биллинг: разовая оплата подписки через ТБанк ────────────────────────────
 // MVP: оплата даёт доступ на PERIOD_DAYS дней (продление — новый платёж). При
@@ -50,7 +51,13 @@ export interface CreatePaymentResult {
 }
 
 // Создать платёж: строка Payment(NEW) → Init в ТБанк → ссылка на оплату.
-export async function createPayment(user: User, planId: string): Promise<CreatePaymentResult> {
+// utm — метка на момент оформления (last-touch с клиента): по ней потом видно,
+// откуда пришла покупка (админка → «Источники», уведомление в телеграм).
+export async function createPayment(
+  user: User,
+  planId: string,
+  utm: Utm = EMPTY_UTM
+): Promise<CreatePaymentResult> {
   if (!tbankConfigured()) return { ok: false, error: "Оплата временно недоступна" };
 
   const plan = (await getPlans()).find((p) => p.id === planId);
@@ -59,7 +66,7 @@ export async function createPayment(user: User, planId: string): Promise<CreateP
 
   const amount = plan.priceRub * 100; // копейки
   const payment = await prisma.payment.create({
-    data: { userId: user.id, planId, amount, status: "NEW" },
+    data: { userId: user.id, planId, amount, status: "NEW", ...utmToRow(utm) },
   });
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
@@ -137,6 +144,10 @@ async function markPaid(
       amountKopecks: payment.amount,
       provider: payment.provider,
       expiresAt: expires,
+      // Метка платежа (по какой ссылке пришёл в тот раз, когда купил) и метка
+      // регистрации (откуда вообще появился) — в уведомлении видно оба конца.
+      sourcePayment: utmLabel(rowToUtm(payment)),
+      sourceSignup: utmLabel(rowToUtm(user)),
     });
   })().catch((err) => console.error("[billing] telegram notify error:", err));
 }
@@ -152,7 +163,11 @@ export interface CreateCloudResult {
 // Создать платёж CloudPayments: строка Payment(NEW, provider=cloudpayments) →
 // возвращаем параметры для клиентского виджета (сумма — в рублях, id платежа =
 // InvoiceId). Подтверждение — вебхук Pay + синк find на возврате.
-export async function createCloudPayment(user: User, planId: string): Promise<CreateCloudResult> {
+export async function createCloudPayment(
+  user: User,
+  planId: string,
+  utm: Utm = EMPTY_UTM
+): Promise<CreateCloudResult> {
   if (!cloudpaymentsConfigured()) {
     return { ok: false, error: "Оплата зарубежной картой временно недоступна" };
   }
@@ -167,6 +182,7 @@ export async function createCloudPayment(user: User, planId: string): Promise<Cr
       amount: plan.priceRub * 100, // храним в копейках, как у ТБанк
       status: "NEW",
       provider: "cloudpayments",
+      ...utmToRow(utm),
     },
   });
 

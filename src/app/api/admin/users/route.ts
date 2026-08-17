@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError } from "@/lib/http";
 import { getPlans } from "@/lib/plans";
+import { rowToUtm, utmLabel } from "@/lib/utm";
 
 // Список зарегистрированных для админки: пагинация + поиск по имени/почте. Бриф
 // теперь у проектов (см. /api/admin/users/[id]/projects), здесь его нет — в строке
@@ -27,6 +28,11 @@ export interface AdminUserRow {
   projectCount: number;
   // Последний визит (ISO) или null, если ни разу после введения поля.
   lastSeenAt: string | null;
+  // Откуда пришёл: «tg / article / ad» из utm первого касания («—» без меток),
+  // плюс сырые referrer/посадочная — по ним видно органику и прямые заходы.
+  source: string;
+  sourceReferrer: string | null;
+  sourceLanding: string | null;
   createdAt: string;
 }
 
@@ -93,6 +99,9 @@ export async function GET(req: Request) {
       requestsLimit: requestsLimitByPlan.has(u.plan) ? requestsLimitByPlan.get(u.plan)! : null,
       projectCount: countByUser.get(u.id) ?? 0,
       lastSeenAt: u.lastSeenAt ? u.lastSeenAt.toISOString() : null,
+      source: utmLabel(rowToUtm(u)),
+      sourceReferrer: u.utmReferrer,
+      sourceLanding: u.utmLanding,
       createdAt: u.createdAt.toISOString(),
     };
   });

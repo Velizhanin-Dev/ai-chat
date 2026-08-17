@@ -10,6 +10,7 @@ import StoreProvider from "@/store/StoreProvider";
 import AppShellLayout from "@/components/Shell/AppShell";
 import CookieBanner from "@/components/CookieBanner";
 import YandexMetrika from "@/components/Analytics/YandexMetrika";
+import UtmCapture from "@/components/Analytics/UtmCapture";
 import { theme } from "@/theme";
 import { getSessionUser, publicUser } from "@/lib/auth";
 import type { AuthUser } from "@/store/authSlice";
@@ -129,6 +130,7 @@ export default async function RootLayout({
           }}
         />
         <YandexMetrika />
+        <UtmCapture />
         <MantineProvider defaultColorScheme="auto" theme={theme}>
           <StoreProvider initialUser={initialUser}>
             <AppShellLayout>{children}</AppShellLayout>

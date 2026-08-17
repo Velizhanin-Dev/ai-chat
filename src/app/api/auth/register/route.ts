@@ -10,6 +10,8 @@ import { apiError, readJson, EMAIL_RE } from "@/lib/http";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { trialExpiresAt } from "@/lib/quota";
+import { sanitizeTouch, utmToRow, hasUtm } from "@/lib/utm";
+import { readUtmTouchCookie } from "@/lib/utm-server";
 
 export async function POST(req: Request) {
   const body = await readJson(req);
@@ -30,12 +32,20 @@ export async function POST(req: Request) {
   // этот срок — из Plan.limits.requests тарифа "start" (редактор тарифов). Заново
   // сам по себе триал не выдаётся — только сбросом из админки.
   const { trialHours } = await getSettings();
+  // Первое касание (откуда человек пришёл) — с клиента, из localStorage. Пишем
+  // ровно при создании аккаунта и больше не трогаем: это источник регистрации.
+  // Фолбэк на cookie — на случай, когда localStorage недоступен (приватный режим).
+  const fromBody = sanitizeTouch(body.utm);
+  const touch = hasUtm(fromBody) || fromBody.referrer ? fromBody : readUtmTouchCookie();
   const user = await prisma.user.create({
     data: {
       name,
       email,
       passwordHash: await hashPassword(password),
       planExpiresAt: trialExpiresAt(trialHours),
+      ...utmToRow(touch),
+      utmReferrer: touch.referrer || null,
+      utmLanding: touch.landing || null,
     },
   });
 

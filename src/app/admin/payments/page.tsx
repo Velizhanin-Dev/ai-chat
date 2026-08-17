@@ -126,6 +126,7 @@ export default function AdminPaymentsPage() {
                 <Table.Th miw={120}>Тариф</Table.Th>
                 <Table.Th>Сумма</Table.Th>
                 <Table.Th miw={130}>Способ</Table.Th>
+                <Table.Th miw={140}>Источник</Table.Th>
                 <Table.Th miw={110}>Статус</Table.Th>
                 <Table.Th>Дата</Table.Th>
               </Table.Tr>
@@ -156,6 +157,19 @@ export default function AdminPaymentsPage() {
                     <PaymentProviderBadge provider={p.provider} />
                   </Table.Td>
                   <Table.Td>
+                    {/* Унаследованная метка (у платежа своей не было — взята с
+                        регистрации плательщика) помечена, чтобы её не читали как
+                        «пришёл по ссылке прямо перед оплатой». */}
+                    <Text size="sm" c={p.source === "—" ? "dimmed" : undefined}>
+                      {p.source}
+                    </Text>
+                    {p.sourceInherited && (
+                      <Text size="xs" c="dimmed">
+                        с регистрации
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
                     <PaymentStatusBadge status={p.status} />
                   </Table.Td>
                   <Table.Td>
@@ -167,7 +181,7 @@ export default function AdminPaymentsPage() {
               ))}
               {data && data.payments.length === 0 && !loading && (
                 <Table.Tr>
-                  <Table.Td colSpan={6}>
+                  <Table.Td colSpan={7}>
                     <Text ta="center" c="dimmed" py="lg">
                       Платежей не найдено
                     </Text>

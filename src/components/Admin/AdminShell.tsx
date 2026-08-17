@@ -20,6 +20,7 @@ import {
   IconUsers,
   IconCurrencyRubel,
   IconReceipt,
+  IconRoute,
   IconArrowLeft,
   IconShieldLock,
   IconHeadset,
@@ -33,12 +34,14 @@ type NavItem = {
   soon?: boolean;
 };
 
-// Главная админки — дашборд; далее пользователи, поддержка, платежи, тарифы, флаги.
+// Главная админки — дашборд; далее пользователи, поддержка, платежи, источники
+// (utm-атрибуция регистраций и покупок), тарифы, флаги.
 const NAV: NavItem[] = [
   { href: "/admin", label: "Дашборд", icon: IconLayoutDashboard },
   { href: "/admin/users", label: "Пользователи", icon: IconUsers },
   { href: "/admin/support", label: "Поддержка", icon: IconHeadset },
   { href: "/admin/payments", label: "Платежи", icon: IconReceipt },
+  { href: "/admin/sources", label: "Источники", icon: IconRoute },
   { href: "/admin/plans", label: "Тарифы", icon: IconCurrencyRubel },
   { href: "/admin/flags", label: "Флаги и настройки", icon: IconToggleRight },
 ];

@@ -17,6 +17,20 @@ export async function GET(req: Request) {
   const status = await syncPayment(orderId, user.id);
   if (status === null) return apiError("Платёж не найден", 404);
 
-  const fresh = await prisma.user.findUnique({ where: { id: user.id } });
-  return NextResponse.json({ status, user: fresh ? publicUser(fresh) : null });
+  const [fresh, payment] = await Promise.all([
+    prisma.user.findUnique({ where: { id: user.id } }),
+    // Сумма и тариф нужны клиенту, чтобы отправить в Метрику цель с ЦЕННОСТЬЮ
+    // (order_price) — иначе в отчётах по источникам будет число покупок, но не
+    // выручка, и нельзя сравнить каналы по деньгам.
+    prisma.payment.findUnique({
+      where: { id: orderId },
+      select: { planId: true, amount: true },
+    }),
+  ]);
+  return NextResponse.json({
+    status,
+    user: fresh ? publicUser(fresh) : null,
+    planId: payment?.planId ?? null,
+    amount: payment?.amount ?? null, // копейки
+  });
 }

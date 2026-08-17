@@ -7,6 +7,8 @@ import { apiCreatePayment, apiCreateCloudPayment } from "@/lib/auth-client";
 import { openCloudPaymentsWidget } from "@/lib/cloudpayments-widget";
 import { formatPrice, type PublicPlan } from "@/lib/plans";
 import { ymGoal } from "@/lib/metrika";
+import { utmGoalParams } from "@/lib/utm";
+import { readPaymentAttribution } from "@/lib/utm-client";
 
 // Выбор способа оплаты при оформлении тарифа: превью названия/цены + два пути —
 // российская карта (ТБанк: СБП/Мир, редирект) или зарубежная (CloudPayments-виджет
@@ -30,7 +32,11 @@ export default function PaymentMethodModal({
     setBusy("ru");
     const res = await apiCreatePayment(plan.id);
     if (res.ok) {
-      ymGoal("payment_start", { plan: plan.id, method: "ru" });
+      ymGoal("payment_start", {
+        plan: plan.id,
+        method: "ru",
+        ...utmGoalParams(readPaymentAttribution()),
+      });
       window.location.href = res.data.url; // редирект на страницу ТБанк
       return;
     }
@@ -48,7 +54,11 @@ export default function PaymentMethodModal({
       setBusy(null);
       return;
     }
-    ymGoal("payment_start", { plan: plan.id, method: "foreign" });
+    ymGoal("payment_start", {
+      plan: plan.id,
+      method: "foreign",
+      ...utmGoalParams(readPaymentAttribution()),
+    });
     try {
       const result = await openCloudPaymentsWidget(res.data.params);
       if (result === "success") {

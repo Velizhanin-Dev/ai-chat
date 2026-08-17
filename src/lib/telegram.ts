@@ -182,6 +182,13 @@ export async function notifyPaymentSuccess(params: {
   provider: string;
   // До какого числа продлён доступ.
   expiresAt: Date;
+  // UTM-метка на момент оплаты и метка, с которой человек когда-то пришёл
+  // («tg / article / ad»). Обе — уже готовые подписи из utmLabel (billing.ts).
+  // Строки разные не случайно: пришёл человек обычно по одной ссылке, а платит
+  // после другой — по первой понятно, какой канал приводит, по второй — что
+  // дожимает. Совпадающие подписи схлопываем в одну строку.
+  sourcePayment?: string;
+  sourceSignup?: string;
 }): Promise<void> {
   const rub = (params.amountKopecks / 100).toLocaleString("ru-RU", {
     minimumFractionDigits: 0,
@@ -197,12 +204,28 @@ export async function notifyPaymentSuccess(params: {
     minute: "2-digit",
   });
   const link = `${APP_URL}/admin/payments`;
+
+  const paid = params.sourcePayment && params.sourcePayment !== "—" ? params.sourcePayment : "";
+  const signup = params.sourceSignup && params.sourceSignup !== "—" ? params.sourceSignup : "";
+  const sourceLines: string[] = [];
+  if (paid && signup && paid !== signup) {
+    sourceLines.push(`<b>Откуда покупка:</b> ${esc(paid)}`);
+    sourceLines.push(`<b>Откуда пришёл:</b> ${esc(signup)}`);
+  } else if (paid || signup) {
+    sourceLines.push(`<b>Источник:</b> ${esc(paid || signup)}`);
+  } else {
+    // Молчать нельзя: пустая строка читается как «забыли», а «без меток» —
+    // это конкретный ответ (прямой заход, закладка, органика).
+    sourceLines.push("<b>Источник:</b> без меток");
+  }
+
   const html = [
     `${EMOJI.money} <b>Оплата тарифа</b>`,
     "",
     `<b>Кто:</b> ${esc(params.name)} (${esc(params.email)})`,
     `<b>Тариф:</b> ${esc(params.planLabel)}`,
     `<b>Сумма:</b> ${esc(rub)} ₽ · ${esc(providerLabel)}`,
+    ...sourceLines,
     `<b>Доступ до:</b> ${esc(until)}`,
   ].join("\n");
   await send(html, { text: `${EMOJI.card} Платежи в админке`, url: link });

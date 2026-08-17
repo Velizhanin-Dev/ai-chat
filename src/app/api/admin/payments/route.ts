@@ -4,6 +4,20 @@ import { prisma } from "@/lib/prisma";
 import { getAdminUser } from "@/lib/admin";
 import { apiError } from "@/lib/http";
 import { getPlans } from "@/lib/plans";
+import { rowToUtm, hasUtm, utmLabel } from "@/lib/utm";
+
+// Подпись источника платежа. Своя метка приоритетнее; если её нет (пришёл
+// напрямую и оплатил) — показываем, откуда он зарегистрировался, с пометкой.
+function sourceOf(
+  payment: { utmSource: string | null; utmMedium: string | null; utmCampaign: string | null },
+  user?: { utmSource: string | null; utmMedium: string | null; utmCampaign: string | null } | null
+): { source: string; sourceInherited: boolean } {
+  const own = rowToUtm(payment);
+  if (hasUtm(own)) return { source: utmLabel(own), sourceInherited: false };
+  const fromUser = rowToUtm(user ?? {});
+  if (hasUtm(fromUser)) return { source: utmLabel(fromUser), sourceInherited: true };
+  return { source: "—", sourceInherited: false };
+}
 
 // История платежей для админки. Два режима:
 //  • ?userId= — платежи одного юзера (карточка юзера → «История платежей»);
@@ -19,6 +33,10 @@ export interface AdminPaymentRow {
   status: string;
   provider: string; // "tbank" | "cloudpayments"
   tbankPaymentId: string | null;
+  // Откуда пришла покупка: «tg / article / ad» (метка платежа, фолбэк — метка
+  // регистрации плательщика) и пометка, что метка унаследована от юзера.
+  source: string;
+  sourceInherited: boolean;
   createdAt: string;
   paidAt: string | null;
 }
@@ -62,11 +80,17 @@ export async function GET(req: Request) {
 
   // ── Режим одного юзера (для карточки в списке пользователей) ──────────────
   if (userId) {
-    const rows = await prisma.payment.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
+    const [rows, owner] = await Promise.all([
+      prisma.payment.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { utmSource: true, utmMedium: true, utmCampaign: true },
+      }),
+    ]);
     const payments: AdminPaymentRow[] = rows.map((p) => ({
       id: p.id,
       planId: p.planId,
@@ -75,6 +99,7 @@ export async function GET(req: Request) {
       status: p.status,
       provider: p.provider,
       tbankPaymentId: p.tbankPaymentId,
+      ...sourceOf(p, owner),
       createdAt: p.createdAt.toISOString(),
       paidAt: p.paidAt ? p.paidAt.toISOString() : null,
     }));
@@ -107,7 +132,18 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
-      include: { user: { select: { id: true, name: true, email: true } } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            utmSource: true,
+            utmMedium: true,
+            utmCampaign: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -119,6 +155,7 @@ export async function GET(req: Request) {
     status: p.status,
     provider: p.provider,
     tbankPaymentId: p.tbankPaymentId,
+    ...sourceOf(p, p.user),
     createdAt: p.createdAt.toISOString(),
     paidAt: p.paidAt ? p.paidAt.toISOString() : null,
     userId: p.userId,

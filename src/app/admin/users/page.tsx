@@ -507,6 +507,20 @@ export default function AdminUsersPage() {
                 </div>
                 <div>
                   <Text size="xs" c="dimmed">
+                    Откуда пришёл
+                  </Text>
+                  <Text size="sm">{selected.source}</Text>
+                  {/* Без utm-меток единственный след — реферер и посадочная: по
+                      ним видно поиск/переход с чужого сайта против прямого захода. */}
+                  {selected.source === "—" && (selected.sourceReferrer || selected.sourceLanding) && (
+                    <Text size="xs" c="dimmed" style={{ wordBreak: "break-all" }}>
+                      {selected.sourceReferrer || "прямой заход"}
+                      {selected.sourceLanding ? ` → ${selected.sourceLanding}` : ""}
+                    </Text>
+                  )}
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">
                     Последний визит
                   </Text>
                   <Text size="sm">

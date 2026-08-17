@@ -1,6 +1,7 @@
 import type { AuthUser } from "@/store/authSlice";
 import type { Brief } from "@/lib/brief";
 import type { CloudWidgetParams } from "@/lib/cloudpayments-widget";
+import { readFirstTouch, readPaymentAttribution } from "@/lib/utm-client";
 
 // ── Клиентская обёртка над /api/auth/* ────────────────────────────────────
 // Возвращаем дискриминируемый результат, чтобы страницы показывали ошибку
@@ -31,8 +32,11 @@ async function post<T>(
   }
 }
 
+// К регистрации прикладываем первое касание (utm + referrer + посадочная) —
+// сервер запишет его юзеру. Читаем тут, а не на странице, чтобы метка не
+// потерялась ни на одной точке входа.
 export function apiRegister(input: { name: string; email: string; password: string }) {
-  return post<{ user: AuthUser }>("/api/auth/register", input);
+  return post<{ user: AuthUser }>("/api/auth/register", { ...input, utm: readFirstTouch() });
 }
 
 export function apiLogin(input: { email: string; password: string }) {
@@ -61,21 +65,38 @@ export function apiSaveBrief(brief: Brief) {
 }
 
 // ── Платежи ──────────────────────────────────────────────────────────────
+// К обоим способам прикладываем метку на момент оплаты (last-touch, фолбэк —
+// первое касание): по ней в админке видно, откуда пришла покупка, даже когда
+// человек платит через неделю после перехода по ссылке.
 // ТБанк (рос. карты / СБП / Мир): создать платёж → ссылка на платёжную страницу.
 export function apiCreatePayment(planId: string) {
-  return post<{ url: string }>("/api/payments/create", { planId });
+  return post<{ url: string }>("/api/payments/create", {
+    planId,
+    utm: readPaymentAttribution(),
+  });
 }
 
 // CloudPayments (зарубежные карты Visa/Mastercard): создать платёж → параметры для
 // клиентского виджета (открывается на месте, без редиректа).
 export function apiCreateCloudPayment(planId: string) {
-  return post<{ params: CloudWidgetParams }>("/api/payments/cloudpayments/create", { planId });
+  return post<{ params: CloudWidgetParams }>("/api/payments/cloudpayments/create", {
+    planId,
+    utm: readPaymentAttribution(),
+  });
 }
 
-// Синхронизация платежа на возврате (SuccessURL) → статус + свежий юзер.
+// Синхронизация платежа на возврате (SuccessURL) → статус + свежий юзер + сумма
+// с тарифом (нужны для цели Метрики с ценностью покупки).
 export async function apiPaymentStatus(
   orderId: string
-): Promise<Result<{ status: string; user: AuthUser | null }>> {
+): Promise<
+  Result<{
+    status: string;
+    user: AuthUser | null;
+    planId: string | null;
+    amount: number | null; // копейки
+  }>
+> {
   try {
     const res = await fetch(`/api/payments/status?order=${encodeURIComponent(orderId)}`, {
       cache: "no-store",
@@ -84,7 +105,15 @@ export async function apiPaymentStatus(
     if (!res.ok) {
       return { ok: false, error: (data as { error?: string }).error || "Ошибка" };
     }
-    return { ok: true, data: data as { status: string; user: AuthUser | null } };
+    return {
+      ok: true,
+      data: data as {
+        status: string;
+        user: AuthUser | null;
+        planId: string | null;
+        amount: number | null;
+      },
+    };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
