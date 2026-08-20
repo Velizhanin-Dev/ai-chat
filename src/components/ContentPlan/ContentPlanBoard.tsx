@@ -12,6 +12,7 @@ import {
   Group,
   Loader,
   Select,
+  SegmentedControl,
   Skeleton,
   Stack,
   Text,
@@ -35,6 +36,7 @@ import {
   apiGenerateBlock,
   apiGeneratePlan,
   apiResyncPlan,
+  apiReorderVideos,
   apiUpdateVideo,
 } from "@/lib/content-plan-client";
 import {
@@ -72,6 +74,11 @@ export default function ContentPlanBoard() {
   const [importOpen, setImportOpen] = useState(false); // пикер импорта с канала
   const [resyncing, setResyncing] = useState(false); // обновление цифр с канала
   const [blockBusy, setBlockBusy] = useState<BlockKey | null>(null); // какой блок собирается
+  // ⚠️ Доска показывает ОДИН тип за раз. Раньше на ней жили только лонги, а шортсы
+  // висели отдельной сеткой без статусов — поставил шортсу «в работе», и он не
+  // двигался никуда: колонок для него на доске просто не было, и человек считал,
+  // что карточка потерялась. Теперь у шортсов те же колонки, переключатель сверху.
+  const [boardKind, setBoardKind] = useState<"video" | "short">("video");
 
   const openPlan = useCallback(async (id: string) => {
     setPlanLoading(true);
@@ -142,7 +149,9 @@ export default function ContentPlanBoard() {
 
   const addVideo = async () => {
     if (!activeId) return;
-    const res = await apiAddVideo(activeId);
+    // Тип новой карточки — тот, что открыт на доске: жмёшь «+» на доске шортсов и
+    // получаешь шортс, иначе он бы уехал в другой тип и «пропал».
+    const res = await apiAddVideo(activeId, { kind: boardKind === "short" ? "short" : "video" });
     if (res.ok) {
       setPlan((prev) => (prev ? { ...prev, videos: [...prev.videos, res.data.video] } : prev));
       setDrawer(res.data.video);
@@ -171,16 +180,49 @@ export default function ContentPlanBoard() {
   const onVideoDelete = (id: string) =>
     setPlan((prev) => (prev ? { ...prev, videos: prev.videos.filter((v) => v.id !== id) } : prev));
 
-  // DnD: бросили карточку в колонку статуса → оптимистично двигаем + PATCH.
-  const moveVideo = async (id: string, status: VideoStatus) => {
+  // DnD: бросили карточку в колонку → и переезд, и место в списке одним запросом.
+  //
+  // ⚠️ index — куда встать ВНУТРИ колонки (сортировка карточек между собой), а не
+  // просто «в эту колонку»: сначала переносить умели только между колонками, и
+  // порядок внутри одной оставался тем, в котором их создали.
+  const moveVideo = async (id: string, status: VideoStatus, index?: number) => {
     setDragId(null);
     const current = plan?.videos.find((v) => v.id === id);
-    if (!current || current.status === status) return;
-    onVideoChange({ ...current, status });
-    const res = await apiUpdateVideo(id, { status });
-    if (res.ok) onVideoChange(res.data.video);
+    if (!current || !plan) return;
+
+    // Итоговый список колонки: убираем карточку с её прежнего места (если она уже
+    // тут) и вставляем на нужную позицию.
+    const column = plan.videos
+      .filter((v) => (v.kind === "short") === (current.kind === "short") && v.status === status && v.id !== id)
+      .sort((a, b) => a.order - b.order);
+    const at = index == null ? column.length : Math.max(0, Math.min(index, column.length));
+    const ids = [...column.slice(0, at).map((v) => v.id), id, ...column.slice(at).map((v) => v.id)];
+
+    // Уже стоит ровно там же — не гоняем запрос.
+    const before = plan.videos
+      .filter((v) => (v.kind === "short") === (current.kind === "short") && v.status === status)
+      .sort((a, b) => a.order - b.order)
+      .map((v) => v.id);
+    if (before.length === ids.length && before.every((x, i) => x === ids[i])) return;
+
+    const snapshot = plan.videos;
+    // Оптимистично: статус и порядок сразу, чтобы карточка не «прыгала» обратно.
+    setPlan((prev) =>
+      prev
+        ? {
+            ...prev,
+            videos: prev.videos.map((v) => {
+              const pos = ids.indexOf(v.id);
+              return pos === -1 ? v : { ...v, status, order: pos };
+            }),
+          }
+        : prev
+    );
+
+    const res = await apiReorderVideos(plan.id, status, ids);
+    if (res.ok) setPlan((prev) => (prev ? { ...prev, videos: res.data.videos } : prev));
     else {
-      onVideoChange(current); // откат
+      setPlan((prev) => (prev ? { ...prev, videos: snapshot } : prev));
       setError("Не удалось перенести ролик");
     }
   };
@@ -194,13 +236,32 @@ export default function ContentPlanBoard() {
       published: [],
       cancelled: [],
     };
-    for (const v of plan?.videos ?? []) if (v.kind !== "short") map[v.status].push(v);
+    for (const v of plan?.videos ?? []) {
+      const isShort = v.kind === "short";
+      if (isShort === (boardKind === "short")) map[v.status].push(v);
+    }
+    // Внутри колонки — по order: это ручной порядок, который человек выставил
+    // перетаскиванием (сервер отдаёт план тем же порядком, но после оптимистичного
+    // обновления массив ещё не пересортирован).
+    for (const key of Object.keys(map) as VideoStatus[]) {
+      map[key].sort((a, b) => a.order - b.order);
+    }
     return map;
-  }, [plan]);
+  }, [plan, boardKind]);
 
   const shorts = useMemo(
     () => (plan?.videos ?? []).filter((v) => v.kind === "short"),
     [plan]
+  );
+
+  // Сколько карточек каждого типа — цифра прямо на переключателе, чтобы человек
+  // видел, что шортсы вообще есть, даже когда открыт другой тип.
+  const counts = useMemo(
+    () => ({
+      video: (plan?.videos ?? []).filter((v) => v.kind !== "short").length,
+      short: shorts.length,
+    }),
+    [plan, shorts]
   );
 
   // Количество роликов фиксировано (PLAN_VIDEO_COUNT) — выбора у пользователя нет,
@@ -279,6 +340,23 @@ export default function ContentPlanBoard() {
             <Skeleton height={280} radius="lg" />
           ) : (
             <>
+              {/* Переключатель типа: у шортсов свои колонки и свой порядок.
+                  Показываем всегда — иначе непонятно, что доска умеет оба типа. */}
+              <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+                <SegmentedControl
+                  size="md"
+                  radius="md"
+                  color="brand"
+                  fw={600}
+                  value={boardKind}
+                  onChange={(v) => setBoardKind(v as "video" | "short")}
+                  data={[
+                    { value: "video", label: `Видео (${counts.video})` },
+                    { value: "short", label: `Shorts (${counts.short})` },
+                  ]}
+                />
+              </Group>
+
               <Box className="cp-board">
                 {BOARD_COLUMNS.map((status) => (
                   <Column
@@ -290,7 +368,8 @@ export default function ContentPlanBoard() {
                     dragId={dragId}
                     onDragStart={setDragId}
                     onDragEnd={() => setDragId(null)}
-                    onDrop={(id) => moveVideo(id, status)}
+                    onDrop={(id, index) => moveVideo(id, status, index)}
+                    onStatusChange={(id, next) => moveVideo(id, next)}
                   />
                 ))}
               </Box>
@@ -301,7 +380,6 @@ export default function ContentPlanBoard() {
                 shorts={shorts}
                 busy={blockBusy}
                 onGenerate={generateBlock}
-                onOpenShort={setDrawer}
               />
 
               {byStatus.cancelled.length > 0 && (
@@ -318,7 +396,15 @@ export default function ContentPlanBoard() {
                     <Accordion.Panel>
                       <Stack gap={0}>
                         {byStatus.cancelled.map((v) => (
-                          <VideoCard key={v.id} v={v} onOpen={() => setDrawer(v)} />
+                          <VideoCard
+                            key={v.id}
+                            v={v}
+                            onOpen={() => setDrawer(v)}
+                            draggable
+                            onDragStart={() => setDragId(v.id)}
+                            onDragEnd={() => setDragId(null)}
+                            onStatus={(s) => moveVideo(v.id, s)}
+                          />
                         ))}
                       </Stack>
                     </Accordion.Panel>
@@ -362,6 +448,7 @@ function Column({
   onDragStart,
   onDragEnd,
   onDrop,
+  onStatusChange,
 }: {
   status: VideoStatus;
   videos: VideoView[];
@@ -370,34 +457,48 @@ function Column({
   dragId: string | null;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
-  onDrop: (id: string) => void;
+  /** id карточки + позиция вставки в этой колонке (0 = самый верх). */
+  onDrop: (id: string, index: number) => void;
+  onStatusChange: (id: string, status: VideoStatus) => void;
 }) {
   const m = STATUS_META[status];
   const [over, setOver] = useState(false);
+  // Куда встанет карточка, если отпустить сейчас: индекс между карточками.
+  // null — курсор не над колонкой.
+  const [at, setAt] = useState<number | null>(null);
   // Идёт перетаскивание — подсвечиваем ВСЕ колонки как возможные цели, а не только
   // ту, что под курсором. Иначе человек не понимает, что карточку вообще можно
   // куда-то тащить: подсказка появлялась ровно там, где он уже и так навёл.
   const dragging = Boolean(dragId);
+
+  const finish = (e: React.DragEvent) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("text/plain") || dragId;
+    const index = at ?? videos.length;
+    setOver(false);
+    setAt(null);
+    if (id) onDrop(id, index);
+  };
+
   return (
     <Box
       className={`cp-col${dragging ? " cp-col-target" : ""}${over ? " cp-col-over" : ""}`}
       onDragOver={(e) => {
-        if (dragId) {
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-          if (!over) setOver(true);
-        }
+        if (!dragId) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (!over) setOver(true);
+        // Курсор в пустой части колонки, ниже карточек — встаём в конец.
+        if (at === null) setAt(videos.length);
       }}
       onDragLeave={(e) => {
         // Уходим из колонки, а не в дочерний элемент.
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false);
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setOver(false);
+          setAt(null);
+        }
       }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        const id = e.dataTransfer.getData("text/plain") || dragId;
-        if (id) onDrop(id);
-      }}
+      onDrop={finish}
     >
       <Box className="cp-col-head">
         <span className="cp-col-dot" style={{ background: `var(--mantine-color-${m.color}-6)` }} />
@@ -418,26 +519,53 @@ function Column({
           </Button>
         )}
       </Box>
-      {videos.length === 0 ? (
-        <Box className="cp-col-empty">
-          <Text size="xs" c="dimmed">
-            {over ? "Отпусти — переедет сюда" : dragging ? "Можно бросить сюда" : "Пусто"}
-          </Text>
-        </Box>
-      ) : (
-        <Box>
-          {videos.map((v) => (
-            <VideoCard
+      {/* Тело колонки тянется до низа (см. .cp-col-body) — сбросить можно в любое
+          место столбца, а не только туда, куда достаёт список карточек. */}
+      {/* Тело колонки тянется до низа (см. .cp-col-body) — сбросить можно в любое
+          место столбца, а не только туда, куда достаёт список карточек. */}
+      <Box className="cp-col-body">
+        {videos.length === 0 ? (
+          <Box className="cp-col-empty">
+            <Text size="xs" c="dimmed">
+              {over ? "Отпусти — переедет сюда" : dragging ? "Можно бросить сюда" : "Пусто"}
+            </Text>
+          </Box>
+        ) : (
+          videos.map((v, i) => (
+            <Box
               key={v.id}
-              v={v}
-              onOpen={() => onOpen(v)}
-              draggable
-              onDragStart={() => onDragStart(v.id)}
-              onDragEnd={onDragEnd}
-            />
-          ))}
-        </Box>
-      )}
+              onDragOver={(e) => {
+                if (!dragId) return;
+                e.preventDefault();
+                // Верхняя половина карточки — встать ПЕРЕД ней, нижняя — после.
+                // Так порядок внутри колонки задаётся точно, а не «в конец».
+                const r = e.currentTarget.getBoundingClientRect();
+                const next = e.clientY < r.top + r.height / 2 ? i : i + 1;
+                if (next !== at) setAt(next);
+              }}
+            >
+              {/* Линия показывает, куда именно встанет карточка. */}
+              {dragging && at === i && <Box className="cp-drop-line" />}
+              <VideoCard
+                v={v}
+                onOpen={() => onOpen(v)}
+                draggable
+                onDragStart={() => onDragStart(v.id)}
+                onDragEnd={onDragEnd}
+                onStatus={(s) => onStatusChange(v.id, s)}
+                // ⚠️ Индекс считается в списке БЕЗ этой карточки (её оттуда убирают перед
+                // вставкой), поэтому «ниже» — это i + 1, а не i + 2.
+                onMove={(dir) => onDrop(v.id, dir === "up" ? Math.max(0, i - 1) : i + 1)}
+                canMoveUp={i > 0}
+                canMoveDown={i < videos.length - 1}
+              />
+            </Box>
+          ))
+        )}
+        {dragging && at === videos.length && videos.length > 0 && (
+          <Box className="cp-drop-line" />
+        )}
+      </Box>
     </Box>
   );
 }

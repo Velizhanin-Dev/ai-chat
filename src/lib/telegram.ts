@@ -68,7 +68,7 @@ function publicUrl(url: string): boolean {
 }
 
 // База ссылок: своя переменная, если она публичная, иначе прод-домен.
-const APP_URL = (() => {
+export const APP_URL = (() => {
   const raw = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/+$/, "");
   return publicUrl(raw) ? raw : PROD_APP_URL;
 })();

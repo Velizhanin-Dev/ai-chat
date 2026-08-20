@@ -1464,7 +1464,11 @@ section[id] {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  align-items: start;
+  /* stretch, а НЕ start: колонки тянутся на высоту самой длинной. Иначе короткая
+     колонка кончается высоко, и карточка, которую тащат снизу (из длинного
+     первого столбца или из «Отменённых»), падает в пустоту рядом с ней — со
+     стороны это выглядит как «второй столбик не работает». */
+  align-items: stretch;
 }
 @media (max-width: 62em) {
   .cp-board {
@@ -1472,6 +1476,8 @@ section[id] {
   }
 }
 .cp-col {
+  display: flex;
+  flex-direction: column;
   border-radius: 16px;
   padding: 12px;
   /* Фон колонки заметный: колонка должна читаться как ОБЛАСТЬ, куда кладут, а не
@@ -1503,8 +1509,14 @@ section[id] {
 [data-mantine-color-scheme="dark"] .cp-col-over {
   background: color-mix(in srgb, var(--mantine-color-brand-6) 16%, var(--mantine-color-dark-6));
 }
+/* Тело колонки тянется до низа — вся высота колонки принимает сброс. */
+.cp-col-body {
+  flex: 1 1 auto;
+  min-height: 84px;
+}
 /* Пустая колонка — не просто слово «Пусто», а видимая зона сброса. */
 .cp-col-empty {
+  height: 100%;
   display: grid;
   place-items: center;
   min-height: 84px;
@@ -1527,6 +1539,15 @@ section[id] {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+/* Линия «сюда встанет карточка» при перетаскивании внутри колонки. Без неё
+   порядок внутри столбца менялся вслепую: было видно только, что колонка примет
+   карточку, но не КУДА она встанет. */
+.cp-drop-line {
+  height: 3px;
+  margin: 3px 0;
+  border-radius: 2px;
+  background: var(--mantine-color-brand-6);
 }
 /* Карточка ролика. */
 .cp-card {
@@ -1742,38 +1763,662 @@ section[id] {
   margin-top: 2px;
 }
 
-/* ── Лендинг: карточки разделов продукта (Landing/Workspace.tsx) ─────────────
-   Блок ДОПОЛНЯЕТ лендинг рассказом про разделы вокруг чата. Карточка — мягкая
-   поверхность на тёплой подложке секции; бордер видимый в обеих темах, чтобы
-   карточки не сливались с фоном (в тёмной подложка почти совпадает с body). */
-.lp-workspace-card {
-  height: 100%;
-  padding: clamp(20px, 2.4vw, 28px);
-  border-radius: var(--radius-md);
+/* ── Конкуренты в нише: панели поиска и фильтров ────────────────────────── */
+/* Проблема, которую чиним: контролы стояли в ряд с разными подписями (у одних —
+   свой мелкий Text, у другого — родной label Mantine плюс description на две
+   строки), из-за чего ряд выглядел рваным, а нижние края не совпадали.
+   Решение — один тип поля на всю панель: подпись фиксированной высоты + контрол
+   единой высоты 36px. Тогда ряд ровный при любом наборе фильтров. */
+.cmp-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+.cmp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/* Подпись: НЕ dimmed — на подложке .an-surface приглушённый токен даёт ~4:1,
+   ниже нормы 4.5:1 (ту же проблему уже ловили на карточках лендинга). */
+.cmp-field-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--mantine-color-text);
+  white-space: nowrap;
+}
+/* Единая высота контролов: у Mantine SegmentedControl и Input при одном size
+   высота всё равно разная — выравниваем явно. */
+.cmp-field .mantine-SegmentedControl-root,
+.cmp-field .mantine-Input-wrapper,
+.cmp-field input {
+  height: 36px;
+}
+.cmp-field .mantine-SegmentedControl-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Цифры в фильтрах — табличные, иначе значение «прыгает» при вводе. */
+.cmp-num input {
+  font-variant-numeric: tabular-nums;
+}
+/* Ширины полей — классом, а не инлайн-пропом: иначе на телефоне их не растянуть
+   (инлайн-стиль перебивает медиазапрос). */
+.cmp-num {
+  width: 140px;
+}
+.cmp-select {
+  width: 220px;
+}
+@media (max-width: 47.99em) {
+  /* На телефоне поля в колонку и во всю ширину: в ряд они сжимались до
+     нечитаемых огрызков, а тапать по узкому сегменту неудобно. */
+  .cmp-fields {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    /* Панель лежит внутри flex-строки со счётчиком результатов; без явной ширины
+       она сжимается по контенту, и сегменты фильтра становятся неудобными для пальца. */
+    width: 100%;
+  }
+  .cmp-field {
+    width: 100%;
+  }
+  .cmp-field .mantine-SegmentedControl-root,
+  .cmp-num,
+  .cmp-select {
+    width: 100%;
+  }
+}
+
+/* ── Тур по продукту (лендинг): 2.5D-сцены ───────────────────────────────────
+   Макеты разделов собраны из токенов темы, а не из скриншотов: живут в обеих
+   темах и не устаревают. Движение — только transform/opacity, 320–420 мс,
+   ease-out; каскад слоёв по 60 мс.
+   ⚠️ Всё гасится при prefers-reduced-motion в конце блока — не забывать при правках. */
+
+.tour-scene {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: clamp(24px, 4vw, 56px);
+  align-items: center;
+  padding-block: clamp(40px, 6vw, 72px);
+  padding-left: 34px; /* место под рельс маршрута */
+}
+.tour-scene[data-flip="true"] .tour-copy {
+  order: 2;
+}
+.tour-scene[data-flip="true"] .tour-visual {
+  order: 1;
+}
+
+/* Рельс: вертикальная линия между сценами + точка текущей. Показывает, что это
+   один маршрут, а не набор карточек. */
+.tour-rail {
+  position: absolute;
+  left: 9px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent) 12%,
+    color-mix(in srgb, var(--mantine-color-brand-6) 22%, transparent) 88%,
+    transparent
+  );
+}
+.tour-rail-dot {
+  position: absolute;
+  left: 50%;
+  top: clamp(40px, 6vw, 72px);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
   background: var(--mantine-color-body);
-  border: 1px solid var(--mantine-color-default-border);
-  box-shadow: var(--mantine-shadow-xs);
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  border: 2px solid color-mix(in srgb, var(--mantine-color-brand-6) 45%, transparent);
+  transform: scale(0.7);
+  transition: transform 260ms ease-out, border-color 260ms ease-out, box-shadow 260ms ease-out;
 }
-.lp-workspace-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--mantine-shadow-md);
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+.tour-scene[data-visible="true"] .tour-rail-dot {
+  transform: scale(1);
+  border-color: var(--mantine-color-brand-6);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mantine-color-brand-6) 14%, transparent);
 }
-/* Маркер пункта: смысл несёт текст, точка только поддерживает ритм списка. */
-.lp-workspace-dot {
+
+.tour-copy {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 380ms ease-out, transform 380ms ease-out;
+}
+.tour-scene[data-visible="true"] .tour-copy {
+  opacity: 1;
+  transform: none;
+}
+
+.tour-tick {
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
+  margin-top: 8px;
   border-radius: 50%;
-  margin-top: 7px;
-  flex: none;
-  background: var(--color-accent);
+  background: var(--mantine-color-brand-6);
 }
-@media (prefers-reduced-motion: reduce) {
-  .lp-workspace-card {
-    transition: none;
+
+/* ── Сцена: наклон и глубина ───────────────────────────────────────────────── */
+.tour-visual {
+  perspective: 1400px;
+}
+.tour-stage {
+  position: relative;
+  transform-style: preserve-3d;
+  transform: rotateX(12deg) rotateY(-16deg) rotateZ(1.5deg) scale(0.94);
+  opacity: 0;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 380ms ease-out;
+}
+.tour-stage[data-flip="true"] {
+  transform: rotateX(12deg) rotateY(16deg) rotateZ(-1.5deg) scale(0.94);
+}
+/* Пришедшая сцена «встаёт»: угол мягче, масштаб в норму. */
+.tour-scene[data-visible="true"] .tour-stage {
+  opacity: 1;
+  transform: rotateX(7deg) rotateY(-9deg) rotateZ(0.5deg) scale(1);
+}
+.tour-scene[data-visible="true"] .tour-stage[data-flip="true"] {
+  transform: rotateX(7deg) rotateY(9deg) rotateZ(-0.5deg) scale(1);
+}
+.tour-stage-inner {
+  position: relative;
+  transform-style: preserve-3d;
+}
+
+.tour-layer {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 320ms ease-out, transform 320ms ease-out;
+  transition-delay: calc(var(--i, 0) * 60ms + 120ms);
+}
+.tour-scene[data-visible="true"] .tour-layer {
+  opacity: 1;
+  transform: none;
+}
+
+/* Плавающие подписи — приподняты над макетом, отсюда 2.5D-эффект. */
+.tour-float {
+  position: absolute;
+  z-index: 2;
+}
+.tour-float-a {
+  right: -6%;
+  top: -8%;
+}
+.tour-float-b {
+  left: -8%;
+  bottom: -7%;
+}
+.tour-float-c {
+  right: -4%;
+  bottom: -8%;
+}
+
+/* ── Общие элементы макетов ────────────────────────────────────────────────── */
+.tour-card {
+  border-radius: 16px;
+  padding: 16px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: 0 24px 48px -24px rgba(15, 15, 20, 0.35);
+}
+[data-mantine-color-scheme="dark"] .tour-card {
+  background: var(--mantine-color-dark-6);
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.65);
+}
+
+.tour-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--mantine-color-body);
+  border: 1px solid color-mix(in srgb, var(--mantine-color-brand-6) 35%, transparent);
+  box-shadow: 0 12px 28px -16px rgba(15, 15, 20, 0.5);
+}
+[data-mantine-color-scheme="dark"] .tour-chip {
+  background: var(--mantine-color-dark-5);
+}
+
+.tour-line {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--mantine-color-gray-3);
+}
+[data-mantine-color-scheme="dark"] .tour-line {
+  background: var(--mantine-color-dark-3);
+}
+.tour-line + .tour-line {
+  margin-top: 7px;
+}
+
+.tour-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mantine-color-brand-6);
+  flex-shrink: 0;
+}
+.tour-dot-brand { background: var(--mantine-color-brand-6); }
+.tour-dot-teal { background: var(--mantine-color-teal-6); }
+.tour-dot-red { background: var(--mantine-color-red-6); }
+.tour-dot-gray { background: var(--mantine-color-gray-5); }
+
+/* Чат */
+.tour-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 420px);
+}
+.tour-bubble {
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+.tour-bubble-user {
+  align-self: flex-end;
+  max-width: 82%;
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 16%, var(--mantine-color-body));
+  border: 1px solid color-mix(in srgb, var(--mantine-color-brand-6) 28%, transparent);
+}
+.tour-bubble-ai {
+  background: var(--mantine-color-gray-1);
+  padding: 14px;
+}
+[data-mantine-color-scheme="dark"] .tour-bubble-ai {
+  background: var(--mantine-color-dark-5);
+}
+.tour-quote {
+  max-width: 260px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.8125rem;
+  font-style: italic;
+  background: var(--mantine-color-body);
+  border-left: 3px solid var(--mantine-color-brand-6);
+  box-shadow: 0 14px 30px -18px rgba(15, 15, 20, 0.5);
+}
+[data-mantine-color-scheme="dark"] .tour-quote {
+  background: var(--mantine-color-dark-5);
+}
+
+/* Канбан */
+.tour-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: min(100%, 460px);
+}
+.tour-col {
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--mantine-color-gray-1);
+}
+[data-mantine-color-scheme="dark"] .tour-col {
+  background: color-mix(in srgb, var(--mantine-color-dark-5) 80%, transparent);
+}
+.tour-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.tour-mini {
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+}
+[data-mantine-color-scheme="dark"] .tour-mini {
+  background: var(--mantine-color-dark-6);
+}
+.tour-mini + .tour-mini {
+  margin-top: 6px;
+}
+.tour-mini[data-accent="true"] {
+  border-color: var(--mantine-color-brand-6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-brand-6) 18%, transparent);
+}
+.tour-visp {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--mantine-color-brand-6);
+}
+
+/* Матрица аналитики */
+.tour-matrix {
+  position: relative;
+  width: min(100%, 400px);
+  aspect-ratio: 4 / 3;
+}
+.tour-axis {
+  position: absolute;
+  background: var(--mantine-color-default-border);
+}
+.tour-axis-x {
+  left: 8%;
+  right: 8%;
+  top: 50%;
+  height: 1px;
+}
+.tour-axis-y {
+  top: 8%;
+  bottom: 8%;
+  left: 50%;
+  width: 1px;
+}
+.tour-point {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  opacity: 0;
+}
+.tour-scene[data-visible="true"] .tour-point {
+  animation: tour-pop 320ms ease-out forwards;
+}
+@keyframes tour-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
   }
-  .lp-workspace-card:hover {
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.tour-quad {
+  position: absolute;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--mantine-color-text);
+  opacity: 0.75;
+}
+.tour-quad-tl { left: 6%; top: 4%; }
+.tour-quad-tr { right: 6%; top: 4%; }
+.tour-quad-br { right: 6%; bottom: 4%; }
+
+/* Превью */
+.tour-thumb {
+  width: min(100%, 380px);
+}
+.tour-thumb-img {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--mantine-color-brand-6) 75%, #14121a),
+    #14121a 78%
+  );
+}
+.tour-thumb-text {
+  position: absolute;
+  left: 8%;
+  top: 16%;
+  max-width: 62%;
+  font-size: clamp(1rem, 2.6vw, 1.5rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.tour-thumb-arrow {
+  position: absolute;
+  right: 12%;
+  bottom: 14%;
+  width: 26%;
+  height: 6px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mantine-color-brand-6) 55%, transparent);
+}
+.tour-thumb-meta {
+  padding-top: 12px;
+}
+
+/* Список конкурентов */
+.tour-list {
+  width: min(100%, 400px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tour-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tour-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--mantine-color-gray-3);
+}
+[data-mantine-color-scheme="dark"] .tour-avatar {
+  background: var(--mantine-color-dark-3);
+}
+.tour-row .tour-line {
+  flex: 1;
+}
+.tour-ratio {
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--mantine-color-gray-2);
+}
+[data-mantine-color-scheme="dark"] .tour-ratio {
+  background: var(--mantine-color-dark-4);
+}
+.tour-ratio-hot {
+  background: var(--mantine-color-brand-filled);
+  color: #fff;
+}
+
+/* Сетка референсов */
+.tour-grid {
+  width: min(100%, 400px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.tour-tile {
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--mantine-color-gray-1);
+  border: 1px solid transparent;
+}
+[data-mantine-color-scheme="dark"] .tour-tile {
+  background: var(--mantine-color-dark-5);
+}
+.tour-tile[data-accent="true"] {
+  border-color: var(--mantine-color-brand-6);
+}
+.tour-tile-badge {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--mantine-color-brand-filled);
+  color: #fff;
+}
+
+/* Дорожная карта */
+.tour-steps {
+  width: min(100%, 360px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tour-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.8125rem;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--mantine-color-gray-1);
+}
+[data-mantine-color-scheme="dark"] .tour-step {
+  background: var(--mantine-color-dark-5);
+}
+.tour-step-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2px solid var(--mantine-color-gray-4);
+}
+.tour-step[data-done="true"] .tour-step-mark {
+  background: var(--mantine-color-teal-6);
+  border-color: var(--mantine-color-teal-6);
+}
+.tour-step[data-done="true"] {
+  background: color-mix(in srgb, var(--mantine-color-teal-6) 12%, transparent);
+}
+
+/* ── Адаптив ───────────────────────────────────────────────────────────────
+   На узких экранах сцена становится фронтальной: наклон съедает читаемость, а
+   плавающие подписи вылезают за край. Порядок колонок всегда «текст → макет». */
+@media (max-width: 62em) {
+  .tour-scene,
+  .tour-scene[data-flip="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 26px;
+  }
+  .tour-scene[data-flip="true"] .tour-copy {
+    order: 0;
+  }
+  .tour-scene[data-flip="true"] .tour-visual {
+    order: 1;
+  }
+  .tour-stage,
+  .tour-stage[data-flip="true"],
+  .tour-scene[data-visible="true"] .tour-stage,
+  .tour-scene[data-visible="true"] .tour-stage[data-flip="true"] {
     transform: none;
   }
+  .tour-float-a,
+  .tour-float-b,
+  .tour-float-c {
+    position: static;
+    display: block;
+    margin-top: 10px;
+  }
+  .tour-chip {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-copy,
+  .tour-layer,
+  .tour-stage,
+  .tour-rail-dot {
+    transition: none;
+  }
+  .tour-stage,
+  .tour-stage[data-flip="true"],
+  .tour-scene[data-visible="true"] .tour-stage,
+  .tour-scene[data-visible="true"] .tour-stage[data-flip="true"] {
+    transform: none;
+    opacity: 1;
+  }
+  .tour-copy,
+  .tour-layer {
+    opacity: 1;
+    transform: none;
+  }
+  .tour-scene[data-visible="true"] .tour-point {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ── Выбор площадки при создании проекта (Brief/PlatformStep.tsx) ───────────── */
+.pf-card {
+  display: block;
+  width: 100%;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: border-color 160ms ease-out, transform 160ms ease-out, box-shadow 160ms ease-out;
+}
+.pf-card:hover:not([data-locked="true"]) {
+  border-color: var(--mantine-color-brand-6);
+  transform: translateY(-2px);
+  box-shadow: 0 18px 36px -22px rgba(15, 15, 20, 0.45);
+}
+.pf-card:focus-visible {
+  outline: 2px solid var(--mantine-color-brand-6);
+  outline-offset: 2px;
+}
+/* Закрытая карточка остаётся читаемой: гасим не текст, а интерактивность. */
+.pf-card[data-locked="true"] {
+  cursor: not-allowed;
+  background: var(--mantine-color-gray-0);
+}
+[data-mantine-color-scheme="dark"] .pf-card[data-locked="true"] {
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 70%, transparent);
+}
+.pf-tick {
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: var(--mantine-color-brand-6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-card,
+  .pf-card:hover:not([data-locked="true"]) {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* Вертикальная карточка ленты (Instagram Reels): тот же компонент, другой кадр.
+   ⚠️ Ограничиваем ШИРИНУ, а не высоту: вертикаль 9:16 при полной ширине колонки
+   вылезает на два экрана и карточку перестаёт быть видно целиком. */
+.ytc-thumb-v {
+  aspect-ratio: 9 / 16;
+  max-width: 260px;
 }

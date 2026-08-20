@@ -1,5 +1,7 @@
 "use client";
 
+import { ytImage } from "@/lib/image-proxy";
+
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -148,7 +150,7 @@ export default function LinkVideoModal({
                       <Group gap="sm" wrap="nowrap">
                         {v.thumbnail && (
                           <img
-                            src={v.thumbnail}
+                            src={ytImage(v.thumbnail) ?? undefined}
                             alt=""
                             style={{ width: 92, borderRadius: 6, flexShrink: 0 }}
                           />

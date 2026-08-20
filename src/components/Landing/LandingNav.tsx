@@ -21,7 +21,7 @@ import Logo from "@/components/Brand/Logo";
 
 const LINKS = [
   { href: "#features", label: "Возможности" },
-  // Разделы продукта (Landing/Workspace.tsx) — блок про аналитику, контент-план,
+  // Разделы продукта (Landing/ProductTour.tsx) — тур по всем разделам,
   // превью и дорожную карту. Стоит сразу после «Возможностей», как на странице.
   { href: "#workspace", label: "Разделы" },
   { href: "#how", label: "Как это работает" },

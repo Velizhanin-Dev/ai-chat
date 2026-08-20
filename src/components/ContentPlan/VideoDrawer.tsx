@@ -1,9 +1,12 @@
 "use client";
 
+import { ytImage, ytThumbById } from "@/lib/image-proxy";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ActionIcon,
+  Anchor,
   Box,
   Button,
   Checkbox,
@@ -22,11 +25,13 @@ import {
 } from "@mantine/core";
 import {
   IconCheck,
+  IconExternalLink,
   IconHelpCircle,
   IconLink,
   IconMessageCircle,
   IconRefresh,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react";
 import {
   CONTENT_PLAN_EDIT_QUOTA_COST,
@@ -42,6 +47,8 @@ import {
   type VideoStatus,
   type VideoView,
 } from "@/lib/content-plan";
+import { apiVideoInsight } from "@/lib/competitors-client";
+import { insightPromptBlock, videoIdFromUrl } from "@/lib/competitors";
 import {
   apiDeleteVideo,
   apiLinkVideo,
@@ -57,6 +64,30 @@ import LinkVideoModal from "./LinkVideoModal";
 // изменение полей), кнопки «Сохранить» нет. Статус и привязка сохраняются сразу.
 
 const AUTOSAVE_MS = 800;
+
+// Название донора без служебного хвоста со ссылкой: из «Референсов» приезжает
+// «Название (×5,3) — https://youtu.be/ID».
+function referenceTitle(ref: string | null): string {
+  const raw = (ref ?? "").trim();
+  const cut = raw.split(/\s+—\s+https?:\/\//)[0];
+  return cut || raw;
+}
+
+// Превью ролика по id из ссылки. Адрес выводится из id, поэтому API не трогаем.
+function referenceThumb(ref: string | null): string | null {
+  const url = referenceUrl(ref);
+  if (!url) return null;
+  const m =
+    /youtu\.be\/([\w-]{6,})/.exec(url) ??
+    /[?&]v=([\w-]{6,})/.exec(url) ??
+    /\/shorts\/([\w-]{6,})/.exec(url);
+  return m ? ytThumbById(m[1]) : null;
+}
+
+function referenceUrl(ref: string | null): string | null {
+  const m = /https?:\/\/\S+/.exec(ref ?? "");
+  return m ? m[0] : null;
+}
 
 export default function VideoDrawer({
   v,
@@ -80,6 +111,8 @@ export default function VideoDrawer({
   const [regen, setRegen] = useState<RegenPart | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [saved, setSaved] = useState(false); // индикатор «сохранено»
+  // Тянем данные ролика-референса перед переходом в чат (кнопка ждёт).
+  const [loadingRef, setLoadingRef] = useState(false);
   // Слепок последнего сохранённого состояния — чтобы автосейв не срабатывал на
   // подстановку данных с сервера (иначе получаем эхо-запросы).
   const savedSnapshot = useRef<string>("");
@@ -202,22 +235,60 @@ export default function VideoDrawer({
   };
 
   // «Сгенерировать сценарий» — уводим в чат проекта с полным брифом ролика.
-  const toScript = () => {
+  const toScript = async () => {
     const fmt = formatMeta(d.format)?.label ?? "";
-    const parts = [
-      `Напиши полный сценарий ролика по этой карточке контент-плана.`,
-      ``,
-      `Название: ${d.titles[0] || "—"}`,
-      d.previewTexts[0] ? `Текст на превью: ${d.previewTexts[0]}` : "",
-      fmt ? `Формат: ${fmt}${d.noSpeaker ? " (без спикера, озвучка чужого видео)" : ""}` : "",
-      d.huntStage ? `Стадия лестницы Ханта: ${d.huntStage}` : "",
-      d.pain ? `Боль ЦА: ${d.pain}` : "",
-      d.whyWorks ? `Почему тема залетит: ${d.whyWorks}` : "",
-      d.opening ? `Опенинг: ${d.opening}` : "",
-      d.questions.length ? `\nСкелет ролика (вопросы):\n${d.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "",
-      d.nativeClose ? `\nНативное закрытие: ${d.nativeClose}` : "",
-      d.reference ? `Референс: ${d.reference}` : "",
-    ].filter(Boolean);
+    // ⚠️ У шортса и лонга РАЗНАЯ методика, и просить «полный сценарий ролика» под
+    // шортс бессмысленно: он до минуты, решается в первые три секунды и живёт на
+    // пересмотре. Раньше запрос был один на оба типа — по карточке шортса
+    // ассистент писал сценарий длинного ролика.
+    const short = d.kind === "short";
+    const parts = short
+      ? [
+          `Напиши сценарий ШОРТСА (вертикальное видео до 60 секунд) по этой карточке контент-плана.`,
+          ``,
+          `Тема: ${d.titles[0] || "—"}`,
+          d.previewTexts[0] ? `Текст на обложке: ${d.previewTexts[0]}` : "",
+          d.opening ? `Заход (первая фраза): ${d.opening}` : "",
+          d.pain ? `Боль ЦА: ${d.pain}` : "",
+          d.whyWorks ? `Почему тема залетит: ${d.whyWorks}` : "",
+          ``,
+          `Хук в первые 3 секунды, без разгона и приветствий. Дальше плотный текст без ` +
+            `воды — каждая фраза держит следующую. Финал закрывает мысль и работает на ` +
+            `пересмотр. Реплики пиши так, как их произносить в кадр.`,
+        ]
+      : [
+          `Напиши полный сценарий ролика по этой карточке контент-плана.`,
+          ``,
+          `Название: ${d.titles[0] || "—"}`,
+          d.previewTexts[0] ? `Текст на превью: ${d.previewTexts[0]}` : "",
+          fmt ? `Формат: ${fmt}${d.noSpeaker ? " (без спикера, озвучка чужого видео)" : ""}` : "",
+          d.huntStage ? `Стадия лестницы Ханта: ${d.huntStage}` : "",
+          d.pain ? `Боль ЦА: ${d.pain}` : "",
+          d.whyWorks ? `Почему тема залетит: ${d.whyWorks}` : "",
+          d.opening ? `Опенинг: ${d.opening}` : "",
+          d.questions.length
+            ? `\nСкелет ролика (вопросы):\n${d.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
+            : "",
+          d.nativeClose ? `\nНативное закрытие: ${d.nativeClose}` : "",
+        ];
+    const filled = parts.filter(Boolean);
+
+    // ⚠️ Референс подтягиваем ЖИВЫМИ данными, а не отдаём одной ссылкой: открыть
+    // её модель не может, и раньше «разбор референса» сводился к гаданию по
+    // названию. Теперь в промпт уходит описание автора (часто с тайм-кодами =
+    // структурой) и реакция зрителей. ~3 units квоты YouTube, кэш на сервере 6 ч.
+    const refId = d.reference ? videoIdFromUrl(d.reference) : null;
+    if (refId) {
+      setLoadingRef(true);
+      const res = await apiVideoInsight(projectId, refId);
+      setLoadingRef(false);
+      // Не достали (ролик удалён, кончилась квота) — переход не срываем: отдаём
+      // хотя бы строку с названием, как было раньше.
+      parts.push(res.ok ? `\n${insightPromptBlock(res.data.insight)}` : `Референс: ${d.reference}`);
+    } else if (d.reference) {
+      filled.push(`Референс: ${d.reference}`);
+    }
+
     dispatch(prefillInput(parts.join("\n")));
     router.push(`/${projectId}/chat`);
   };
@@ -283,7 +354,8 @@ export default function VideoDrawer({
         <Button
           color="brand"
           leftSection={<IconMessageCircle size={16} />}
-          onClick={toScript}
+          onClick={() => void toScript()}
+          loading={loadingRef}
         >
           Сгенерировать сценарий
         </Button>
@@ -296,7 +368,7 @@ export default function VideoDrawer({
           {d.youtubeVideoId ? (
             <Group gap="sm" wrap="nowrap">
               {d.thumbnail && (
-                <img src={d.thumbnail} alt="" style={{ width: 92, borderRadius: 6 }} />
+                <img src={ytImage(d.thumbnail) ?? undefined} alt="" style={{ width: 92, borderRadius: 6 }} />
               )}
               <Box style={{ flex: 1, minWidth: 0 }}>
                 <Text size="sm">Привязан</Text>
@@ -325,6 +397,68 @@ export default function VideoDrawer({
                 статус станет «опубликовано»
               </Text>
             </Group>
+          )}
+        </Box>
+
+        {/* Референс (видео-донор). Раньше это было безымянное поле в самом низу
+            формы, и положенный из раздела «Референсы» ролик было буквально не
+            видно. Теперь это карточка ролика: превью + название ссылкой.
+            ⚠️ Превью берём с i.ytimg.com по id из ссылки — БЕЗ похода в API
+            (адрес превью выводится из id, это не стоит ни одного unit квоты).
+            ⚠️ Поля для ручного ввода тут нет намеренно: референс кладётся кнопкой
+            из раздела «Референсы», руками его никто не печатает. */}
+        <Box>
+          <Text className="cp-label">Референс (видео-донор)</Text>
+          {d.reference ? (
+            <Group gap="sm" wrap="nowrap" align="flex-start">
+              {referenceThumb(d.reference) && (
+                <Anchor
+                  href={referenceUrl(d.reference) ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ flexShrink: 0, lineHeight: 0 }}
+                >
+                  <img
+                    src={referenceThumb(d.reference) as string}
+                    alt=""
+                    width={132}
+                    style={{ borderRadius: 8, display: "block", aspectRatio: "16 / 9", objectFit: "cover" }}
+                  />
+                </Anchor>
+              )}
+              <Box style={{ flex: 1, minWidth: 0 }}>
+                {referenceUrl(d.reference) ? (
+                  <Anchor
+                    href={referenceUrl(d.reference) as string}
+                    target="_blank"
+                    rel="noreferrer"
+                    size="sm"
+                    lineClamp={3}
+                  >
+                    {referenceTitle(d.reference)}
+                  </Anchor>
+                ) : (
+                  <Text size="sm" lineClamp={3}>
+                    {d.reference}
+                  </Text>
+                )}
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  color="gray"
+                  mt={6}
+                  leftSection={<IconX size={13} />}
+                  onClick={() => set("reference", "")}
+                >
+                  Убрать референс
+                </Button>
+              </Box>
+            </Group>
+          ) : (
+            <Text size="xs" c="dimmed">
+              Не задан. Кладётся кнопкой на карточке ролика в разделе «Референсы» —
+              там же видно, что у конкурентов залетело.
+            </Text>
           )}
         </Box>
 
@@ -495,11 +629,6 @@ export default function VideoDrawer({
           minRows={1}
           value={d.nativeClose ?? ""}
           onChange={(e) => set("nativeClose", e.currentTarget.value)}
-        />
-        <TextInput
-          label="Референс (видео-донор)"
-          value={d.reference ?? ""}
-          onChange={(e) => set("reference", e.currentTarget.value)}
         />
         <TextInput
           label="Почему тема залетит"

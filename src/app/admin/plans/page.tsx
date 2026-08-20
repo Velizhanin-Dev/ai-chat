@@ -108,7 +108,7 @@ export default function AdminPlansPage() {
           priceRub: draft.priceRub,
           period: draft.period,
           features: [],
-          limits: { requests: 0, projects: 0 },
+          limits: { requests: 0, projects: 0, instagram: 0, devices: 0 },
           active: false, // заводим скрытым: сперва настроить лимиты, потом показать
         }),
       });
@@ -310,6 +310,30 @@ export default function AdminPlansPage() {
                 onChange={(v) => updateLimit(p.id, "projects", typeof v === "number" ? v : 0)}
                 min={-1}
                 description={p.limits.projects === -1 ? "без лимита" : undefined}
+              />
+              <NumberInput
+                label="Instagram-аккаунты"
+                value={p.limits.instagram}
+                onChange={(v) => updateLimit(p.id, "instagram", typeof v === "number" ? v : 0)}
+                min={-1}
+                description={
+                  p.limits.instagram === -1
+                    ? "без лимита"
+                    : p.limits.instagram === 0
+                      ? "Instagram на тарифе недоступен"
+                      : "проектов на Instagram"
+                }
+              />
+              <NumberInput
+                label="Устройства"
+                value={p.limits.devices}
+                onChange={(v) => updateLimit(p.id, "devices", typeof v === "number" ? v : 0)}
+                min={-1}
+                description={
+                  p.limits.devices <= 0
+                    ? "без лимита"
+                    : "одновременных входов на аккаунт"
+                }
               />
             </SimpleGrid>
 

@@ -55,6 +55,7 @@ import {
   apiUploadReference,
 } from "@/lib/thumbnails-client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { useProjectPlatform } from "@/hooks/useProjectPlatform";
 import { bumpRequestsUsed } from "@/store/authSlice";
 
 // Мастер создания превью. Флоу задан владельцем (2026-08-07):
@@ -122,6 +123,8 @@ export default function ThumbnailWizard({
 }: Props) {
   // ТЗ для image-модели показываем только админам (см. блок в шаге сводки).
   const isAdmin = useAppSelector((st) => st.auth.user?.role === "admin");
+  // Площадка проекта: от неё зависит формат кадра и правила композиции в промпте.
+  const { platform } = useProjectPlatform();
   const dispatch = useAppDispatch();
   const isMobile = useMediaQuery("(max-width: 48em)");
   const [stepId, setStepId] = useState<StepId>("audience");
@@ -267,8 +270,8 @@ export default function ThumbnailWizard({
       .map((id) => references.find((r) => r.id === id))
       .filter((r): r is ThumbnailRow => Boolean(r))
       .map((r) => ({ role: normalizeRefRole(r.role), label: r.label }));
-    return buildThumbnailPrompt(spec, ordered);
-  }, [spec, refIds, references]);
+    return buildThumbnailPrompt(spec, ordered, platform);
+  }, [spec, refIds, references, platform]);
 
   const create = async () => {
     setBusy(true);

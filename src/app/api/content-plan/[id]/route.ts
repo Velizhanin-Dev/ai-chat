@@ -48,6 +48,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Импорт опубликованного ролика канала: сразу привязан + статус «опубликовано».
   const ytId = typeof body?.youtubeVideoId === "string" ? body.youtubeVideoId : "";
   const imported = ytId.length > 0;
+  // Заведение карточки из «Референсов»: ссылка на ролик-донор + пометка источника,
+  // чтобы на доске было видно, что название тут — заготовка под переписывание.
+  const reference =
+    typeof body?.reference === "string" ? body.reference.trim().slice(0, 500) : "";
+  const fromCompetitor = !imported && reference.length > 0;
 
   const max = await prisma.contentPlanVideo.aggregate({
     where: { planId: id },
@@ -61,7 +66,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       order,
       kind,
       status: imported ? "published" : "idea",
-      source: imported ? "imported" : "manual",
+      source: imported ? "imported" : fromCompetitor ? "competitor" : "manual",
+      reference: reference || null,
       titles: title ? [title] : [],
       previewTexts: [],
       questions: [],

@@ -217,14 +217,9 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
 
         <Group justify="space-between" align="flex-start" mb="lg" wrap="wrap" gap="sm">
           <Box>
-            <Group gap="xs">
-              <Title order={2} fz={{ base: "1.35rem", sm: "1.75rem" }}>
-                Генератор превью
-              </Title>
-              <Badge color="brand" variant="light" radius="sm">
-                бета
-              </Badge>
-            </Group>
+            <Title order={2} fz={{ base: "1.35rem", sm: "1.75rem" }}>
+              Генератор превью
+            </Title>
             <Text c="dimmed" size="sm" mt={4}>
               Собираю превью по методике: одна идея, крупный спикер, текст в 3–5 слов. Лицо
               переношу с твоего фото один в один.

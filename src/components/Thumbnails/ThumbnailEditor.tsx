@@ -39,6 +39,7 @@ import { apiGenerateThumbnail } from "@/lib/thumbnails-client";
 import { useAppDispatch } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import YouTubeCard from "./YouTubeCard";
+import { useProjectPlatform } from "@/hooks/useProjectPlatform";
 import { apiYouTubeStatus } from "@/lib/youtube-client";
 
 // Редактор одного превью: картинка + правки + перегенерация. Каждая перегенерация
@@ -74,6 +75,9 @@ export default function ThumbnailEditor({
   onCreated,
   onDelete,
 }: Props) {
+  // Площадка проекта: у Instagram кадр вертикальный (9:16) и подписи другие.
+  const { platform } = useProjectPlatform();
+  const vertical = platform === "instagram";
   // Канал для карточки ленты: если YouTube подключён — показываем реальные имя и
   // аватар, иначе нейтральную заглушку. Ошибку глушим: предпросмотр важнее.
   const [channel, setChannel] = useState<{ title: string; thumbnail: string | null } | null>(null);
@@ -192,9 +196,10 @@ export default function ThumbnailEditor({
             <YouTubeCard
               src={active.url}
               title={active.spec?.videoTitle?.trim() || ""}
-              channel={channel?.title || "Твой канал"}
+              channel={channel?.title || (vertical ? "Твой аккаунт" : "Твой канал")}
               avatarUrl={channel?.thumbnail}
-              duration="12:04"
+              duration={vertical ? "0:38" : "12:04"}
+              vertical={vertical}
             />
             <Text size="xs" c="dimmed" mt={6}>
               Так это увидит зритель в ленте
@@ -235,7 +240,7 @@ export default function ThumbnailEditor({
                     <UnstyledButton key={v.id} onClick={() => pickVersion(v)}>
                       <Box
                         style={{
-                          aspectRatio: "16 / 9",
+                          aspectRatio: vertical ? "9 / 16" : "16 / 9",
                           borderRadius: 8,
                           overflow: "hidden",
                           outline:

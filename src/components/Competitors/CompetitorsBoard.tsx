@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useAppSelector } from "@/store/hooks";
+import CompetitorCard from "./CompetitorCard";
 import {
   Alert,
   Badge,
@@ -19,21 +21,23 @@ import {
   Stack,
   TagsInput,
   Text,
+  TextInput,
   Title,
   Tooltip,
 } from "@mantine/core";
 import {
   IconAlertTriangle,
-  IconExternalLink,
-  IconFlame,
-  IconRefresh,
+  IconMessageCircle,
+  IconHelpCircle,
   IconSearch,
-  IconUsers,
 } from "@tabler/icons-react";
+import AddReferenceModal from "./AddReferenceModal";
 import {
   COMPETITOR_MAX_QUERIES,
   COMPETITOR_PERIODS,
   DEFAULT_FILTERS,
+  COMPETITOR_MAX_AUTO_PAGES,
+  COMPETITOR_TARGET_RESULTS,
   applyFilters,
   formatRatio,
   type CompetitorFilters,
@@ -45,11 +49,18 @@ import {
 import {
   apiCompetitorContext,
   apiCompetitorSearch,
+  apiAddTrackedChannel,
+  apiVideoInsight,
+  writeCompetitorsPrompt,
   type CompetitorContextView,
 } from "@/lib/competitors-client";
 import { formatCount, formatDuration, formatShortDate } from "@/lib/youtube-client";
 
-// Раздел «Конкуренты в нише» (пока только админам).
+// Раздел «Поиск референсов» (пока только админам).
+//
+// ⚠️ Это раздел про РОЛИКИ-доноры, а не про каналы-конкурентов: ищем отдельные
+// видео, которые выстрелили за пределы своей аудитории, и кладём их референсом в
+// карточку контент-плана.
 //
 // Ищем в YouTube ролики по ключевым словам ниши и показываем те, у которых
 // просмотров НЕСОИЗМЕРИМО больше, чем подписчиков у канала: 500 просмотров при
@@ -67,6 +78,44 @@ interface Draft {
   queries: string[];
   periodDays: number;
   order: CompetitorOrder;
+}
+
+/**
+ * Поле панели: одинаковая подпись + контрол единой высоты.
+ *
+ * ⚠️ Ради этого и заведён: раньше у SegmentedControl была своя мелкая подпись, а у
+ * NumberInput — родной label Mantine плюс description на две строки. Подписи разного
+ * кегля и разной высоты ломали общую линию, и ряд фильтров выглядел рваным. Длинные
+ * пояснения теперь живут в подсказке рядом с подписью, а не растягивают поле.
+ */
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box className="cmp-field">
+      <span className="cmp-field-label">
+        {label}
+        {hint && (
+          <Tooltip label={hint} withArrow multiline w={240} events={{ hover: true, focus: true, touch: true }}>
+            {/* tabIndex — чтобы подсказка открывалась и с клавиатуры, а не только по ховеру. */}
+            <IconHelpCircle
+              size={14}
+              tabIndex={0}
+              aria-label={hint}
+              style={{ color: "var(--mantine-color-dimmed)", cursor: "help", outlineOffset: 2 }}
+            />
+          </Tooltip>
+        )}
+      </span>
+      {children}
+    </Box>
+  );
 }
 
 function loadDraft(projectId: string): Draft | null {
@@ -93,8 +142,12 @@ const RATIO_PRESETS = [
   { value: "20", label: "×20" },
 ];
 
+type View = "videos" | "channels" | "feed";
+
 export default function CompetitorsBoard() {
   const params = useParams();
+  const router = useRouter();
+  const user = useAppSelector((st) => st.auth.user);
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
 
   const [ctx, setCtx] = useState<CompetitorContextView | null>(null);
@@ -107,8 +160,18 @@ export default function CompetitorsBoard() {
   const [filters, setFilters] = useState<CompetitorFilters>(DEFAULT_FILTERS);
 
   const [result, setResult] = useState<CompetitorResult | null>(null);
+  // Ролик, который кладём референсом в карточку плана (null — модалка закрыта).
+  const [refVideo, setRefVideo] = useState<CompetitorVideo | null>(null);
+  const [fromCache, setFromCache] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Какой канал сейчас добавляем в конкуренты (id) — для лоадера на кнопке.
+  const [addingChannel, setAddingChannel] = useState<string | null>(null);
+  // Что уже добавили за этот сеанс — чтобы не жать по второму разу вслепую.
+  const [added, setAdded] = useState<string[]>([]);
+  // Тянем подробности по верхним роликам перед уходом в чат.
+  const [analyzing, setAnalyzing] = useState(false);
 
   // Контекст: подсказки запросов из брифа и тегов канала + состояние пула ключей.
   useEffect(() => {
@@ -138,31 +201,86 @@ export default function CompetitorsBoard() {
     };
   }, [projectId]);
 
-  const search = useCallback(
-    async (force: boolean) => {
+  // Кнопка одна. Решение «искать заново или отдать из памяти» принимает сервер:
+  // те же слова с теми же параметрами в пределах 6 часов приходят из кэша и квоту
+  // не тратят, любое изменение параметров — живой поиск.
+  // mode: "more" — догрузка следующей страницы к уже найденному.
+  const run = useCallback(
+    async (mode: "search" | "more") => {
       if (!projectId || queries.length === 0) return;
-      setSearching(true);
+      if (mode === "more") setLoadingMore(true);
+      else setSearching(true);
       setError(null);
       saveDraft(projectId, { queries, periodDays, order });
+      // filters уходят на сервер не для фильтрации (она клиентская), а как условие
+      // остановки: он листает страницы, пока подходящих не станет 20.
       const res = await apiCompetitorSearch({
         projectId,
         queries,
         periodDays,
         order,
-        force,
+        filters,
+        mode,
       });
       setSearching(false);
+      setLoadingMore(false);
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setResult(res.data.result);
+      setFromCache(res.data.cached);
       // Пул ключей после поиска подтаял — обновляем счётчик в шапке.
       apiCompetitorContext(projectId).then((c) => {
         if (c.ok) setCtx(c.data);
       });
     },
-    [projectId, queries, periodDays, order]
+    [projectId, queries, periodDays, order, filters]
+  );
+  const search = useCallback(() => run("search"), [run]);
+
+  // «В конкуренты» прямо из выдачи: канал ролика уходит в список на соседней
+  // странице. ⚠️ Канал уже известен по id, поэтому это 1 unit (channels.list), а
+  // не поиск по названию за 100.
+  const addChannelFromVideo = useCallback(
+    async (v: CompetitorVideo) => {
+      if (!projectId) return;
+      setAddingChannel(v.channelId);
+      setError(null);
+      const res = await apiAddTrackedChannel({ projectId, input: v.channelId });
+      setAddingChannel(null);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setAdded((cur) => (cur.includes(v.channelId) ? cur : [...cur, v.channelId]));
+    },
+    [projectId]
+  );
+
+  // Отправить найденное на разбор ассистенту: кладём готовый запрос черновиком
+  // в чат и переходим туда (тот же механизм, что у кнопок в разделе «Канал»).
+  //
+  // ⚠️ По верхним роликам подтягиваем ПОДРОБНОСТИ (описание автора с тайм-кодами
+  // и топ-комментарии): по одним названиям ассистент разбирает только заголовок,
+  // а нас интересует, на чём ролик держится. Берём пятёрку — этого хватает, чтобы
+  // выводы опирались на факты, и промпт не раздувается.
+  const askAssistant = useCallback(
+    async (list: CompetitorVideo[]) => {
+      if (!user || list.length === 0) return;
+      setAnalyzing(true);
+      const details = await Promise.all(
+        list.slice(0, 5).map((v) => apiVideoInsight(projectId, v.id))
+      );
+      setAnalyzing(false);
+      writeCompetitorsPrompt(
+        user.id,
+        list,
+        details.flatMap((r) => (r.ok ? [r.data.insight] : []))
+      );
+      router.push(`/${projectId}/chat`);
+    },
+    [projectId, router, user]
   );
 
   const visible = useMemo(
@@ -170,18 +288,28 @@ export default function CompetitorsBoard() {
     [result, filters]
   );
 
-  const cost = queries.length * (ctx?.searchCost ?? 100);
-  const notEnoughQuota = Boolean(ctx && ctx.configured && ctx.quota.remaining < cost);
+  // Хватит ли квоты хотя бы на одну страницу поиска. ⚠️ Цифру наружу НЕ выводим
+  // (для человека раздел — просто функция), она нужна только чтобы вовремя
+  // погасить кнопку и показать понятную причину.
+  const pageCost = queries.length * (ctx?.searchCost ?? 100);
+  // Блокируем, только если не хватает даже на ОДНУ страницу: остальное поиск
+  // доберёт по возможности и остановится сам.
+  const notEnoughQuota = Boolean(ctx && ctx.configured && ctx.quota.remaining < pageCost);
+  const noQuotaForMore = Boolean(
+    ctx && result && ctx.configured && ctx.quota.remaining < result.nextCost
+  );
 
   return (
     <Stack gap="lg" py="md">
       <Box>
         <Title order={2} fz={{ base: "1.35rem", sm: "1.75rem" }}>
-          Конкуренты в нише
+          Поиск референсов
         </Title>
         <Text c="dimmed" size="sm" mt={4}>
-          Ролики, которые собрали просмотров кратно больше, чем у канала подписчиков.
-          Такие вылетели за свою аудиторию на упаковке — их и стоит разбирать.
+          Ролики в нише, которые собрали просмотров кратно больше, чем у канала
+          подписчиков: такие вылетели за свою аудиторию на упаковке. Кладите их
+          референсом в контент-план, а сами каналы — в «Конкуренты», чтобы следить
+          за ними постоянно.
         </Text>
       </Box>
 
@@ -199,20 +327,25 @@ export default function CompetitorsBoard() {
           <Stack gap="md">
             <TagsInput
               label="Ключевые слова ниши"
-              description={`До ${COMPETITOR_MAX_QUERIES} запросов. Подсказки собраны из брифа и тегов твоих роликов — правь как хочешь.`}
+              description={
+                ctx.channelConnected
+                  ? `До ${COMPETITOR_MAX_QUERIES} запросов. Подсказки — теги твоих роликов, то есть лексика ниши словами автора.`
+                  : `До ${COMPETITOR_MAX_QUERIES} запросов. Канал не подключён, подсказки только из брифа.`
+              }
               placeholder={queries.length ? "" : "Например: ремонт мерседес w204"}
               value={queries}
               onChange={(v) => setQueries(v.slice(0, COMPETITOR_MAX_QUERIES))}
               data={ctx.suggested}
               maxTags={COMPETITOR_MAX_QUERIES}
+              // Вставили перечисление через запятую — раскладываем на отдельные
+              // запросы. Иначе строка «ремонт, диагностика, обслуживание» уходила
+              // в поиск целиком и не находила ничего.
+              splitChars={[",", ";"]}
               clearable
             />
 
-            <Group gap="md" align="flex-end" wrap="wrap">
-              <Box>
-                <Text size="xs" c="dimmed" mb={6}>
-                  Ролики за период
-                </Text>
+            <Box className="cmp-fields">
+              <Field label="Ролики за период">
                 <SegmentedControl
                   size="sm"
                   value={String(periodDays)}
@@ -222,71 +355,48 @@ export default function CompetitorsBoard() {
                     label: p.label,
                   }))}
                 />
-              </Box>
+              </Field>
 
-              <Select
-                label="Что берём из выдачи"
-                size="sm"
-                w={220}
-                value={order}
-                onChange={(v) => setOrder((v as CompetitorOrder) ?? "viewCount")}
-                data={[
-                  { value: "viewCount", label: "Самые просматриваемые" },
-                  { value: "relevance", label: "Самые релевантные" },
-                  { value: "date", label: "Самые свежие" },
-                ]}
-                allowDeselect={false}
-              />
+              <Field label="Что берём из выдачи">
+                <Select
+                  className="cmp-select"
+                  size="sm"
+                  value={order}
+                  onChange={(v) => setOrder((v as CompetitorOrder) ?? "viewCount")}
+                  data={[
+                    { value: "viewCount", label: "Самые просматриваемые" },
+                    { value: "relevance", label: "Самые релевантные" },
+                    { value: "date", label: "Самые свежие" },
+                  ]}
+                  allowDeselect={false}
+                />
+              </Field>
 
-              <Group gap="xs">
-                <Button
-                  leftSection={<IconSearch size={16} />}
-                  onClick={() => search(false)}
-                  loading={searching}
-                  disabled={queries.length === 0 || notEnoughQuota}
-                >
-                  Найти
-                </Button>
-                {result && (
-                  <Tooltip label="Искать заново, мимо кэша (тратит квоту)" withArrow>
-                    <Button
-                      variant="default"
-                      leftSection={<IconRefresh size={16} />}
-                      onClick={() => search(true)}
-                      loading={searching}
-                      disabled={notEnoughQuota}
-                    >
-                      Обновить
-                    </Button>
-                  </Tooltip>
-                )}
-              </Group>
-            </Group>
+              {/* Кнопка без подписи — .cmp-fields выравнивает по нижнему краю,
+                  поэтому она встаёт ровно на линию контролов. */}
+              <Button
+                leftSection={<IconSearch size={16} />}
+                onClick={search}
+                loading={searching}
+                disabled={queries.length === 0 || notEnoughQuota}
+                h={36}
+              >
+                Найти
+              </Button>
+            </Box>
 
-            {/* Цена поиска и остаток квоты — админу важно видеть до нажатия. */}
-            <Group gap="xs" wrap="wrap">
-              <Text size="xs" c="dimmed">
-                Поиск обойдётся в <b>{cost}</b> units квоты · осталось сегодня{" "}
-                <b>{ctx.quota.remaining.toLocaleString("ru-RU")}</b> на{" "}
-                {ctx.quota.keys.length}{" "}
-                {ctx.quota.keys.length === 1 ? "ключе" : "ключах"}
-              </Text>
-              {ctx.quota.keys.some((k) => k.dead) && (
-                <Badge color="gray" size="sm" variant="light">
-                  выбыло ключей: {ctx.quota.keys.filter((k) => k.dead).length}
-                </Badge>
-              )}
-              {!ctx.channelConnected && (
-                <Badge color="gray" size="sm" variant="light">
-                  канал не подключён — подсказки только из брифа
-                </Badge>
-              )}
-            </Group>
+            {/* ⚠️ Про units квоты и остаток по ключам тут НЕ пишем: это наша
+                внутренняя кухня, для человека раздел — просто рабочая функция.
+                Состояние пула ключей видно в админке (/admin/flags). */}
+            <Text size="xs" c="dimmed">
+              Ищем, пока не наберётся {COMPETITOR_TARGET_RESULTS} подходящих роликов.
+              Фильтры ниже крутятся по уже найденному — бесплатно и мгновенно.
+            </Text>
 
             {notEnoughQuota && (
               <Alert color="orange" icon={<IconAlertTriangle size={18} />}>
-                На сегодня квоты не хватает. Она сбрасывается в полночь по тихоокеанскому
-                времени, либо добавьте ещё ключ в <code>YOUTUBE_API_KEYS</code>.
+                Поиск сегодня недоступен — лимит запросов к YouTube исчерпан. Он
+                обновится ночью, найденное раньше открывается как обычно.
               </Alert>
             )}
           </Stack>
@@ -314,54 +424,94 @@ export default function CompetitorsBoard() {
       {result && (
         <>
           <Paper className="an-surface" p="md">
-            <Group gap="lg" align="flex-end" wrap="wrap">
-              <Box>
-                <Text size="xs" c="dimmed" mb={6}>
-                  Просмотров на подписчика — не меньше
-                </Text>
-                <SegmentedControl
-                  size="sm"
-                  value={String(filters.minRatio)}
-                  onChange={(v) => setFilters((f) => ({ ...f, minRatio: Number(v) }))}
-                  data={RATIO_PRESETS}
-                />
+            <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
+              <Box className="cmp-fields">
+                <Field
+                  label="Кратность"
+                  hint="Во сколько раз просмотров больше, чем подписчиков у канала. ×5 — ролик вылетел за свою аудиторию на упаковке."
+                >
+                  <SegmentedControl
+                    size="sm"
+                    value={String(filters.minRatio)}
+                    onChange={(v) => setFilters((f) => ({ ...f, minRatio: Number(v) }))}
+                    data={RATIO_PRESETS}
+                  />
+                </Field>
+
+                <Field
+                  label="Просмотров от"
+                  hint="Отсекает мелочь вроде 10 просмотров на 1 подписчика: кратность там огромная, а разбирать нечего."
+                >
+                  <NumberInput
+                    className="cmp-num"
+                    size="sm"
+                    min={0}
+                    step={500}
+                    thousandSeparator=" "
+                    value={filters.minViews}
+                    onChange={(v) => setFilters((f) => ({ ...f, minViews: Number(v) || 0 }))}
+                    aria-label="Минимум просмотров"
+                  />
+                </Field>
+
+                <Field label="Тип">
+                  <SegmentedControl
+                    size="sm"
+                    value={filters.kind}
+                    onChange={(v) => setFilters((f) => ({ ...f, kind: v as CompetitorKind }))}
+                    data={[
+                      { value: "all", label: "Все" },
+                      { value: "long", label: "Видео" },
+                      { value: "shorts", label: "Shorts" },
+                    ]}
+                  />
+                </Field>
               </Box>
 
-              <NumberInput
-                label="Минимум просмотров"
-                description="Отсекает мелочь вроде 10 просмотров на 1 подписчика"
-                size="sm"
-                w={200}
-                min={0}
-                step={500}
-                thousandSeparator=" "
-                value={filters.minViews}
-                onChange={(v) => setFilters((f) => ({ ...f, minViews: Number(v) || 0 }))}
-              />
-
-              <Box>
-                <Text size="xs" c="dimmed" mb={6}>
-                  Тип
+              {/* Итог фильтрации — не мелкой сноской внизу, а рядом с фильтрами:
+                  это прямой отклик на кручение ручек, его и надо видеть. */}
+              <Box ta={{ base: "left", sm: "right" }}>
+                <Text fw={700} fz="1.35rem" style={{ letterSpacing: "-0.02em" }}>
+                  {visible.length}{" "}
+                  <Text span c="dimmed" fz="sm" fw={400}>
+                    из {result.scanned}
+                  </Text>
                 </Text>
-                <SegmentedControl
-                  size="sm"
-                  value={filters.kind}
-                  onChange={(v) => setFilters((f) => ({ ...f, kind: v as CompetitorKind }))}
-                  data={[
-                    { value: "all", label: "Все" },
-                    { value: "long", label: "Видео" },
-                    { value: "shorts", label: "Shorts" },
-                  ]}
-                />
+                <Text size="xs" c="dimmed">
+                  подходит под фильтр
+                </Text>
               </Box>
             </Group>
 
             <Text size="xs" c="dimmed" mt="sm">
-              Просмотрено роликов: {result.scanned} · подходит под фильтр: {visible.length}
+              {result.foreign > 0 && `Отсеяно иноязычных: ${result.foreign}`}
+              {result.foreign > 0 && result.hiddenSubs > 0 && " · "}
               {result.hiddenSubs > 0 &&
-                ` · пропущено со скрытым счётчиком подписчиков: ${result.hiddenSubs}`}
+                `со скрытым счётчиком подписчиков: ${result.hiddenSubs}`}
+              {(result.foreign > 0 || result.hiddenSubs > 0) && " · "}
+              {fromCache ? "показано из памяти, найдено " : "найдено "}
+              {new Date(result.fetchedAt).toLocaleString("ru-RU", {
+                day: "2-digit",
+                month: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
             </Text>
           </Paper>
+
+          {visible.length > 0 && (
+            <Group justify="flex-end">
+              <Button
+                variant="light"
+                color="brand"
+                leftSection={<IconMessageCircle size={16} />}
+                onClick={() => void askAssistant(visible)}
+                loading={analyzing}
+              >
+                Разобрать упаковку с ассистентом
+              </Button>
+            </Group>
+          )}
 
           {visible.length === 0 ? (
             <Paper className="an-surface" p="xl">
@@ -373,123 +523,46 @@ export default function CompetitorsBoard() {
           ) : (
             <SimpleGrid cols={{ base: 1, xs: 2, md: 3, xl: 4 }} spacing="md">
               {visible.map((v) => (
-                <CompetitorCard key={v.id} video={v} />
+                <CompetitorCard
+                  key={v.id}
+                  video={v}
+                  onAddToPlan={setRefVideo}
+                  onAddChannel={(x: CompetitorVideo) => void addChannelFromVideo(x)}
+                  addedChannel={added.includes(v.channelId)}
+                  addingChannel={addingChannel === v.channelId}
+                />
               ))}
             </SimpleGrid>
           )}
+
+          {/* Догрузка выдачи. Цену (units) человеку не показываем — это внутренняя
+              кухня; кнопка просто гаснет, если на сегодня запросов не осталось. */}
+          {result.hasMore && (
+            <Group justify="center" gap="xs" mt="xs">
+              <Button
+                variant="default"
+                onClick={() => run("more")}
+                loading={loadingMore}
+                disabled={noQuotaForMore}
+              >
+                Добрать ещё {COMPETITOR_TARGET_RESULTS}
+              </Button>
+
+            </Group>
+          )}
+          {!result.hasMore && result.pagesLoaded > 1 && (
+            <Text size="xs" c="dimmed" ta="center">
+              Это вся выдача, что YouTube отдаёт по этим запросам.
+            </Text>
+          )}
         </>
       )}
+
+      <AddReferenceModal
+        projectId={projectId}
+        video={refVideo}
+        onClose={() => setRefVideo(null)}
+      />
     </Stack>
-  );
-}
-
-function CompetitorCard({ video }: { video: CompetitorVideo }) {
-  return (
-    <Paper
-      className="an-surface yt-video-card"
-      component="a"
-      href={`https://www.youtube.com/watch?v=${video.id}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      style={{ overflow: "hidden", display: "block", color: "inherit", textDecoration: "none" }}
-    >
-      <Box
-        className="yt-thumb"
-        style={{
-          position: "relative",
-          aspectRatio: "16 / 9",
-          background: "var(--mantine-color-dark-4)",
-        }}
-      >
-        {video.thumbnail && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={video.thumbnail}
-            alt={video.title}
-            loading="lazy"
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-          />
-        )}
-
-        {/* Главная цифра карточки — во сколько раз просмотры обогнали подписчиков. */}
-        <Badge
-          leftSection={<IconFlame size={13} />}
-          radius="sm"
-          style={{
-            position: "absolute",
-            left: 8,
-            top: 8,
-            background: "var(--mantine-color-brand-filled)",
-            color: "#fff",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {formatRatio(video.ratio)}
-        </Badge>
-
-        {video.duration && (
-          <Badge
-            radius="sm"
-            size="sm"
-            style={{
-              position: "absolute",
-              right: 8,
-              bottom: 8,
-              background: "rgba(0,0,0,0.82)",
-              color: "#fff",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {formatDuration(video.duration)}
-          </Badge>
-        )}
-      </Box>
-
-      <Stack gap={6} p="sm">
-        <Text fw={600} size="sm" lineClamp={2} title={video.title}>
-          {video.title}
-        </Text>
-
-        <Group gap={6} wrap="nowrap">
-          {video.channelThumb && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={video.channelThumb}
-              alt=""
-              width={18}
-              height={18}
-              style={{ borderRadius: "50%", flexShrink: 0 }}
-            />
-          )}
-          <Text size="xs" c="dimmed" truncate>
-            {video.channelTitle}
-          </Text>
-        </Group>
-
-        <Group gap="xs" wrap="wrap">
-          <Text size="xs" c="dimmed">
-            {formatCount(video.views)} просмотров
-          </Text>
-          <Group gap={3} wrap="nowrap">
-            <IconUsers size={12} style={{ color: "var(--mantine-color-dimmed)" }} />
-            <Text size="xs" c="dimmed">
-              {formatCount(video.subscribers)}
-            </Text>
-          </Group>
-          {video.publishedAt && (
-            <Text size="xs" c="dimmed">
-              {formatShortDate(video.publishedAt)}
-            </Text>
-          )}
-          <IconExternalLink size={12} style={{ color: "var(--mantine-color-dimmed)" }} />
-        </Group>
-
-        {video.query && (
-          <Text size="xs" c="dimmed" truncate title={`Найден по запросу: ${video.query}`}>
-            по запросу «{video.query}»
-          </Text>
-        )}
-      </Stack>
-    </Paper>
   );
 }

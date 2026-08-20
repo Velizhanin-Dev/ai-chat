@@ -6,6 +6,7 @@ import type { User } from "@prisma/client";
 import { prisma } from "./prisma";
 import { sanitizeBrief, isBriefComplete, type Brief } from "./brief";
 import { maybeGrantTrial } from "./quota";
+import { touchDevice } from "./devices-server";
 import { getSettings } from "./settings";
 
 // ── Сессия ──────────────────────────────────────────────────────────────
@@ -35,21 +36,35 @@ export function verifyPassword(password: string, hash: string): Promise<boolean>
 
 // ── JWT ─────────────────────────────────────────────────────────────────
 
-export async function signSession(userId: string): Promise<string> {
-  return new SignJWT({ uid: userId })
+// deviceId — слот устройства (см. src/lib/devices-server.ts). Кладём в токен,
+// чтобы удаление устройства из настроек гасило именно ЭТУ сессию. Токены без
+// claim'а (выданные до появления лимита) остаются рабочими до истечения.
+export async function signSession(userId: string, deviceId?: string): Promise<string> {
+  return new SignJWT(deviceId ? { uid: userId, did: deviceId } : { uid: userId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE}s`)
     .sign(secret());
 }
 
-async function verifySession(token: string): Promise<string | null> {
+async function verifySession(
+  token: string
+): Promise<{ uid: string; did: string | null } | null> {
   try {
     const { payload } = await jwtVerify(token, secret());
-    return typeof payload.uid === "string" ? payload.uid : null;
+    if (typeof payload.uid !== "string") return null;
+    return { uid: payload.uid, did: typeof payload.did === "string" ? payload.did : null };
   } catch {
     return null;
   }
+}
+
+// Идентификатор устройства текущей сессии (null — легаси-токен без привязки).
+export async function currentDeviceId(): Promise<string | null> {
+  const token = cookies().get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const s = await verifySession(token);
+  return s?.did ?? null;
 }
 
 // ── Cookie ──────────────────────────────────────────────────────────────
@@ -62,6 +77,11 @@ export function setSessionCookie(token: string): void {
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
+}
+
+/** Есть ли вообще сессионная cookie (не проверяя подпись). */
+export function hasSessionCookie(): boolean {
+  return Boolean(cookies().get(SESSION_COOKIE)?.value);
 }
 
 export function clearSessionCookie(): void {
@@ -93,13 +113,20 @@ export function sessionCookie(token: string) {
 export async function getSessionUser(): Promise<User | null> {
   const token = cookies().get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const uid = await verifySession(token);
-  if (!uid) return null;
+  const session = await verifySession(token);
+  if (!session) return null;
+  const uid = session.uid;
   // Сбой БД не должен ронять весь layout (он засевает юзера на КАЖДОЙ странице).
   // При ошибке деградируем до гостя.
   try {
     const user = await prisma.user.findUnique({ where: { id: uid } });
     if (!user) return null;
+    // Устройство удалили из настроек («Устройства») → сессия больше не годится.
+    if (session.did) {
+      const device = await prisma.device.findUnique({ where: { id: session.did } });
+      if (!device || device.userId !== uid) return null;
+      touchDevice(device.id, device.lastSeenAt);
+    }
     touchLastSeen(user);
     // Массовый сброс пробных периодов выдаётся ПЕРСОНАЛЬНО — здесь, при первом
     // заходе человека после нажатия кнопки в админке, чтобы срок отсчитывался от

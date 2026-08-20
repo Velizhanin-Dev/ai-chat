@@ -1,8 +1,8 @@
-import CompetitorsBoard from "@/components/Competitors/CompetitorsBoard";
+import CompetitorsList from "@/components/Competitors/CompetitorsList";
 
-// Раздел «Конкуренты в нише» — пока только админам: лежит в route-group (locked),
-// её серверный layout отдаёт не-админу 404. Открывать всем рано — поиск по YouTube
-// стоит 100 units квоты за запрос.
+// Раздел «Конкуренты» — свой список каналов и их свежие ролики. Открыт всем
+// залогиненным (гейт — middleware + владение проектом в API). Дешёвый: ~2 units
+// на канал, в отличие от соседнего поиска референсов.
 export default function CompetitorsPage() {
-  return <CompetitorsBoard />;
+  return <CompetitorsList />;
 }

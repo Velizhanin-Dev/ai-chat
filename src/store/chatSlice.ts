@@ -1,3 +1,4 @@
+import type { Platform } from "@/lib/platform";
 import { createSlice, PayloadAction, nanoid } from "@reduxjs/toolkit";
 
 export interface ChatMessage {
@@ -10,6 +11,8 @@ export interface ChatMessage {
 export interface Conversation {
   id: string;
   title: string;
+  /** Площадка проекта: от неё зависят разделы меню, аналитика и формат превью. */
+  platform: Platform;
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
@@ -29,6 +32,8 @@ interface ChatState {
   isLoading: boolean;
   // Идёт веб-поиск перед генерацией (индикатор «Ищу в интернете»).
   isSearching: boolean;
+  /** Сервер тянет расшифровку ролика по ссылке из сообщения (SSE `analyzingVideo`). */
+  isAnalyzingVideo: boolean;
   streamingContent: string;
   error: string | null;
   // Идёт ленивая подгрузка сообщений открытого диалога с сервера.
@@ -58,6 +63,7 @@ const initialState: ChatState = {
   drafting: false,
   isLoading: false,
   isSearching: false,
+  isAnalyzingVideo: false,
   streamingContent: "",
   error: null,
   messagesLoading: false,
@@ -128,11 +134,18 @@ const chatSlice = createSlice({
       state.isLoading = action.payload;
       // Новый запрос / конец генерации — сбрасываем признак веб-поиска, иначе
       // следующий ответ откроется с «Ищу в интернете», хотя поиска не было.
-      if (!action.payload) state.isSearching = false;
+      if (!action.payload) {
+        state.isSearching = false;
+        state.isAnalyzingVideo = false;
+      }
     },
     // Идёт веб-поиск перед генерацией (сервер прислал `searching` в SSE).
     setSearching(state, action: PayloadAction<boolean>) {
       state.isSearching = action.payload;
+    },
+    // Сервер разбирает ролик по ссылке (SSE `analyzingVideo`) — тянет расшифровку.
+    setAnalyzingVideo(state, action: PayloadAction<boolean>) {
+      state.isAnalyzingVideo = action.payload;
     },
     // Подставить текст в композер и сфокусировать. Зовётся и с уже открытого чата
     // (плитки, быстрые действия), и ИЗ ДРУГИХ РАЗДЕЛОВ перед переходом в чат
@@ -206,6 +219,7 @@ export const {
   addMessage,
   setLoading,
   setSearching,
+  setAnalyzingVideo,
   prefillInput,
   prefillConsumed,
   setMessagesLoading,

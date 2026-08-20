@@ -546,7 +546,7 @@ export function toVideoView(r: VideoRow): VideoView {
     status: (["idea", "in_progress", "published", "cancelled"].includes(r.status)
       ? r.status
       : "idea") as VideoView["status"],
-    source: (["ai", "manual", "imported"].includes(r.source)
+    source: (["ai", "manual", "imported", "competitor"].includes(r.source)
       ? r.source
       : "ai") as VideoView["source"],
     titles: r.titles ?? [],

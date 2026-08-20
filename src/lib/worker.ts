@@ -6,6 +6,7 @@ import {
   isFatalJobError,
 } from "@/lib/jobs-server";
 import { isJobKind } from "@/lib/jobs";
+import { scanCompetitorAlerts } from "@/lib/competitor-alerts";
 import "@/lib/job-handlers"; // регистрация обработчиков (побочный эффект импорта)
 
 // Воркер очереди. Живёт В ТОМ ЖЕ процессе, что и приложение — у нас один инстанс,
@@ -95,4 +96,31 @@ export function startWorker(): void {
   started = true;
   console.log(`[worker] запущен (${workerId}), параллельно ${CONCURRENCY}`);
   void loop();
+  void alertsLoop();
+}
+
+// ── Уведомления «у конкурента залетел ролик» ────────────────────────────────
+//
+// Отдельный неспешный цикл рядом с очередью, а не задача в ней: у задач есть
+// заказчик и результат, который кто-то ждёт, а это фоновый обход по расписанию.
+// Крона в проекте нет, отдельный контейнер ради одного обхода заводить незачем.
+//
+// ⚠️ Первый проход отложен: при старте (и при каждой горячей перезагрузке в dev)
+// приложение и без того занято, а новости конкурентов пять минут подождут.
+// ⚠️ Проход стоит ~2 units на канал, поэтому раз в 6 часов: чаще — тратим квоту
+// на то, что человек всё равно прочитает не сразу.
+const ALERTS_FIRST_DELAY_MS = 5 * 60 * 1000;
+const ALERTS_EVERY_MS = 6 * 60 * 60 * 1000;
+
+async function alertsLoop(): Promise<void> {
+  await sleep(ALERTS_FIRST_DELAY_MS);
+  for (;;) {
+    try {
+      await scanCompetitorAlerts();
+    } catch (err) {
+      // Обход не должен ронять воркер: очередь задач важнее уведомлений.
+      console.error("[alerts] обход не удался:", err);
+    }
+    await sleep(ALERTS_EVERY_MS);
+  }
 }

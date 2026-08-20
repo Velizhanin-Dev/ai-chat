@@ -42,6 +42,8 @@ const OAUTH_ERRORS: Record<string, string> = {
   oauth_state_bad: "Сессия входа повреждена. Попробуйте ещё раз.",
   oauth_state_mismatch: "Сессия входа не совпала. Попробуйте ещё раз.",
   launch_locked: "Доступ к ассистенту откроется после запуска.",
+  device_limit:
+    "Лимит устройств по тарифу исчерпан. Зайдите с одного из активных устройств и удалите лишнее в настройках («Устройства»).",
 };
 
 export default function LoginPage() {

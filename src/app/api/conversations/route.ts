@@ -8,6 +8,7 @@ import { getPlans } from "@/lib/plans";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { attachPendingConnection } from "@/lib/youtube";
+import { normalizePlatform, type Platform } from "@/lib/platform";
 import { track } from "@/lib/achievements-server";
 
 // Список диалогов текущего пользователя — только метаданные (id/title/даты),
@@ -19,6 +20,8 @@ const TITLE_MAX = 80;
 export type ConversationMeta = {
   id: string;
   title: string;
+  /** Площадка проекта: "youtube" | "instagram" (см. src/lib/platform.ts). */
+  platform: Platform;
   createdAt: string;
   updatedAt: string;
 };
@@ -30,13 +33,14 @@ export async function GET() {
   const rows = await prisma.conversation.findMany({
     where: { userId: user.id },
     orderBy: { updatedAt: "desc" },
-    select: { id: true, title: true, createdAt: true, updatedAt: true },
+    select: { id: true, title: true, platform: true, createdAt: true, updatedAt: true },
     take: LIST_LIMIT,
   });
 
   const conversations: ConversationMeta[] = rows.map((c) => ({
     id: c.id,
     title: c.title,
+    platform: normalizePlatform(c.platform),
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   }));
@@ -67,7 +71,19 @@ export async function POST(req: Request) {
   const brief = sanitizeBrief(body.brief);
   if (!isBriefComplete(brief)) return apiError("Бриф не пройден", 400, "BRIEF_REQUIRED");
 
-  // Лимит проектов по тарифу (админам не лимитируем).
+  const platform = normalizePlatform(body.platform);
+
+  // ⚠️ Instagram пока ТОЛЬКО админам: интеграция написана, но не обкатана на живом
+  // аккаунте (нужны ключи Meta и профессиональный профиль). Для остальных площадка
+  // показывается как «в разработке» — см. PlatformStep. Гейт серверный: на клиенте
+  // карточку можно обойти запросом.
+  if (platform === "instagram" && !isAdmin(user)) {
+    return apiError("Instagram пока в разработке", 403, "INSTAGRAM_IN_DEV");
+  }
+
+  // Лимиты по тарифу (админам не лимитируем). ⚠️ У Instagram СВОЙ счётчик: тариф
+  // может давать пять проектов на YouTube и один на Instagram, поэтому общий лимит
+  // projects и лимит instagram проверяются отдельно, а не «в сумме».
   if (!isAdmin(user)) {
     const plans = await getPlans();
     const plan = plans.find((p) => p.id === user.plan);
@@ -82,6 +98,29 @@ export async function POST(req: Request) {
         );
       }
     }
+
+    if (platform === "instagram") {
+      const igLimit = plan ? plan.limits.instagram : 0;
+      if (igLimit === 0) {
+        return apiError(
+          "На этом тарифе Instagram недоступен — выберите тариф, где он есть.",
+          403,
+          "INSTAGRAM_NOT_IN_PLAN"
+        );
+      }
+      if (igLimit !== -1) {
+        const igCount = await prisma.conversation.count({
+          where: { userId: user.id, platform: "instagram" },
+        });
+        if (igCount >= igLimit) {
+          return apiError(
+            "Достигнут лимит проектов на Instagram. Удалите проект, чтобы создать новый.",
+            403,
+            "INSTAGRAM_LIMIT"
+          );
+        }
+      }
+    }
   }
 
   const title = (brief.channel || "").trim().slice(0, TITLE_MAX) || "Новый проект";
@@ -92,9 +131,10 @@ export async function POST(req: Request) {
         id,
         userId: user.id,
         title,
+        platform,
         brief: brief as unknown as Prisma.InputJsonValue,
       },
-      select: { id: true, title: true, createdAt: true, updatedAt: true },
+      select: { id: true, title: true, platform: true, createdAt: true, updatedAt: true },
     });
     // Канал, подключённый на шаге брифа (проекта тогда ещё не было), переезжает на
     // созданный проект — только если клиент явно об этом просит (иначе брошенный
@@ -108,6 +148,7 @@ export async function POST(req: Request) {
     const conversation: ConversationMeta = {
       id: conv.id,
       title: conv.title,
+      platform: normalizePlatform(conv.platform),
       createdAt: conv.createdAt.toISOString(),
       updatedAt: conv.updatedAt.toISOString(),
     };

@@ -2,6 +2,7 @@ import type { ConversationMeta } from "@/app/api/conversations/route";
 import type { ApiMessage } from "@/app/api/conversations/[id]/route";
 import { newProjectId, type ChatMessage, type Conversation } from "@/store/chatSlice";
 import type { Brief } from "@/lib/brief";
+import type { Platform } from "@/lib/platform";
 
 // ── Клиентская обёртка над /api/conversations/* ───────────────────────────
 // История чата живёт в БД (кросс-девайсно). Список — метаданными, сообщения —
@@ -37,6 +38,7 @@ export function metaToConversation(m: ConversationMeta): Conversation {
   return {
     id: m.id,
     title: m.title,
+    platform: m.platform ?? "youtube",
     messages: [],
     createdAt: m.createdAt,
     updatedAt: m.updatedAt,
@@ -68,14 +70,15 @@ export type CreateProjectResult =
 // следующему проекту, даже если там канал не подключали.
 export async function apiCreateProject(
   brief: Brief,
-  attachChannel = false
+  attachChannel = false,
+  platform: Platform = "youtube"
 ): Promise<CreateProjectResult> {
   try {
     const id = newProjectId();
     const res = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, brief, attachChannel }),
+      body: JSON.stringify({ id, brief, attachChannel, platform }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       conversation?: ConversationMeta;
@@ -92,6 +95,7 @@ export async function apiCreateProject(
       data: {
         id: m.id,
         title: m.title,
+        platform: m.platform ?? "youtube",
         messages: [],
         createdAt: m.createdAt,
         updatedAt: m.updatedAt,

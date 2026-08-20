@@ -1,7 +1,7 @@
 import LandingNav from "@/components/Landing/LandingNav";
 import Hero from "@/components/Landing/Hero";
 import Features from "@/components/Landing/Features";
-import Workspace from "@/components/Landing/Workspace";
+import ProductTour from "@/components/Landing/ProductTour";
 import Showcase from "@/components/Landing/Showcase";
 import Pricing from "@/components/Landing/Pricing";
 import FinalCta from "@/components/Landing/FinalCta";
@@ -22,8 +22,10 @@ export default async function Home() {
       <main>
         <Hero launchTarget={launchMode ? launch.targetAt : null} />
         <Features />
-        {/* Разделы вокруг чата: аналитика, контент-план, превью, дорожная карта. */}
-        <Workspace />
+        {/* Тур по продукту: 2.5D-сцены по всем разделам — от вопроса в чате до
+            вышедшего ролика. Заменил прежний блок «Рабочий кабинет» (плоские
+            карточки): тот перечислял разделы, но не показывал, что человек увидит. */}
+        <ProductTour />
         <Showcase />
         {!launchMode && <Pricing plans={plans} />}
         <FinalCta hidePricing={launchMode} launchMode={launchMode} />

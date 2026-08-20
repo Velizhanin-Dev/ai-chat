@@ -35,6 +35,23 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
+# yt-dlp — расшифровки роликов (субтитры) для разбора в чате.
+#
+# ⚠️ Почему именно она, а не запрос к timedtext своими руками: YouTube с 2025 года
+# отвечает на прямой запрос субтитров «200 OK» с ПУСТЫМ телом — проверяли с трёх
+# разных IP (домашний, наш прод, VPS в Нидерландах), везде пусто. yt-dlp
+# подставляет актуальные клиенты плеера и добывает нужный токен; с того же VPS
+# субтитры отдаются. Видео при этом не скачивается вообще (--skip-download).
+#
+# ⚠️ Ставим ФИКСИРОВАННУЮ версию: yt-dlp живёт «в догонялки» с YouTube, и свежая
+# сборка может как починить, так и сломать. Обновлять — осознанно, меняя тег.
+ENV YTDLP_VERSION=2026.08.19
+RUN apk add --no-cache python3 \
+ && wget -q -O /usr/local/bin/yt-dlp \
+      "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
+ && chmod +x /usr/local/bin/yt-dlp \
+ && /usr/local/bin/yt-dlp --version
+
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static

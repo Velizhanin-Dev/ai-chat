@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { routeQuery, fullModeRoute } from "@/lib/router";
+import { extractVideoIds } from "@/lib/chat-video";
+import { buildVideoTranscriptBlock } from "@/lib/youtube-transcript";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
@@ -23,6 +25,12 @@ type ClientMessage = { role: "user" | "assistant"; content: string };
 // Ограничение ожидания снимка канала перед ответом: если YouTube тупит — отвечаем
 // без данных канала (следующее сообщение подхватит из кэша), а не ждём его.
 const CHANNEL_SNAPSHOT_TIMEOUT_MS = 4_000;
+
+// Сколько ждём расшифровку ролика перед ответом. ⚠️ Меньше таймаута самого сервиса
+// (там потолок на весь путь): здесь человек уже отправил сообщение и смотрит на
+// индикатор. Не успели — отвечаем без текста ролика, а расшифровка осядет в кэше
+// и подхватится со следующего раза.
+const TRANSCRIPT_WAIT_MS = 25_000;
 
 // Promise с мягким таймаутом: по истечении отдаёт fallback (не бросает). Исходный
 // промис не отменяем — он спокойно дорешается в фоне (снимок ляжет в кэш).
@@ -244,6 +252,11 @@ export async function POST(request: NextRequest) {
             channel.nudge
           );
 
+    // Ссылки на ролики в текущем сообщении: расшифровку добываем МЫ, а не человек.
+    // ⚠️ Смотрим только последнее сообщение, а не всю историю: иначе каждый ответ в
+    // длинном диалоге заново тянул бы ролики, о которых говорили полчаса назад.
+    const videoIds = extractVideoIds(lastUser);
+
     // Веб-поиск: только на OpenRouter (плагин `web`), только если включён в админке,
     // и только на содержательных запросах — на «привет / спасибо» (category === "chat")
     // искать нечего, а каждый результат стоит денег (~$0.004).
@@ -279,12 +292,29 @@ export async function POST(request: NextRequest) {
           // к TTFT — без подписи это выглядит как «завис».
           if (webSearch > 0) send(`data: ${JSON.stringify({ searching: true })}\n\n`);
 
+          // Ролик по ссылке: расшифровку тянет внешний сервис, это секунды, поэтому
+          // сразу говорим клиенту показать «Разбираю видео» — как с веб-поиском,
+          // иначе молчание до первого токена читается как «завис».
+          let systemForRun = systemBlocks;
+          if (videoIds.length > 0) {
+            send(`data: ${JSON.stringify({ analyzingVideo: true })}\n\n`);
+            // ⚠️ Ждём не дольше TRANSCRIPT_WAIT_MS: не успели — отвечаем без текста
+            // ролика, а сервис дотянет расшифровку в кэш к следующему разу.
+            const block = await Promise.race([
+              buildVideoTranscriptBlock(videoIds),
+              new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_WAIT_MS)),
+            ]).catch(() => "");
+            // Блок идёт ПОСЛЕДНИМ: модель сильнее весит то, что ближе к вопросу
+            // (тот же recency-приём, что у ретрива знаний).
+            if (block) systemForRun = [...systemBlocks, { type: "text" as const, text: block }];
+          }
+
           // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
           // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
           const strategy = getStrategy(provider);
           let assistantText = "";
           for await (const token of strategy.stream({
-            system: systemBlocks,
+            system: systemForRun,
             messages,
             route,
             routeMs,

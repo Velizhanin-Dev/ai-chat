@@ -9,6 +9,7 @@ import {
 import { apiError, readJson, EMAIL_RE } from "@/lib/http";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
+import { DeviceLimitError, registerDevice } from "@/lib/devices-server";
 
 export async function POST(req: Request) {
   const body = await readJson(req);
@@ -39,6 +40,16 @@ export async function POST(req: Request) {
     data: { lastSeenAt: new Date() },
   });
 
-  setSessionCookie(await signSession(user.id));
+  // Слот устройства по тарифу. Свободных нет — сессию не выдаём и говорим, что
+  // делать (удалить лишнее устройство с любого из уже вошедших).
+  let deviceId: string;
+  try {
+    deviceId = await registerDevice(user);
+  } catch (err) {
+    if (err instanceof DeviceLimitError) return apiError(err.message, 403, "DEVICE_LIMIT");
+    throw err;
+  }
+
+  setSessionCookie(await signSession(user.id, deviceId));
   return NextResponse.json({ user: publicUser(user) });
 }

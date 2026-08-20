@@ -16,6 +16,7 @@ import {
 import { IconFolderPlus, IconAlertCircle } from "@tabler/icons-react";
 import BriefFlow from "@/components/Brief/BriefFlow";
 import YouTubeConnectStep from "@/components/Brief/YouTubeConnectStep";
+import PlatformStep from "@/components/Brief/PlatformStep";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
 import { addProject, startBriefing, finishBriefing } from "@/store/chatSlice";
 import { apiCreateProject } from "@/lib/chat-client";
@@ -24,6 +25,8 @@ import { readLastProject } from "@/lib/last-project";
 import { readAnonBrief, clearAnonBrief } from "@/lib/anon-brief";
 import { ymGoal } from "@/lib/metrika";
 import { EMPTY_BRIEF, AUTOFILL_KEYS, type Brief } from "@/lib/brief";
+import type { Platform } from "@/lib/platform";
+import { useChatAccess } from "@/hooks/useChatAccess";
 
 // Черновик брифа нового проекта (восстанавливается при перезагрузке в процессе).
 const PROJECT_BRIEF_DRAFT_KEY = "creative-chat:project-brief-draft-v1";
@@ -32,7 +35,11 @@ const PROJECT_BRIEF_DRAFT_KEY = "creative-chat:project-brief-draft-v1";
 //   yt       — предлагаем подключить YouTube-канал (первый экран);
 //   autofill — канал подключён, нейронка разбирает его и заполняет бриф;
 //   brief    — сам визард брифа (с автозаполненными полями или пустой).
-type Phase = "yt" | "autofill" | "brief";
+// ⚠️ Первый шаг теперь ВЫБОР ПЛОЩАДКИ, а не подключение канала: от площадки
+// зависят и подключение (YouTube OAuth против Instagram), и состав брифа, и
+// формат превью. Instagram-проект шаг "yt" пропускает — своей интеграции у него
+// пока нет, аккаунт подключается позже в настройках проекта.
+type Phase = "platform" | "yt" | "autofill" | "brief";
 
 // Экран приложения без выбранного проекта: создать/выбрать проект + визард брифа.
 // Создание проекта (после брифа) уводит в чат проекта (/{id}/chat).
@@ -43,6 +50,11 @@ export default function AppHomePage() {
   const conversations = useAppSelector((s) => s.chat.conversations);
   const userId = useAppSelector((s) => s.auth.user?.id ?? null);
   const hydrated = useAppSelector((s) => s.chat.hydrated);
+  // Лимит Instagram-проектов из тарифа: по нему закрываем карточку площадки.
+  const { instagramLimit } = useChatAccess();
+  const instagramUsed = conversations.filter((c) => c.platform === "instagram").length;
+  // Instagram пока обкатывают админы (гейт дублируется на сервере).
+  const isAdmin = useAppSelector((s) => s.auth.user?.role === "admin");
 
   // Код возврата из OAuth (?yt=...). Читаем ОДИН раз на маунте и сразу чистим URL:
   // после согласия Google возвращает на /app, а redux-флаг drafting полную
@@ -104,7 +116,8 @@ export default function AppHomePage() {
   // ── Фаза создания проекта ──────────────────────────────────────────────────
   // Стартуем с предложения подключить канал; вернулись из OAuth с успехом —
   // сразу в автозаполнение (шаг подключения уже пройден).
-  const [phase, setPhase] = useState<Phase>("yt");
+  const [phase, setPhase] = useState<Phase>("platform");
+  const [platform, setPlatform] = useState<Platform>("youtube");
   const [autofilled, setAutofilled] = useState<Brief | null>(null);
   const [autofillKeys, setAutofillKeys] = useState<string[]>([]);
   const [autofillError, setAutofillError] = useState<string | null>(null);
@@ -157,7 +170,8 @@ export default function AppHomePage() {
   // Каждый заход в режим создания начинается с экрана подключения канала.
   useEffect(() => {
     if (!drafting) {
-      setPhase("yt");
+      setPhase("platform");
+      setPlatform("youtube");
       setAutofilled(null);
       setAutofillKeys([]);
       setAutofillError(null);
@@ -171,7 +185,7 @@ export default function AppHomePage() {
   // канал прицепится к проекту на сервере (attachPendingConnection).
   const handleBriefSubmit = useCallback(
     async (brief: Brief): Promise<{ ok: boolean; error?: string }> => {
-      const res = await apiCreateProject(brief, channelConnected);
+      const res = await apiCreateProject(brief, channelConnected, platform);
       if (!res.ok) return { ok: false, error: res.error };
       dispatch(addProject(res.data));
       clearAnonBrief();
@@ -179,7 +193,7 @@ export default function AppHomePage() {
       setCreatedId(res.data.id);
       return { ok: true };
     },
-    [dispatch, channelConnected]
+    [dispatch, channelConnected, platform]
   );
 
   // Если бриф уже пройден на /brief (анонимный бриф в localStorage) — не показываем
@@ -233,14 +247,32 @@ export default function AppHomePage() {
                 Новый проект
               </Title>
               <Text c="dimmed" size="sm" mb="lg">
-                {phase === "yt"
-                  ? "Начнём с канала — так я соберу бриф за тебя."
-                  : "Пара вопросов о проекте и короткий тест — на их основе я буду собирать контент именно под него."}
+                {phase === "platform"
+                  ? "Сначала площадка — от неё зависят разделы, цифры и формат обложек."
+                  : phase === "yt"
+                    ? "Начнём с канала — так я соберу бриф за тебя."
+                    : "Пара вопросов о проекте и короткий тест — на их основе я буду собирать контент именно под него."}
               </Text>
             </>
           )}
 
-          {/* Шаг 1 — подключение канала (можно пропустить). */}
+          {/* Шаг 1 — площадка проекта. */}
+          {phase === "platform" && (
+            <PlatformStep
+              instagramLimit={instagramLimit}
+              instagramUsed={instagramUsed}
+              isAdmin={isAdmin}
+              onPick={(p) => {
+                setPlatform(p);
+                // ⚠️ У Instagram своей интеграции пока нет — идём прямо в бриф, а
+                // аккаунт подключается позже в настройках проекта. Отправлять на
+                // экран подключения YouTube было бы прямой ложью.
+                setPhase(p === "youtube" ? "yt" : "brief");
+              }}
+            />
+          )}
+
+          {/* Шаг 2 — подключение канала (можно пропустить). */}
           {phase === "yt" && (
             <YouTubeConnectStep
               ytError={ytCode}

@@ -1,5 +1,7 @@
 "use client";
 
+import { ytImage } from "@/lib/image-proxy";
+
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
@@ -134,7 +136,7 @@ export default function YouTubeConnect({ projectId }: { projectId: string }) {
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
               <Avatar
-                src={status.channel.thumbnail}
+                src={ytImage(status.channel.thumbnail) ?? undefined}
                 radius="xl"
                 size={44}
                 color="red"

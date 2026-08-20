@@ -1,9 +1,11 @@
 "use client";
 
+import { ytImage } from "@/lib/image-proxy";
+
 import { Box, Group, Text } from "@mantine/core";
 import { IconCircleCheckFilled, IconDotsVertical } from "@tabler/icons-react";
 
-// Превью в том виде, в каком его увидит зритель в ленте YouTube.
+// Превью в том виде, в каком его увидит зритель в ленте — YouTube или Reels.
 //
 // Зачем так подробно: обложка сама по себе всегда выглядит нормально. Проблемы
 // («текст не читается», «превью повторяет название», «лицо теряется») вылезают
@@ -20,16 +22,19 @@ export default function YouTubeCard({
   channel,
   avatarUrl,
   duration,
+  vertical,
 }: {
   src: string;
   title: string;
   channel: string;
   avatarUrl?: string | null;
   duration?: string;
+  /** Instagram Reels: кадр вертикальный (9:16), а не горизонтальный. */
+  vertical?: boolean;
 }) {
   return (
     <Box>
-      <Box className="ytc-thumb">
+      <Box className={vertical ? "ytc-thumb ytc-thumb-v" : "ytc-thumb"}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={src} alt={title || "превью"} className="ytc-img" />
         {duration && <span className="ytc-duration">{duration}</span>}
@@ -39,7 +44,7 @@ export default function YouTubeCard({
         <Box className="ytc-avatar" aria-hidden>
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="" className="ytc-img" />
+            <img src={ytImage(avatarUrl) ?? undefined} alt="" className="ytc-img" />
           ) : (
             <span className="ytc-avatar-letter">{(channel || "К").slice(0, 1)}</span>
           )}

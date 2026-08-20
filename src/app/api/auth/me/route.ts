@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getSessionUser, publicUser } from "@/lib/auth";
+import { clearSessionCookie, getSessionUser, hasSessionCookie, publicUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/http";
 
 // Текущий пользователь по cookie — для гидратации клиента после перезагрузки.
 export async function GET() {
   const user = await getSessionUser();
+  // ⚠️ Подпись токена валидна, а юзера нет — почти всегда это значит, что
+  // устройство отключили в настройках («Устройства»). Гасим cookie ЗДЕСЬ: в
+  // серверном рендере страницы её трогать нельзя, а middleware проверяет только
+  // подпись и без этого пускала бы человека в приложение, где он выглядит гостем.
+  if (!user && hasSessionCookie()) clearSessionCookie();
   return NextResponse.json({ user: user ? publicUser(user) : null });
 }
 

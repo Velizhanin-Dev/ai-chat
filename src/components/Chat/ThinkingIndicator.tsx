@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Text } from "@mantine/core";
-import { IconWorldSearch } from "@tabler/icons-react";
+import { IconFileTextSpark, IconWorldSearch } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 
 // Индикатор «думает» до первого токена. TTFT у нас долгий (не из-за размера
@@ -29,13 +29,29 @@ const SEARCH_PHRASES = [
   "пишу ответ",
 ];
 
+// Своя цепочка на время разбора ролика по ссылке: расшифровку тянет внешний
+// сервис, это заметные секунды до первого токена. Молчать про это нельзя ровно по
+// той же причине, что и про веб-поиск.
+const VIDEO_PHRASES = [
+  "разбираю видео",
+  "читаю расшифровку",
+  "смотрю, как построен заход",
+  "собираю мысли",
+  "пишу ответ",
+];
+
 const STEP_MS = 1900;
 
 export default function ThinkingIndicator() {
   const isSearching = useAppSelector((s) => s.chat.isSearching);
+  const isAnalyzingVideo = useAppSelector((s) => s.chat.isAnalyzingVideo);
   const [i, setI] = useState(0);
 
-  const phrases = isSearching ? SEARCH_PHRASES : PHRASES;
+  // Разбор ролика важнее показать, чем поиск: он дольше и человек только что сам
+  // прислал ссылку — ждёт реакции именно на неё.
+  const mode = isAnalyzingVideo ? "video" : isSearching ? "search" : "think";
+  const phrases =
+    mode === "video" ? VIDEO_PHRASES : mode === "search" ? SEARCH_PHRASES : PHRASES;
 
   // Цепочка setTimeout по индексу: шагаем вперёд и останавливаемся на последней
   // фразе (без интервала, который бы крутился вхолостую после остановки).
@@ -49,17 +65,26 @@ export default function ThinkingIndicator() {
   // шагнула вперёд. Возвращаемся в начало, чтобы «ищу в интернете» реально
   // показалось, а не проскочило мимо на третьей фразе.
   useEffect(() => {
-    if (isSearching) setI(0);
-  }, [isSearching]);
+    if (isSearching || isAnalyzingVideo) setI(0);
+  }, [isSearching, isAnalyzingVideo]);
 
   return (
     <Text
       component="span"
       size="sm"
       fs="italic"
-      aria-label={isSearching ? "Ищу в интернете" : "Готовлю ответ"}
+      aria-label={
+        mode === "video"
+          ? "Разбираю видео"
+          : mode === "search"
+            ? "Ищу в интернете"
+            : "Готовлю ответ"
+      }
     >
-      {isSearching && (
+      {mode === "video" && (
+        <IconFileTextSpark size={15} stroke={1.6} className="thinking-globe" aria-hidden />
+      )}
+      {mode === "search" && (
         <IconWorldSearch
           size={15}
           stroke={1.6}
@@ -68,7 +93,7 @@ export default function ThinkingIndicator() {
         />
       )}
       {/* key={i} — ремоунт спана на смене фразы, чтобы проиграть fade-in. */}
-      <span key={`${isSearching ? "w" : "t"}-${i}`} className="thinking-phrase">
+      <span key={`${mode}-${i}`} className="thinking-phrase">
         {phrases[i]}
       </span>
       <span className="thinking-dots" aria-hidden>

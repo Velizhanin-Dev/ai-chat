@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ru" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>VELIZHANIN AI — что нового</title>
+<!--[if mso]>
+<xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
+<![endif]-->
+<style>
+  /* ⚠️ Письмо свёрстано ТАБЛИЦАМИ с инлайновыми стилями — это единственное, что
+     одинаково рисуют Gmail, Outlook (движок Word), Mail.ru и Яндекс.Почта.
+     Всё, что в этом <style>, — прогрессивное улучшение: Gmail оставляет его,
+     Outlook выбрасывает, и письмо просто становится плоским, не ломаясь.
+
+     «2.5D» как на сайте здесь недостижим: transform в Outlook не работает вовсе,
+     а в Gmail поддерживается непредсказуемо. Поэтому глубину даём тем, что рисуют
+     все: смещённый цветной слой под карточкой, ступенчатые тени, косые градиенты.
+     Наклон добавляется сверху только там, где он поддержан. */
+  .card3d { transform: perspective(900px) rotateY(-2.2deg) rotateX(1.4deg); }
+  .card3d-r { transform: perspective(900px) rotateY(2.2deg) rotateX(1.4deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .card3d, .card3d-r { transform: none; }
+  }
+  @media only screen and (max-width: 620px) {
+    .w-full { width: 100% !important; }
+    .px { padding-left: 18px !important; padding-right: 18px !important; }
+    .h1 { font-size: 26px !important; line-height: 32px !important; }
+    .h2 { font-size: 19px !important; line-height: 25px !important; }
+    .stack { display: block !important; width: 100% !important; }
+    .mini { font-size: 11px !important; }
+    .card3d, .card3d-r { transform: none !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:#f4f1ee;">
+<!-- Прехедер: то, что видно в списке писем рядом с темой. -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+  Контент-план на месяц, конкуренты под присмотром и разбор чужих роликов прямо в чате.
+</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f1ee;">
+<tr><td align="center" style="padding:28px 12px;">
+
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="w-full" style="width:600px;max-width:600px;">
+
+  <!-- ── Шапка ─────────────────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" style="background:#141118;border-radius:18px 18px 0 0;padding:32px 36px 30px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:2px;color:#EC582E;font-weight:700;text-transform:uppercase;">
+            VELIZHANIN AI
+          </td>
+        </tr>
+        <tr><td height="14" style="height:14px;line-height:14px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td class="h1" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:32px;line-height:38px;color:#ffffff;font-weight:700;letter-spacing:-0.5px;">
+            Ассистент перестал быть просто чатом
+          </td>
+        </tr>
+        <tr><td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:24px;color:#c9c3cf;">
+            За последнее время появились четыре вещи, которые закрывают путь от «о чём снимать»
+            до готового сценария. Коротко — что это и зачем.
+          </td>
+        </tr>
+        <tr><td height="22" style="height:22px;line-height:22px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td>
+            <!-- ⚠️ CTA дублируется вверху и внизу намеренно: половина читателей
+                 письмо не долистывает, а решение «зайти» принимается на первом экране. -->
+            <!--[if mso]>
+            <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+              href="https://ai.velizhanin.com/app" style="height:46px;v-text-anchor:middle;width:240px;" arcsize="24%" stroke="f" fillcolor="#EC582E">
+              <w:anchorlock/>
+              <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:bold;">Посмотреть в деле</center>
+            </v:roundrect>
+            <![endif]-->
+            <!--[if !mso]><!-- -->
+            <a href="https://ai.velizhanin.com/app"
+               style="display:inline-block;background:#EC582E;color:#ffffff;text-decoration:none;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:46px;padding:0 28px;border-radius:10px;">
+              Посмотреть в деле
+            </a>
+            <!--<![endif]-->
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Косой стык шапки и тела: даёт ощущение слоя, работает везде (просто фон). -->
+  <tr>
+    <td style="background:#141118;line-height:0;font-size:0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr><td height="18" style="height:18px;background:#ffffff;border-radius:18px 18px 0 0;line-height:18px;font-size:0;">&nbsp;</td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ── 1. Контент-план ──────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" style="background:#ffffff;padding:8px 36px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;color:#EC582E;text-transform:uppercase;">
+            01 — план
+          </td>
+        </tr>
+        <tr><td height="8" style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td class="h2" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:28px;color:#141118;font-weight:700;">
+            Контент-план на месяц, а не список тем
+          </td>
+        </tr>
+        <tr><td height="10" style="height:10px;line-height:10px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:23px;color:#3d3746;">
+            Восемь длинных роликов и шестнадцать шортсов за одну сборку. У каждой карточки
+            название, текст на превью, боль аудитории и скелет из десяти вопросов — по нему
+            сценарий пишется за один заход. Доска по статусам: идея, в работе, вышло.
+          </td>
+        </tr>
+        <tr><td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;">
+            <a href="https://ai.velizhanin.com/app" style="color:#EC582E;text-decoration:none;font-weight:700;">Собрать контент-план &rarr;</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Мини-макет доски: три колонки. Слой глубины — смещённая подложка. -->
+  <tr>
+    <td class="px" style="background:#ffffff;padding:18px 36px 4px;">
+      <!-- подложка со смещением: она и создаёт «толщину» карточки -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EC582E;border-radius:14px;">
+        <tr><td style="padding:0 0 6px 6px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="card3d" style="background:#faf8f7;border:1px solid #e6e0dc;border-radius:14px;">
+            <tr>
+              <td style="padding:14px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td class="stack" width="33%" valign="top" style="padding-right:8px;">
+                      <div class="mini" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;color:#8a8391;padding-bottom:8px;">ИДЕЯ</div>
+                      <div style="background:#ffffff;border:1px solid #e6e0dc;border-radius:8px;height:34px;margin-bottom:6px;"></div>
+                      <div style="background:#ffffff;border:1px solid #e6e0dc;border-radius:8px;height:34px;"></div>
+                    </td>
+                    <td class="stack" width="33%" valign="top" style="padding:0 4px;">
+                      <div class="mini" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;color:#EC582E;padding-bottom:8px;">В РАБОТЕ</div>
+                      <div style="background:#ffffff;border:2px solid #EC582E;border-radius:8px;height:34px;margin-bottom:6px;"></div>
+                      <div style="background:#ffffff;border:1px solid #e6e0dc;border-radius:8px;height:34px;"></div>
+                    </td>
+                    <td class="stack" width="33%" valign="top" style="padding-left:8px;">
+                      <div class="mini" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;color:#1f9d76;padding-bottom:8px;">ВЫШЛО</div>
+                      <div style="background:#ffffff;border:1px solid #e6e0dc;border-radius:8px;height:34px;margin-bottom:6px;"></div>
+                      <div style="background:#ffffff;border:1px solid #e6e0dc;border-radius:8px;height:34px;"></div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ── 2. Конкуренты ────────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" style="background:#ffffff;padding:30px 36px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;color:#EC582E;text-transform:uppercase;">
+            02 — ниша
+          </td>
+        </tr>
+        <tr><td height="8" style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td class="h2" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:28px;color:#141118;font-weight:700;">
+            Конкуренты под присмотром
+          </td>
+        </tr>
+        <tr><td height="10" style="height:10px;line-height:10px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:23px;color:#3d3746;">
+            Свой список каналов ниши: что у них выходит, сколько собирает и во сколько раз это
+            больше их обычного. Когда у конкурента ролик вылетает за свою аудиторию — приходит
+            уведомление в Telegram, и вы узнаёте о теме, пока она ещё работает.
+          </td>
+        </tr>
+        <tr><td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;">
+            <a href="https://ai.velizhanin.com/app" style="color:#EC582E;text-decoration:none;font-weight:700;">Добавить конкурентов &rarr;</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td class="px" style="background:#ffffff;padding:18px 36px 4px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#141118;border-radius:14px;">
+        <tr><td style="padding:0 0 6px 6px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="card3d-r" style="background:#ffffff;border:1px solid #e6e0dc;border-radius:14px;">
+            <tr><td style="padding:14px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#141118;padding:6px 0;">Канал в вашей нише</td>
+                  <td align="right" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#ffffff;">
+                    <span style="background:#EC582E;border-radius:6px;padding:3px 9px;">&times;7,4</span>
+                  </td>
+                </tr>
+                <tr><td colspan="2" style="border-top:1px solid #efeae6;font-size:0;line-height:0;">&nbsp;</td></tr>
+                <tr>
+                  <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#141118;padding:6px 0;">Ещё один канал</td>
+                  <td align="right" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#3d3746;">
+                    <span style="background:#f0ebe8;border-radius:6px;padding:3px 9px;">&times;2,1</span>
+                  </td>
+                </tr>
+                <tr><td colspan="2" style="border-top:1px solid #efeae6;font-size:0;line-height:0;">&nbsp;</td></tr>
+                <tr>
+                  <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#141118;padding:6px 0;">И третий</td>
+                  <td align="right" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#ffffff;">
+                    <span style="background:#EC582E;border-radius:6px;padding:3px 9px;">&times;4,8</span>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+      <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#7a7280;padding-top:10px;">
+        Кратность — во сколько раз просмотров больше, чем подписчиков у канала. Высокая
+        означает, что ролик взлетел на упаковке, а не на накопленной базе.
+      </div>
+    </td>
+  </tr>
+
+  <!-- ── 3. Разбор чужого ролика в чате ──────────────────────────────── -->
+  <tr>
+    <td class="px" style="background:#ffffff;padding:30px 36px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;color:#EC582E;text-transform:uppercase;">
+            03 — разбор
+          </td>
+        </tr>
+        <tr><td height="8" style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td class="h2" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:28px;color:#141118;font-weight:700;">
+            Ассистент разбирает чужой ролик, а не гадает по названию
+          </td>
+        </tr>
+        <tr><td height="10" style="height:10px;line-height:10px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:23px;color:#3d3746;">
+            Кладёте ролик конкурента референсом — и в чат уходит не одна ссылка, а разбор:
+            метрики, описание автора с тайм-кодами (это фактически структура ролика) и то,
+            что люди пишут в комментариях. Ассистент говорит, на чём ролик держится, и делает
+            вам своё на той же механике — не копию.
+          </td>
+        </tr>
+        <tr><td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;">
+            <a href="https://ai.velizhanin.com/app" style="color:#EC582E;text-decoration:none;font-weight:700;">Разобрать ролик в чате &rarr;</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td class="px" style="background:#ffffff;padding:18px 36px 4px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EC582E;border-radius:14px;">
+        <tr><td style="padding:0 0 6px 6px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="card3d" style="background:#ffffff;border:1px solid #e6e0dc;border-radius:14px;">
+            <tr><td style="padding:16px;">
+              <!-- Реплика пользователя -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="right">
+                    <span style="display:inline-block;background:#fdeee9;border:1px solid #f6cdbe;border-radius:12px;padding:9px 13px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#141118;">
+                      Разбери этот ролик и сделай мне такой же заход
+                    </span>
+                  </td>
+                </tr>
+                <tr><td height="10" style="height:10px;line-height:10px;font-size:0;">&nbsp;</td></tr>
+                <tr>
+                  <td>
+                    <span style="display:inline-block;background:#f4f1ee;border-radius:12px;padding:11px 14px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:21px;color:#3d3746;">
+                      Держи: заход строится на потере денег, в первые пять секунд —
+                      цифра и обещание. Вот твой вариант под нишу…
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ── 4. Поиск по нише ────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" style="background:#ffffff;padding:30px 36px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:1.5px;color:#EC582E;text-transform:uppercase;">
+            04 — референсы
+          </td>
+        </tr>
+        <tr><td height="8" style="height:8px;line-height:8px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td class="h2" style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:22px;line-height:28px;color:#141118;font-weight:700;">
+            Поиск роликов, которые уже выстрелили в вашей нише
+          </td>
+        </tr>
+        <tr><td height="10" style="height:10px;line-height:10px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:23px;color:#3d3746;">
+            Ищем по нише ролики, у которых просмотров кратно больше, чем у канала подписчиков.
+            Сортировка — по этой кратности, а не по абсолютным просмотрам: миллион у канала с
+            миллионом подписчиков не говорит ни о чём, а десять тысяч у канала с тысячей —
+            говорит. Любой найденный ролик кладётся референсом прямо в карточку плана.
+          </td>
+        </tr>
+        <tr><td height="12" style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+        <tr>
+          <td style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;">
+            <a href="https://ai.velizhanin.com/app" style="color:#EC582E;text-decoration:none;font-weight:700;">Найти референсы в нише &rarr;</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <tr>
+    <td class="px" style="background:#ffffff;padding:18px 36px 8px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td class="stack" width="50%" valign="top" style="padding-right:6px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#141118;border-radius:12px;">
+              <tr><td style="padding:0 0 5px 5px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf8f7;border:1px solid #e6e0dc;border-radius:12px;">
+                  <tr><td style="padding:12px;">
+                    <span style="display:inline-block;background:#EC582E;color:#ffffff;border-radius:6px;padding:2px 8px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;">&times;12</span>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:19px;color:#3d3746;padding-top:8px;">
+                      Ролик, который вылетел далеко за свою аудиторию
+                    </div>
+                  </td></tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+          <td class="stack" width="50%" valign="top" style="padding-left:6px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#e6e0dc;border-radius:12px;">
+              <tr><td style="padding:0 0 5px 5px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#faf8f7;border:1px solid #e6e0dc;border-radius:12px;">
+                  <tr><td style="padding:12px;">
+                    <span style="display:inline-block;background:#f0ebe8;color:#3d3746;border-radius:6px;padding:2px 8px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;">&times;3,2</span>
+                    <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:19px;color:#3d3746;padding-top:8px;">
+                      Рабочий пример — годится, чтобы разобрать упаковку
+                    </div>
+                  </td></tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ── Кнопка ──────────────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" align="center" style="background:#ffffff;padding:32px 36px 8px;">
+      <!-- «Пуленепробиваемая» кнопка: в Outlook рисуется VML-прямоугольником,
+           в остальных — обычной ссылкой с фоном. -->
+      <!--[if mso]>
+      <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word"
+        href="https://ai.velizhanin.com/app" style="height:52px;v-text-anchor:middle;width:280px;" arcsize="24%" stroke="f" fillcolor="#EC582E">
+        <w:anchorlock/>
+        <center style="color:#ffffff;font-family:'Segoe UI',Arial,sans-serif;font-size:16px;font-weight:bold;">Открыть ассистента</center>
+      </v:roundrect>
+      <![endif]-->
+      <!--[if !mso]><!-- -->
+      <a href="https://ai.velizhanin.com/app"
+         style="display:inline-block;background:#EC582E;color:#ffffff;text-decoration:none;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;line-height:52px;padding:0 34px;border-radius:12px;">
+        Открыть ассистента
+      </a>
+      <!--<![endif]-->
+    </td>
+  </tr>
+
+  <tr>
+    <td class="px" align="center" style="background:#ffffff;border-radius:0 0 18px 18px;padding:12px 36px 30px;">
+      <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#7a7280;">
+        Всё это уже в вашем проекте — включать ничего не нужно. Загляните: контент-план на
+        месяц собирается за одну кнопку.
+      </div>
+    </td>
+  </tr>
+
+  <!-- ── Подвал ──────────────────────────────────────────────────────── -->
+  <tr>
+    <td class="px" style="padding:22px 36px 8px;">
+      <div style="font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:19px;color:#8a8391;">
+        Вы получили это письмо, потому что зарегистрировались в VELIZHANIN AI.<br>
+        ИП Велижанин Н.Г., ИНН 745500139685, ОГРНИП 318745600196596.<br>
+        <a href="{{UnsubscribeUrl}}" style="color:#8a8391;text-decoration:underline;">Отписаться от рассылки</a>
+      </div>
+    </td>
+  </tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

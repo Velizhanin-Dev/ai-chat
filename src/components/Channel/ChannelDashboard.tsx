@@ -1,5 +1,7 @@
 "use client";
 
+import { ytImage } from "@/lib/image-proxy";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -703,8 +705,10 @@ function ChannelCard({
       <Box
         style={{
           height: 72,
+          // ⚠️ Баннер канала лежит на том же CDN Google, что и аватары, — в РФ он
+          // без VPN не грузится, поэтому гоним через прокси (см. image-proxy).
           background: ch.banner
-            ? `center / cover no-repeat url("${ch.banner}=w1280")`
+            ? `center / cover no-repeat url("${ytImage(`${ch.banner}=w1280`)}")`
             : "linear-gradient(120deg, var(--mantine-color-brand-6), var(--mantine-color-brand-8))",
         }}
       />
@@ -1818,7 +1822,7 @@ function ReleaseTick({ x = 0, y = 0, index = 0, payload, stride = 1, releases }:
                   <rect x={tx} y={ty} width={tw} height={th} rx={3} />
                 </clipPath>
                 <image
-                  href={r.thumbnail}
+                  href={ytImage(r.thumbnail) ?? undefined}
                   x={tx}
                   y={ty}
                   width={tw}
@@ -1982,7 +1986,7 @@ function GrowthTipCard({
                     {meta.thumbnail && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={meta.thumbnail}
+                        src={ytImage(meta.thumbnail) ?? undefined}
                         alt=""
                         style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                       />
@@ -2087,7 +2091,7 @@ function DriverRow({
         {v.thumbnail && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={v.thumbnail}
+            src={ytImage(v.thumbnail) ?? undefined}
             alt=""
             loading="lazy"
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
@@ -2212,7 +2216,7 @@ function VideoCard({
         {video.thumbnail && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={video.thumbnail}
+            src={ytImage(video.thumbnail) ?? undefined}
             alt={video.title}
             loading="lazy"
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}

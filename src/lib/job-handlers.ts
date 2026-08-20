@@ -4,6 +4,7 @@ import { getSettings } from "@/lib/settings";
 import { generateImage } from "@/lib/llm/image";
 import { readUpload, saveUpload, IMAGE_MIME_EXT } from "@/lib/uploads";
 import { buildThumbnailPrompt, normalizeRefRole, type ThumbnailSpec } from "@/lib/thumbnails";
+import { normalizePlatform, platformMeta } from "@/lib/platform";
 import { spendQuota, toRow } from "@/lib/thumbnails-row";
 import { THUMBNAIL_GENERATE_QUOTA_COST } from "@/lib/thumbnails";
 import { track } from "@/lib/achievements-server";
@@ -52,9 +53,14 @@ registerJobHandler("thumbnail_generate", async ({ userId, conversationId, payloa
     .map((id) => refRows.find((r) => r.id === id))
     .filter((r): r is (typeof refRows)[number] => Boolean(r));
 
+  const projectPlatform = await prisma.conversation
+    .findUnique({ where: { id: conversationId }, select: { platform: true } })
+    .then((r) => normalizePlatform(r?.platform));
+
   const prompt = buildThumbnailPrompt(
     spec,
-    ordered.map((r) => ({ role: normalizeRefRole(r.role), label: r.label }))
+    ordered.map((r) => ({ role: normalizeRefRole(r.role), label: r.label })),
+    projectPlatform
   );
 
   const references = await Promise.all(
@@ -69,6 +75,8 @@ registerJobHandler("thumbnail_generate", async ({ userId, conversationId, payloa
     prompt,
     references,
     model: settings.imageModel,
+    // Формат кадра — по площадке проекта: Reels вертикальные (см. platformMeta).
+    aspectRatio: platformMeta(projectPlatform).aspect,
     meta: { userId, conversationId },
   });
 

@@ -7,6 +7,7 @@ import {
   publicUser,
 } from "@/lib/auth";
 import { apiError, readJson, EMAIL_RE } from "@/lib/http";
+import { registerDevice } from "@/lib/devices-server";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { trialExpiresAt } from "@/lib/quota";
@@ -58,6 +59,9 @@ export async function POST(req: Request) {
 
   // Подтверждение почты убрали (verify-gate off, страница /verify-email удалена) —
   // письмо не шлём, сразу логиним и пускаем в чат.
-  setSessionCookie(await signSession(user.id));
+  // Новый аккаунт — первое устройство, слот всегда свободен (лимит проверяется
+  // тем же registerDevice, что и на входе).
+  const deviceId = await registerDevice(user).catch(() => undefined);
+  setSessionCookie(await signSession(user.id, deviceId));
   return NextResponse.json({ user: publicUser(user) });
 }

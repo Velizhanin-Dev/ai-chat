@@ -47,9 +47,16 @@ model Conversation {
   // Заполняется при создании проекта; источник правды для system-промпта в чате
   // (раньше бриф был привязан к User — теперь к конкретному проекту/диалогу).
   brief     Json?
+  // Площадка проекта: "youtube" | "instagram" (см. Platform в src/lib/platform.ts).
+  // ⚠️ Проект привязан к ОДНОЙ площадке: от неё зависят разделы меню, состав
+  // аналитики и формат превью (16:9 против 9:16). Сменить площадку у готового
+  // проекта нельзя — цифры и превью прошлой площадки к новой не относятся.
+  platform  String    @default("youtube")
   messages  Message[]
   // Пер-проектная интеграция YouTube (см. модель YouTubeIntegration ниже).
   youtube   YouTubeIntegration?
+  // Пер-проектная интеграция Instagram (см. InstagramIntegration ниже).
+  instagram InstagramIntegration?
   // Референсы и сгенерированные превью проекта (см. модель Thumbnail ниже).
   thumbnails Thumbnail[]
   jobs       Job[]
@@ -57,6 +64,13 @@ model Conversation {
   analyses  ChannelAnalysis[]
   // Дорожная карта канала (движок шагов, см. ChannelRoadmap ниже).
   roadmap   ChannelRoadmap?
+  // Каналы-конкуренты, добавленные руками (см. TrackedChannel ниже).
+  trackedChannels TrackedChannel[]
+  searches        CompetitorSearch[]
+  // Слать ли в Telegram уведомления «у конкурента залетел ролик» (см. CompetitorAlert).
+  // Выключено по умолчанию: уведомления — это то, на что подписываются осознанно.
+  competitorAlerts Boolean @default(false)
+  alerts          CompetitorAlert[]
   // Контент-планы по месяцам (см. ContentPlan ниже).
   contentPlans ContentPlan[]
   createdAt DateTime  @default(now())
@@ -273,6 +287,8 @@ model User {
   // Ставится ботом при /start с одноразовым токеном; по нему ответы админа
   // уходят человеку в личку. null — не связывал.
   telegramChatId String?   @unique
+  // Активные сессии-устройства (лимит — из тарифа, см. модель Device).
+  devices        Device[]
   trialGrantedAt DateTime?
   requestsUsed  Int                 @default(0)
   // Последний визит — обновляется при входе и (с троттлингом) на любом
@@ -353,6 +369,144 @@ model UserAchievement {
   seenAt     DateTime?
 
   @@unique([userId, code])
+}
+
+// Интеграция с Instagram (Instagram API with Instagram Login).
+//
+// ПЕР-ПРОЕКТНАЯ, как и YouTube: 1 проект = 1 аккаунт. Нужен профессиональный
+// аккаунт (Business/Creator) — у личного insights не отдаются вовсе.
+//
+// ⚠️ Токен живёт 60 дней и продлевается сам (ig_refresh_token); refresh-токена,
+// как у Google, здесь НЕТ — просрочили, и человек подключает аккаунт заново.
+// Поэтому tokenExpiresAt важен: по нему UI заранее просит переподключиться.
+// ⚠️ Токен хранится как есть — TODO зашифровать в проде (как rebillId).
+model InstagramIntegration {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  igUserId       String
+  username       String
+  name           String
+  profilePicture String?
+  followers      Int          @default(0)
+  accessToken    String
+  tokenExpiresAt DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// Расшифровка ролика (субтитры), добытая через yt-dlp.
+//
+// Кэш в БД, а не в памяти: субтитры у вышедшего ролика не меняются, а добыча —
+// это внешний процесс на десятки секунд. Данные ПУБЛИЧНЫЕ и от проекта не зависят,
+// поэтому таблица общая на всех, ключ — videoId.
+//
+// ⚠️ Пустой text — это ЗАПОМНЕННОЕ «субтитров нет»: без такой записи мы гоняли бы
+// yt-dlp на каждый разбор ролика, у которого их и не было.
+model VideoTranscript {
+  id        String   @id @default(cuid())
+  videoId   String   @unique
+  /** Код дорожки: "ru", "ru-en" (автоперевод), "en"… Пусто — субтитров нет. */
+  language  String
+  auto      Boolean  @default(false)
+  text      String
+  /** Реплики с таймингами: [{ at: секунда, text }]. */
+  segments  Json
+  createdAt DateTime @default(now())
+}
+
+// ── Устройства (активные сессии) ───────────────────────────────────────────
+// Сколько устройств можно держать на аккаунте — из тарифа (Plan.limits.devices,
+// 0/-1 = без лимита). Проверка при ВХОДЕ: сессия не выдаётся, пока не освободят
+// слот (удалить лишнее устройство может любой, кто уже вошёл, — в настройках).
+// Связь с сессией — claim `did` в JWT: удалили строку → токен перестал работать
+// (getSessionUser отдаёт гостя). Старые токены без `did` считаются легаси и
+// продолжают работать до истечения.
+model Device {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Снимок браузера/системы на момент входа — по нему человек узнаёт устройство.
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId, lastSeenAt])
+}
+
+// ── Конкуренты: каналы, добавленные РУКАМИ ─────────────────────────────────
+// Раздел «Референсы» → вкладка «Каналы в нише» сам собирает каналы из выдачи
+// роликов, но эта выборка живёт 6 часов в памяти и меняется от запроса к запросу.
+// Свой список конкурентов — то, за чем следят постоянно, поэтому он в БД и
+// привязан к ПРОЕКТУ (у каждого проекта своя ниша).
+// Снимок title/thumbnail/subscribers — чтобы рисовать карточку без похода в API;
+// освежается при пересборке вкладки.
+model TrackedChannel {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channelId      String
+  title          String
+  thumbnail      String?
+  customUrl      String?
+  subscribers    Int          @default(0)
+  note           String?
+  createdAt      DateTime     @default(now())
+  stats          TrackedChannelStat[]
+
+  @@unique([conversationId, channelId])
+}
+
+// Дневной снимок цифр отслеживаемого канала. Публичные данные (подписчики,
+// просмотры, число роликов) YouTube отдаёт только НА СЕЙЧАС — истории у него нет,
+// поэтому «кто в нише растёт, а кто стоит» можно показать, только если копить
+// снимки самим. Пишем не чаще раза в сутки на канал (день по UTC).
+model TrackedChannelStat {
+  id          String         @id @default(cuid())
+  channelRowId String
+  channel     TrackedChannel @relation(fields: [channelRowId], references: [id], onDelete: Cascade)
+  day         DateTime       @db.Date
+  subscribers Int
+  views       BigInt
+  videoCount  Int
+
+  @@unique([channelRowId, day])
+}
+
+// Сохранённая выдача поиска референсов.
+//
+// ⚠️ Раньше запуск жил ТОЛЬКО в памяти процесса, и это стоило денег: перезапуск
+// или деплой — и тот же самый поиск шёл в YouTube заново по 100 units за запрос,
+// хотя человек ничего не менял. Теперь выдача лежит в БД: повтор в пределах TTL
+// бесплатен, «Добрать ещё» переживает рестарт (в tokens — где остановились по
+// каждому запросу, в seen — уже разобранные id, за их метаданные второй раз не платим).
+model CompetitorSearch {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /** Ключ запуска: запросы + период + порядок (см. resultKey). */
+  key            String
+  result         Json
+  tokens         Json
+  seen           String[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([conversationId, key])
+}
+
+// Уже отправленное уведомление «у конкурента залетел ролик». Нужна ровно для
+// дедупликации: сканер ходит по расписанию и один и тот же ролик видит много раз.
+model CompetitorAlert {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  videoId        String
+  ratio          Float
+  createdAt      DateTime     @default(now())
+
+  @@unique([conversationId, videoId])
 }
 
 // ── Чат техподдержки ───────────────────────────────────────────────────────

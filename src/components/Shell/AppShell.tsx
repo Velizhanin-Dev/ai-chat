@@ -60,7 +60,7 @@ import {
 // проекта (/{projectId}/chat|channel|creatives|thumbnails|settings). Всё остальное
 // (лендинг, auth, /admin, /legal, /brief, /payment, 404/500) — «голое».
 const PROJECT_TAB_RE =
-  /^\/[^/]+\/(chat|channel|creatives|content-plan|competitors|thumbnails|settings)(\/|$)/;
+  /^\/[^/]+\/(chat|channel|creatives|content-plan|competitors|references|thumbnails|settings)(\/|$)/;
 
 function initials(name: string) {
   return name
@@ -209,7 +209,7 @@ export default function AppShellLayout({
   // Разделы-дашборды («Аналитика», «Контент-план») — во всю ширину области, без
   // центрированной колонки maw 900, которая нужна чату/настройкам для читаемости.
   // Канбан-доске и графикам узкая колонка ломает раскладку. Остальные — в колонке.
-  const wideRoute = /^\/[^/]+\/(channel|content-plan|competitors)(?:\/|$)/.test(pathname);
+  const wideRoute = /^\/[^/]+\/(channel|content-plan|competitors|references)(?:\/|$)/.test(pathname);
 
   const toggleColorScheme = () => {
     setColorScheme(computedColorScheme === "dark" ? "light" : "dark");

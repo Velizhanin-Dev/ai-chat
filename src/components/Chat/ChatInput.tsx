@@ -19,6 +19,7 @@ import {
   addMessage,
   setLoading,
   setSearching,
+  setAnalyzingVideo,
   setStreamingContent,
   appendStreamingContent,
   finalizeStreaming,
@@ -337,7 +338,12 @@ export default function ChatInput({
             const data = line.slice(6);
             if (data === "[DONE]") break;
 
-            let parsed: { token?: string; error?: string; searching?: boolean };
+            let parsed: {
+              token?: string;
+              error?: string;
+              searching?: boolean;
+              analyzingVideo?: boolean;
+            };
             try {
               parsed = JSON.parse(data);
             } catch {
@@ -350,6 +356,9 @@ export default function ChatInput({
             // Сервер сообщил, что перед генерацией идёт веб-поиск — индикатор
             // покажет «Ищу в интернете» (поиск заметно добавляет к TTFT).
             if (parsed.searching) dispatch(setSearching(true));
+            // В сообщении есть ссылка на ролик — сервер тянет расшифровку. Это
+            // тоже секунды до первого токена, поэтому индикатор говорит, чем занят.
+            if (parsed.analyzingVideo) dispatch(setAnalyzingVideo(true));
             if (parsed.token) {
               fullContent += parsed.token;
               typewriter.push(parsed.token);

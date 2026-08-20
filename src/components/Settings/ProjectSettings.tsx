@@ -18,6 +18,9 @@ import { IconSparkles, IconEdit, IconAlertCircle } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import BriefFlow from "@/components/Brief/BriefFlow";
 import YouTubeConnect from "@/components/Settings/YouTubeConnect";
+import TelegramConnect from "@/components/Settings/TelegramConnect";
+import InstagramConnect from "@/components/Settings/InstagramConnect";
+import { useProjectPlatform } from "@/hooks/useProjectPlatform";
 import { apiGetProjectBrief, apiUpdateProjectBrief } from "@/lib/chat-client";
 import { DISC_PROFILES, type Brief, type DiscProfile } from "@/lib/brief";
 
@@ -26,6 +29,7 @@ import { DISC_PROFILES, type Brief, type DiscProfile } from "@/lib/brief";
 // настройки (имя/почта/о себе/биллинг/язык) живут отдельно в модалке меню профиля.
 export default function ProjectSettings({ projectId }: { projectId: string }) {
   const userId = useAppSelector((s) => s.auth.user?.id ?? "anon");
+  const { platform } = useProjectPlatform();
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -142,10 +146,20 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
 
       <Divider />
 
-      {/* Интеграция YouTube */}
+      {/* Интеграции: YouTube — пер-проектный, телеграм — на аккаунт (бот пишет
+          человеку в личку, второго телеграма у него нет). */}
+      {/* ⚠️ Интеграция — по площадке проекта: у YouTube-проекта нет смысла в
+          Instagram и наоборот. Обе сразу показывать нельзя — человек подключит
+          не ту и не поймёт, почему в аналитике пусто. */}
       <Box ref={ytRef} style={{ scrollMarginTop: 12 }}>
-        <YouTubeConnect projectId={projectId} />
+        {platform === "instagram" ? (
+          <InstagramConnect projectId={projectId} />
+        ) : (
+          <YouTubeConnect projectId={projectId} />
+        )}
       </Box>
+
+      <TelegramConnect />
     </Stack>
   );
 }

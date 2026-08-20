@@ -20,6 +20,9 @@ export interface ChatAccess {
   // Лимит проектов тарифа (-1 = без лимита, null = пока неизвестно/нет тарифа).
   // Применяется в UI к числу проектов (см. AppShell/chat-page). Для админа -1.
   projectsLimit: number | null;
+  // Сколько проектов на Instagram даёт тариф. ⚠️ Считается ОТДЕЛЬНО от projectsLimit:
+  // 0 — площадка на тарифе не продаётся (карточка выбора закрыта), -1 — без лимита.
+  instagramLimit: number;
 }
 
 export function useChatAccess(): ChatAccess {
@@ -31,6 +34,7 @@ export function useChatAccess(): ChatAccess {
 
   const [limit, setLimit] = useState<number | null>(null);
   const [projectsLimit, setProjectsLimit] = useState<number | null>(null);
+  const [instagramLimit, setInstagramLimit] = useState(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export function useChatAccess(): ChatAccess {
         const p = findUserPlan(view, plan);
         setLimit(p ? p.limits.requests : null);
         setProjectsLimit(p ? p.limits.projects : null);
+        setInstagramLimit(p ? p.limits.instagram : 0);
         setReady(true);
       })
       .catch(() => active && setReady(true));
@@ -58,12 +63,19 @@ export function useChatAccess(): ChatAccess {
   // Админ и гость (на /chat гостей нет — гейтит middleware) не блокируются, проекты
   // без лимита (-1).
   if (!user || isAdmin) {
-    return { ready: true, locked: false, reason: "ok", projectsLimit: isAdmin ? -1 : null };
+    return {
+      ready: true,
+      locked: false,
+      reason: "ok",
+      projectsLimit: isAdmin ? -1 : null,
+      // Админу площадки не режем — иначе он не сможет проверить Instagram-проект.
+      instagramLimit: isAdmin ? -1 : 0,
+    };
   }
 
   const expired = planExpiresAt ? new Date(planExpiresAt).getTime() <= Date.now() : false;
   const quotaExceeded = limit != null && limit >= 0 && requestsUsed >= limit;
   const reason: ChatAccessReason = expired ? "expired" : quotaExceeded ? "quota" : "ok";
 
-  return { ready, locked: reason !== "ok", reason, projectsLimit };
+  return { ready, locked: reason !== "ok", reason, projectsLimit, instagramLimit };
 }

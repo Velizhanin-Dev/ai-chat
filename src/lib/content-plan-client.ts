@@ -198,6 +198,8 @@ export async function apiAddVideo(
     youtubeVideoId?: string;
     thumbnail?: string | null;
     views?: number;
+    /** Ролик-донор из «Референсов»: карточка заводится с source:"competitor". */
+    reference?: string;
   } = {}
 ): Promise<Result<{ video: VideoView }>> {
   try {
@@ -235,6 +237,29 @@ export async function apiUpdateVideo(
 export async function apiDeleteVideo(videoId: string): Promise<Result<{ ok: true }>> {
   try {
     return json(await fetch(`/api/content-plan/video/${videoId}`, { method: "DELETE" }));
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+/**
+ * Новый порядок карточек ОДНОЙ колонки (сверху вниз). Переезд из другой колонки
+ * делается этим же запросом: и статус, и место в списке ставятся разом, без гонки
+ * двух PATCH'ей. Возвращает все карточки плана — порядок мог сдвинуться.
+ */
+export async function apiReorderVideos(
+  planId: string,
+  status: VideoStatus,
+  ids: string[]
+): Promise<Result<{ videos: VideoView[] }>> {
+  try {
+    return json(
+      await fetch(`/api/content-plan/${planId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, ids }),
+      })
+    );
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }

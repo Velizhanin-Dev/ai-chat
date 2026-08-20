@@ -1,5 +1,7 @@
 "use client";
 
+import { ytImage } from "@/lib/image-proxy";
+
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -108,7 +110,7 @@ export default function YouTubeConnectStep({
 
         <Paper withBorder radius="md" p="md">
           <Group wrap="nowrap">
-            <Avatar src={status.channel.thumbnail} radius="xl" size={48}>
+            <Avatar src={ytImage(status.channel.thumbnail) ?? undefined} radius="xl" size={48}>
               <IconBrandYoutube size={24} />
             </Avatar>
             <div style={{ minWidth: 0, flex: 1 }}>

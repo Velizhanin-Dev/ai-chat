@@ -18,12 +18,14 @@ import {
   IconCreditCard,
   IconLanguage,
   IconCheck,
+  IconDeviceDesktop,
 } from "@tabler/icons-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setAboutYou, setLanguage } from "@/store/settingsSlice";
 import { authenticated } from "@/store/authSlice";
 import { apiUpdateProfile } from "@/lib/auth-client";
 import PlanCards from "@/components/Billing/PlanCards";
+import DevicesSection from "./DevicesSection";
 
 // Тело АККАУНТНЫХ настроек (вкладки Основные/Биллинг/Язык) — открывается из меню
 // профиля (SettingsModal), в т.ч. при «Оформить» с лендинга (сразу на «Биллинг»).
@@ -95,6 +97,9 @@ export default function SettingsContent({
         <Tabs.Tab value="billing" leftSection={<IconCreditCard size={16} />}>
           Биллинг
         </Tabs.Tab>
+        <Tabs.Tab value="devices" leftSection={<IconDeviceDesktop size={16} />}>
+          Устройства
+        </Tabs.Tab>
         <Tabs.Tab value="language" leftSection={<IconLanguage size={16} />}>
           Язык
         </Tabs.Tab>
@@ -162,6 +167,11 @@ export default function SettingsContent({
       <Tabs.Panel value="billing">
         {/* Карточки тарифов + оплата — общий блок (см. components/Billing). */}
         <PlanCards showStatus />
+      </Tabs.Panel>
+
+      {/* ── Устройства (активные сессии, лимит из тарифа) ── */}
+      <Tabs.Panel value="devices">
+        <DevicesSection />
       </Tabs.Panel>
 
       {/* ── Язык ──────────────────────────────────────────────────── */}

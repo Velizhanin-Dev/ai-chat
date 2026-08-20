@@ -315,7 +315,7 @@ export async function findPendingDiagnoseJob(projectId: string): Promise<string 
 // Промпт для ассистента «переписать хук» + запись в черновик чата (ключ должен
 // совпадать с CHAT_DRAFT_KEY в components/Chat/ChatInput.tsx). После записи —
 // навигация на /{projectId}/chat, где ChatInput восстановит черновик.
-const CHAT_DRAFT_KEY = "creative-chat:chat-draft-v1";
+export const CHAT_DRAFT_KEY = "creative-chat:chat-draft-v1";
 export function writeHookPrompt(userId: string, videoTitle: string): void {
   const text =
     `Помоги переписать хук (первые 15–30 секунд) для ролика «${videoTitle}». ` +

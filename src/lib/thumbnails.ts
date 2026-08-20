@@ -1,3 +1,4 @@
+import type { Platform } from "./platform";
 // ── Генератор превью: спека + сборка промпта для image-модели ────────────────
 // Чистый модуль (без prisma/fs) — общий для клиента и сервера.
 //
@@ -484,8 +485,11 @@ function refScoreLine(spec: ThumbnailSpec, hasStyleRef: boolean): string {
 // цвет, стиль под ЦА, и в конце запреты — модель сильнее весит последнее.
 export function buildThumbnailPrompt(
   spec: ThumbnailSpec,
-  refs: PromptRef[]
+  refs: PromptRef[],
+  /** Площадка проекта: от неё зависит формат кадра и что вообще перекрывает превью. */
+  platform: Platform = "youtube"
 ): string {
+  const ig = platform === "instagram";
   const preset = audiencePresetById(spec.audiencePreset);
   const hasStyleRef = refs.some((r) => r.role === "style");
   const hasSpeaker = refs.some((r) => r.role === "speaker");
@@ -494,7 +498,25 @@ export function buildThumbnailPrompt(
   const parts: string[] = [];
 
   parts.push(
-    `# ROLE
+    ig
+      ? // ⚠️ Вертикальная обложка — не кадрированная горизонтальная. Reels-обложка
+        // живёт в СЕТКЕ профиля (там её обрезают до квадрата по центру) и в ленте
+        // целиком, а нижнюю часть кадра перекрывают подпись, ник и кнопки — поэтому
+        // ключевое держим в верхних двух третях.
+        `# ROLE
+You are an art director producing an Instagram Reels cover for a Russian-language account.
+Output: ONE image, 9:16 vertical, no borders, no frames, no UI, no watermark, nothing outside the frame.
+The ONLY success metric is the stop-scroll rate, not beauty. It must read in under one second
+while the feed is moving, and stay readable when scaled down to 220x390 px.
+
+# VERTICAL FRAME RULES
+- Keep the KEY message (main text + face) inside the TOP TWO THIRDS of the frame.
+  The bottom ~20% is covered by the caption, account name and action buttons in the app.
+- The profile grid crops this cover to a CENTER SQUARE: the main subject and the key
+  word must survive that crop — nothing important near the top or bottom edge.
+- Composition is vertical: subject fills the height, no letterboxing, no black bars,
+  no horizontal 16:9 composition placed inside a vertical canvas.`
+      : `# ROLE
 You are an art director producing a YouTube thumbnail for a Russian-language channel.
 Output: ONE image, 16:9, no borders, no frames, no UI, no watermark, nothing outside the frame.
 The ONLY success metric is click-through rate, not beauty. A "designer-pretty" thumbnail that

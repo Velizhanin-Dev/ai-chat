@@ -63,7 +63,10 @@ export function formatMeta(v: string | null | undefined) {
 }
 
 export type VideoKind = "video" | "short";
-export type VideoSource = "ai" | "manual" | "imported";
+// ⚠️ "competitor" — карточка, заведённая из раздела «Референсы» по залетевшему
+// ролику конкурента: в reference лежит ссылка на донора, а название — ЗАГОТОВКА,
+// которую надо переписать под себя (методика прямо запрещает копировать чужое).
+export type VideoSource = "ai" | "manual" | "imported" | "competitor";
 
 // ВИСП-галочки (Выгода / Интрига / Срочность / Причастность).
 export interface Visp {

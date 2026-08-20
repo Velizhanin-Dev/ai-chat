@@ -10,6 +10,16 @@ import { Prisma } from "@prisma/client";
 export interface PlanLimits {
   requests: number; // запросов (1 ответ нейронки = 1 запрос)
   projects: number; // проектов (что такое «проект» — определим позже)
+  // Сколько проектов на Instagram можно завести. Считается ОТДЕЛЬНО от projects:
+  // тариф может давать пять YouTube-проектов и один Instagram — это разные
+  // продукты по трудозатратам. ⚠️ 0 = Instagram на тарифе не продаётся (кнопка
+  // выбора площадки задизейблена), -1 = без лимита.
+  instagram: number;
+  // Сколько устройств (активных сессий) можно держать на аккаунте одновременно.
+  // ⚠️ Здесь 0 = БЕЗ ограничения, а не «не применимо»: у тарифов, заведённых до
+  // появления поля, его в JSON нет, и трактовка «0 = ноль устройств» заперла бы
+  // вход всем разом. Без лимита можно задать и явным -1.
+  devices: number;
 }
 
 export interface PublicPlan {
@@ -32,7 +42,7 @@ export interface PlansView {
   currentPlan: PublicPlan | null;
 }
 
-const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0 };
+const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0, instagram: 0, devices: 0 };
 
 // Дефолты = текущие захардкоженные тарифы (start/blogger/studio). Используются для
 // первичного посева таблицы (idempotent) — дальше правятся из админки.
@@ -43,7 +53,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 0,
     period: "1 час · без карты",
     features: ["12 запросов на пробу", "Голос и методика Николая", "Без оплаты и привязки карты"],
-    limits: { ...EMPTY_LIMITS, requests: 12, projects: 1 },
+    limits: { ...EMPTY_LIMITS, requests: 12, projects: 1, instagram: 1, devices: 1 },
     order: 0,
     highlighted: false,
     active: true,
@@ -54,7 +64,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 4000,
     period: "в месяц",
     features: ["3 контент-плана", "30 сценариев", "90 шортсов", "Все 100+ форматов и длинные видео"],
-    limits: { requests: -1, projects: 5 },
+    limits: { requests: -1, projects: 5, instagram: 2, devices: 3 },
     order: 1,
     highlighted: true,
     active: true,
@@ -65,7 +75,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 10000,
     period: "в месяц",
     features: ["Контент-планы без лимита", "Сценарии без лимита", "Шортсы без лимита", "Приоритетная поддержка"],
-    limits: { requests: -1, projects: -1 },
+    limits: { requests: -1, projects: -1, instagram: -1, devices: 10 },
     order: 2,
     highlighted: false,
     active: true,
@@ -77,7 +87,12 @@ function normalizeLimits(v: unknown): PlanLimits {
   const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? Math.trunc(x) : 0);
   // Старые ключи (contentPlans/scenarios/shorts) в JSON игнорируем. Отсутствующий
   // projects → 0 (старые строки в БД сохранят его при следующем редактировании).
-  return { requests: num(o.requests), projects: num(o.projects) };
+  return {
+    requests: num(o.requests),
+    projects: num(o.projects),
+    instagram: num(o.instagram),
+    devices: num(o.devices),
+  };
 }
 
 type PlanRow = Prisma.PlanGetPayload<object>;

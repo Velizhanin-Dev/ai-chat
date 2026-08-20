@@ -24,7 +24,10 @@ export const IMAGE_DEFAULT_MODEL =
 const OUTPUT_FORMAT = "jpeg";
 export const OUTPUT_MIME = "image/jpeg";
 const RESOLUTION = "2K";
-const ASPECT_RATIO = "16:9";
+// ⚠️ Формат зависит от площадки проекта: YouTube — горизонталь, Instagram Reels —
+// вертикаль. Обложка не «кадрируется» из 16:9: вертикальную композицию модель
+// должна строить сразу, иначе спикер и текст окажутся за краем кадра.
+const DEFAULT_ASPECT = "16:9";
 
 const IMG_MAX_RETRIES = Math.max(0, Number(process.env.OPENROUTER_MAX_RETRIES ?? 3));
 // Картинка генерится ощутимо дольше текста — таймаут отдельный и больше чатового.
@@ -48,6 +51,8 @@ export interface ImageReference {
 export interface GenerateImageArgs {
   prompt: string;
   references?: ImageReference[];
+  /** "16:9" для YouTube, "9:16" для Instagram Reels. */
+  aspectRatio?: string;
   model?: string;
   meta?: { userId?: string | null; conversationId?: string | null };
 }
@@ -74,6 +79,7 @@ export async function generateImage({
   prompt,
   references = [],
   model,
+  aspectRatio = DEFAULT_ASPECT,
   meta,
 }: GenerateImageArgs): Promise<GeneratedImage> {
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -88,7 +94,7 @@ export async function generateImage({
     prompt,
     n: 1,
     resolution: RESOLUTION,
-    aspect_ratio: ASPECT_RATIO,
+    aspect_ratio: aspectRatio,
     output_format: OUTPUT_FORMAT,
     stream: false,
     // Референсы уходят base64 data-URL (файлы лежат у нас на диске, публичного

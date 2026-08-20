@@ -14,41 +14,27 @@ import {
 import { useDisclosure, useClickOutside } from "@mantine/hooks";
 import { IconLock, IconMenu2 } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
+import { segmentAvailable } from "@/lib/platform";
 
 // Горизонтальное меню над контентом — переключает разделы ТЕКУЩЕГО проекта
 // (ссылки /{projectId}/{seg}). На десктопе — полоса вкладок; на мобиле (< sm) —
 // dropdown выбора страницы. Новые разделы (adminOnly) для не-админов задизейблены
 // («Будет доступно позже»); роуты прикрыты серверным гвардом ((locked)). На /app
 // (нет projectId) меню не рендерится.
-// `beta` — раздел открыт всем, но ещё обкатывается: рядом с названием бренд-акцентом
-// стоит β, чтобы человек понимал, что тут возможны шероховатости.
+// ⚠️ Пометок «бета» тут больше нет (убраны по просьбе владельца): для человека это
+// рабочие разделы, а значок читался как «сюда пока можно не заходить».
 const ITEMS = [
-  { label: "Чат", seg: "chat", adminOnly: false, beta: false },
-  { label: "Аналитика", seg: "channel", adminOnly: false, beta: false },
-  { label: "Контент-план", seg: "content-plan", adminOnly: false, beta: true },
-  { label: "Генератор превью", seg: "thumbnails", adminOnly: false, beta: true },
-  { label: "Конкуренты", seg: "competitors", adminOnly: true, beta: true },
-  { label: "Настройки", seg: "settings", adminOnly: false, beta: false },
+  { label: "Чат", seg: "chat", adminOnly: false },
+  { label: "Аналитика", seg: "channel", adminOnly: false },
+  { label: "Контент-план", seg: "content-plan", adminOnly: false },
+  { label: "Генератор превью", seg: "thumbnails", adminOnly: false },
+  // Две разные задачи — два раздела: «Конкуренты» — свой список каналов, за
+  // которыми следят постоянно (дёшево: ~2 units на канал), «Поиск референсов» —
+  // разовый поиск роликов по нише (дорого: 100 units за запрос).
+  { label: "Конкуренты", seg: "competitors", adminOnly: false },
+  { label: "Поиск референсов", seg: "references", adminOnly: false },
+  { label: "Настройки", seg: "settings", adminOnly: false },
 ] as const;
-
-// Значок беты. title/aria — чтобы «β» не читалась скринридером как мусор.
-function BetaMark() {
-  return (
-    <Text
-      component="span"
-      aria-label="бета-версия"
-      title="Бета-версия: раздел ещё обкатываем"
-      style={{
-        color: "var(--mantine-color-brand-filled)",
-        fontWeight: 700,
-        fontSize: "0.9em",
-        lineHeight: 1,
-      }}
-    >
-      β
-    </Text>
-  );
-}
 
 const TAB_BASE: React.CSSProperties = {
   display: "inline-flex",
@@ -73,16 +59,27 @@ export default function TopNav() {
   const [mobileOpen, { toggle: toggleMobile, close: closeMobile }] =
     useDisclosure(false);
   const mobileRef = useClickOutside(() => closeMobile());
+  // Площадка открытого проекта. Список проектов уже в сторе (его тянет AppShell),
+  // поэтому лишнего запроса не делаем; пока список не пришёл — считаем YouTube.
+  const platform = useAppSelector(
+    (st) => st.chat.conversations.find((c) => c.id === projectId)?.platform ?? "youtube"
+  );
 
   // Без проекта (например, /app) переключать нечего.
   if (!projectId) return null;
+
+  // ⚠️ Состав меню зависит от ПЛОЩАДКИ проекта: «Конкуренты» и «Поиск референсов»
+  // работают через публичный поиск YouTube, а у Instagram такого API нет вовсе
+  // (Graph API отдаёт только свой аккаунт). Показывать их пустыми нельзя — пустой
+  // раздел читается как поломка, поэтому убираем из меню (см. segmentAvailable).
+  const items = ITEMS.filter((i) => segmentAvailable(platform, i.seg));
 
   const isActive = (seg: string) => {
     const href = `/${projectId}/${seg}`;
     return pathname === href || pathname.startsWith(href + "/");
   };
   // Активный раздел (для подписи на кнопке dropdown). Фолбэк — Чат.
-  const current = ITEMS.find((i) => isActive(i.seg)) ?? ITEMS[0];
+  const current = items.find((i) => isActive(i.seg)) ?? items[0];
 
   return (
     <Box
@@ -95,7 +92,7 @@ export default function TopNav() {
       {/* ── Десктоп/планшет: полоса вкладок ── */}
       <ScrollArea type="never" scrollbars="x" visibleFrom="sm">
         <Group gap={2} wrap="nowrap" px={{ base: "xs", sm: "md" }}>
-          {ITEMS.map((item) => {
+          {items.map((item) => {
             const href = `/${projectId}/${item.seg}`;
             const active = isActive(item.seg);
             const locked = item.adminOnly && !isAdmin;
@@ -138,7 +135,6 @@ export default function TopNav() {
                 }}
               >
                 {item.label}
-                {item.beta && <BetaMark />}
               </Box>
             );
           })}
@@ -192,7 +188,7 @@ export default function TopNav() {
                 boxShadow: "var(--mantine-shadow-md)",
               }}
             >
-              {ITEMS.map((item) => {
+              {items.map((item) => {
                 const href = `/${projectId}/${item.seg}`;
                 const active = isActive(item.seg);
                 const locked = item.adminOnly && !isAdmin;
@@ -247,7 +243,6 @@ export default function TopNav() {
                     }}
                   >
                     {item.label}
-                    {item.beta && <BetaMark />}
                   </Box>
                 );
               })}

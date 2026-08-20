@@ -24,6 +24,7 @@ import {
 import {
   IconClipboardText,
   IconRocket,
+  IconSearch,
   IconCheck,
   IconAlertCircle,
   IconCpu,
@@ -63,6 +64,72 @@ function isoToLocalInput(iso: string | null): string {
   if (Number.isNaN(d.getTime())) return "";
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+}
+
+// Состояние пула ключей YouTube: сколько units осталось на сегодня и какие ключи
+// выбыли. Данные живут в памяти процесса (счётчики сбрасываются рестартом), поэтому
+// это оценка «сколько мы уже потратили», а истина — в ответах Google.
+function YoutubeQuotaCard() {
+  const [data, setData] = useState<{
+    configured: boolean;
+    quota: {
+      day: string;
+      perKeyUnits: number;
+      remaining: number;
+      keys: { index: number; units: number; dead: null | "quota" | "invalid" }[];
+    };
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/youtube-quota")
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <Paper withBorder radius="md" p="lg">
+      <Group gap="sm" wrap="nowrap" align="flex-start" mb="md">
+        <ThemeIcon color="brand" variant="light" radius="md" size="lg">
+          <IconSearch size={18} />
+        </ThemeIcon>
+        <div>
+          <Text fw={600}>Квота поиска YouTube</Text>
+          <Text size="sm" c="dimmed">
+            Пул ключей для разделов «Конкуренты» и «Поиск референсов». Поисковый
+            запрос стоит 100 units, остальные вызовы — 1. Сбрасывается в полночь по
+            тихоокеанскому времени.
+          </Text>
+        </div>
+      </Group>
+
+      {!data ? (
+        <Text size="sm" c="dimmed">
+          Загружаю…
+        </Text>
+      ) : !data.configured ? (
+        <Text size="sm" c="dimmed">
+          Ключи не заданы (<code>YOUTUBE_API_KEYS</code>) — поиск в разделах выключен.
+        </Text>
+      ) : (
+        <Stack gap={6}>
+          <Text size="sm">
+            Осталось сегодня: <b>{data.quota.remaining.toLocaleString("ru-RU")}</b> units
+            на {data.quota.keys.length}{" "}
+            {data.quota.keys.length === 1 ? "ключе" : "ключах"} (по{" "}
+            {data.quota.perKeyUnits.toLocaleString("ru-RU")} на ключ)
+          </Text>
+          {data.quota.keys.map((k) => (
+            <Text key={k.index} size="xs" c="dimmed">
+              ключ #{k.index + 1}: потрачено {k.units.toLocaleString("ru-RU")}
+              {k.dead === "quota" && " · выбыл: квота"}
+              {k.dead === "invalid" && " · выбыл: ключ не принят"}
+            </Text>
+          ))}
+        </Stack>
+      )}
+    </Paper>
+  );
 }
 
 export default function AdminFlagsPage() {
@@ -642,6 +709,12 @@ export default function AdminFlagsPage() {
               error={imgModelsError ?? undefined}
             />
           </Paper>
+
+          {/* Квота поиска по YouTube — только тут.
+              ⚠️ Раньше остаток и цена в units висели прямо в разделе «Конкуренты»,
+              над кнопкой «Найти». Для пользователя это шум и повод не нажимать:
+              ему раздел — просто функция. Внутренняя кухня живёт в админке. */}
+          <YoutubeQuotaCard />
 
           {/* Режим «скоро запуск» */}
           <Paper withBorder radius="md" p="lg">

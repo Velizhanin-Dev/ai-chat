@@ -6,6 +6,7 @@ import {
   OAUTH_STATE_COOKIE,
 } from "@/lib/oauth";
 import { signSession, sessionCookie } from "@/lib/auth";
+import { DeviceLimitError, registerDevice } from "@/lib/devices-server";
 import { prisma } from "@/lib/prisma";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
@@ -73,7 +74,16 @@ export async function GET(
       where: { id: user.id },
       data: { lastSeenAt: new Date() },
     });
-    const token = await signSession(user.id);
+    // Слот устройства по тарифу (⚠️ deviceId выше — это PKCE-параметр VK, другое).
+    let sessionDeviceId: string;
+    try {
+      sessionDeviceId = await registerDevice(user);
+    } catch (e) {
+      if (e instanceof DeviceLimitError)
+        return clearState(NextResponse.redirect(failUrl("device_limit")));
+      throw e;
+    }
+    const token = await signSession(user.id, sessionDeviceId);
 
     const next =
       saved.next && saved.next.startsWith("/") && !saved.next.startsWith("//")

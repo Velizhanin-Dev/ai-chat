@@ -38,7 +38,9 @@ export function looksLikeScenario(md: string): boolean {
   const hits = markers.filter((m) => text.includes(m)).length;
   // Заголовки или список — признак структуры, а не сплошного рассуждения.
   const structured = /^#{1,4}\s/m.test(md) || /^\s*[-*]\s/m.test(md) || /^\s*\d+[.)]\s/m.test(md);
-  return hits >= 2 && structured;
+  // Либо в ответе есть произносимый текст в цитатах — тогда кнопке точно есть что
+  // отдать, даже если сценарных слов набралось мало.
+  return (hits >= 2 && structured) || extractQuotes(md).length >= MIN_QUOTES_LEN;
 }
 
 // Строка — обрамляющая речь ассистента, а не часть сценария?
@@ -64,8 +66,65 @@ function isLeadIn(line: string): boolean {
   return HEAD_LEADIN.test(t);
 }
 
-// Убрать обрамляющую речь. Возвращает исходный markdown, если резать нечего.
+/**
+ * Текст сценария из БЛОК-ЦИТАТ ответа.
+ *
+ * ⚠️ Ключевое: сценарий — это то, что человек ПРОИЗНОСИТ, а в нашем формате
+ * произносимые куски модель кладёт в блок-цитаты (`>`), см. правило про цитаты в
+ * промпте и рендер Blockquote в чате. Всё остальное — заголовки блоков, пояснения
+ * «зачем это тут», тайминги, комментарии — в продакшн не едет.
+ *
+ * Раньше кнопка «Только сценарий» срезала лишь обрамляющую речь сверху и снизу и
+ * отдавала практически весь ответ — на это и жаловались.
+ *
+ * Соседние строки цитаты — один блок; между блоками ставим пустую строку, чтобы
+ * реплики не слипались.
+ */
+export function extractQuotes(md: string): string {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const blocks: string[] = [];
+  let cur: string[] = [];
+
+  const flush = () => {
+    const text = cur.join("\n").trim();
+    if (text) blocks.push(text);
+    cur = [];
+  };
+
+  for (const line of lines) {
+    const m = /^\s*>+\s?(.*)$/.exec(line);
+    if (m) {
+      // Внутри цитаты markdown-мусор («**», «*») читать вслух не нужно.
+      cur.push(m[1].replace(/[*_`]/g, "").trim());
+      continue;
+    }
+    // Пустая строка внутри цитаты блок не рвёт (модель ставит `>` не на каждой).
+    if (!line.trim() && cur.length) continue;
+    flush();
+  }
+  flush();
+
+  return blocks.join("\n\n").trim();
+}
+
+// Сколько текста в цитатах, чтобы считать их сценарием, а не одной фразой-примером.
+const MIN_QUOTES_LEN = 80;
+
+/**
+ * Что уносить в продакшн: сперва пробуем цитаты (см. extractQuotes), и только если
+ * их нет — старую обрезку обрамляющей речи.
+ *
+ * ⚠️ Фолбэк оставлен намеренно: модель не обязана оформлять цитатами каждый ответ,
+ * а отдать по кнопке ПУСТОТУ хуже, чем отдать лишний абзац.
+ */
 export function extractScenario(md: string): string {
+  const quotes = extractQuotes(md);
+  if (quotes.length >= MIN_QUOTES_LEN) return quotes;
+  return trimFraming(md);
+}
+
+// Убрать обрамляющую речь. Возвращает исходный markdown, если резать нечего.
+function trimFraming(md: string): string {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
 
   let start = 0;

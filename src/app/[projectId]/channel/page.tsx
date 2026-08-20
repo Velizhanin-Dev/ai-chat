@@ -1,8 +1,8 @@
-import ChannelDashboard from "@/components/Channel/ChannelDashboard";
+import ChannelAnalytics from "@/components/Channel/ChannelAnalytics";
 
-// Раздел «Канал»: дашборд подключённого YouTube-канала (статистика, динамика
-// просмотров, последние видео). Подключение — в настройках проекта. Доступен всем
-// залогиненным (гость → middleware на /login); данные — только если канал подключён.
+// Раздел «Аналитика»: дашборд подключённого аккаунта. Какой именно — решает
+// площадка проекта (YouTube или Instagram), см. ChannelAnalytics. Подключение —
+// в настройках проекта. Доступен всем залогиненным (гость → middleware на /login).
 export default function ChannelPage() {
-  return <ChannelDashboard />;
+  return <ChannelAnalytics />;
 }

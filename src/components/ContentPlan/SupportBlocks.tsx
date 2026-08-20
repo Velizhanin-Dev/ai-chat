@@ -20,7 +20,6 @@ import {
   type ContentPlanView,
   type VideoView,
 } from "@/lib/content-plan";
-import VideoCard from "./VideoCard";
 
 // Опорные блоки плана (Фаза 3): портреты ЦА, лестница Ханта, воронка, сетка
 // шортсов. Каждый генерится по кнопке (стоимость — в BLOCK_META), пока не
@@ -31,13 +30,11 @@ export default function SupportBlocks({
   shorts,
   busy,
   onGenerate,
-  onOpenShort,
 }: {
   plan: ContentPlanView;
   shorts: VideoView[];
   busy: BlockKey | null;
   onGenerate: (block: BlockKey) => void;
-  onOpenShort: (v: VideoView) => void;
 }) {
   const [open, setOpen] = useState<string[]>([]);
 
@@ -171,12 +168,15 @@ export default function SupportBlocks({
                   </Stack>
                 ) : null}
 
+                {/* ⚠️ Карточки шортсов тут больше НЕ дублируем: они живут на доске,
+                    у них те же статусы и порядок (переключатель «Видео / Shorts»).
+                    Раньше сетка показывала их вне статусов — поставил «в работе»,
+                    и карточка не двигалась никуда, будто потерялась. */}
                 {key === "shorts" && shorts.length > 0 ? (
-                  <Box className="cp-shorts">
-                    {shorts.map((v) => (
-                      <VideoCard key={v.id} v={v} onOpen={() => onOpenShort(v)} />
-                    ))}
-                  </Box>
+                  <Text size="sm" c="dimmed">
+                    Собрано шортсов: {shorts.length}. Они на доске — переключатель
+                    «Shorts» над колонками.
+                  </Text>
                 ) : null}
               </Stack>
             </Accordion.Panel>
