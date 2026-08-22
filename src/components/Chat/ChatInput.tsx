@@ -217,6 +217,11 @@ export default function ChatInput({
   // и сравнение счётчиков молча теряло текст. Забрали → гасим (prefillConsumed),
   // поэтому повторный клик по той же плитке тоже срабатывает.
   const prefill = useAppSelector((s) => s.chat.prefill);
+  // Загружена ли история активного диалога — от неё зависит момент переподключения
+  // к идущей генерации (см. эффект ниже).
+  const messagesLoaded = useAppSelector(
+    (s) => s.chat.conversations.find((c) => c.id === s.chat.activeId)?.messagesLoaded ?? false
+  );
   useEffect(() => {
     if (!prefill.text) return;
     setInput(prefill.text);
@@ -231,15 +236,183 @@ export default function ChatInput({
     }
   }, [prefill, dispatch]);
 
-  // ── Остановка генерации ───────────────────────────────────────────────────
-  // Рвём fetch AbortController'ом. Сервер видит обрыв через req.signal и НЕ
-  // списывает квоту (см. /api/chat). Уже напечатанное сохраняем в историю.
+  // ── Генерация как «прогон» на сервере ─────────────────────────────────────
+  // ⚠️ Обрыв соединения БОЛЬШЕ НЕ останавливает генерацию (см. src/lib/chat-runs.ts):
+  // раньше обновление страницы и нажатие «Остановить» выглядели для сервера
+  // одинаково — как порванный fetch, — и ответ терялся в обоих случаях. Теперь
+  // останов — отдельный запрос, а чтение потока можно прервать безнаказанно.
   const abortRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  // Текст, показанный ДО переподключения (снимок прогона): хвост из стрима
+  // приклеивается к нему.
+  const streamPrefixRef = useRef("");
+
   const handleStop = useCallback(() => {
-    abortRef.current?.abort();
+    const runId = runIdRef.current;
+    if (!runId) {
+      // Прогон ещё не представился (первое событие не пришло) — рвём чтение,
+      // генерация сама завершится и ляжет в историю диалога.
+      abortRef.current?.abort();
+      return;
+    }
+    // Поток НЕ рвём: сервер сам закроет его событием stopped, и мы сохраним
+    // напечатанное. Ошибку глотаем — кнопка не должна падать алертом.
+    void fetch("/api/chat/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId }),
+    }).catch(() => {});
   }, []);
-  // Размонтирование во время стрима не должно оставлять висящий запрос.
+
+  // Размонтирование — прекращаем ЧИТАТЬ (генерация на сервере продолжается и
+  // допишет ответ в историю; вернётся человек — подхватим через /api/chat/active).
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  /**
+   * Чтение SSE-потока прогона в стор. Общая часть отправки и переподключения.
+   * `from` > 0 — это переподключение: сервер отдаёт ХВОСТ с этой позиции, и его
+   * надо приклеить к уже показанному (streamPrefixRef).
+   */
+  const consumeRun = useCallback(
+    async (response: Response, opts: { from?: number } = {}) => {
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Нет потока ответа");
+
+      const typewriter = makeTypewriter((chunk) => dispatch(appendStreamingContent(chunk)));
+      const decoder = new TextDecoder();
+      let fullContent = "";
+      let stoppedByUser = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const text = decoder.decode(value, { stream: true });
+          for (const line of text.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            if (data === "[DONE]") break;
+
+            let parsed: {
+              runId?: string;
+              token?: string;
+              error?: string;
+              stopped?: boolean;
+              searching?: boolean;
+              analyzingVideo?: boolean;
+            };
+            try {
+              parsed = JSON.parse(data);
+            } catch {
+              continue; // битый JSON-чанк
+            }
+            // Первым событием прогон представляется: по этому id мы его
+            // останавливаем и к нему же переподключаемся после перезагрузки.
+            if (parsed.runId) runIdRef.current = parsed.runId;
+            // Ошибку стрима пробрасываем НАРУЖУ (не глотаем), иначе в историю
+            // попадёт пустой ответ вместо алерта об ошибке.
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.stopped) stoppedByUser = true;
+            if (parsed.searching) dispatch(setSearching(true));
+            if (parsed.analyzingVideo) dispatch(setAnalyzingVideo(true));
+            if (parsed.token) {
+              fullContent += parsed.token;
+              typewriter.push(parsed.token);
+            }
+          }
+        }
+
+        await typewriter.end();
+        dispatch(finalizeStreaming());
+        const shown = (opts.from ?? 0) > 0 ? streamPrefixRef.current + fullContent : fullContent;
+        if (shown.trim()) {
+          dispatch(
+            addMessage({
+              id: uuidv4(),
+              role: "assistant",
+              content: shown,
+              createdAt: new Date().toISOString(),
+            })
+          );
+        }
+        // Квота списывается на сервере после успешного ответа — отражаем
+        // оптимистично, чтобы кружок остатка в шапке не отставал. Остановленный
+        // ответ не тарифицируется (сервер тоже не спишет).
+        if (!stoppedByUser && shown.trim()) dispatch(bumpRequestsUsed());
+      } catch (err) {
+        typewriter.cancel(); // не оставляем таймер печати висеть
+        throw err;
+      }
+    },
+    [dispatch]
+  );
+
+  // ── Возврат к идущей генерации (после обновления страницы) ────────────────
+  // ⚠️ Спрашиваем СЕРВЕР, а не localStorage: так ответ подхватывается и после F5,
+  // и в другой вкладке. Прогон живой — показываем уже написанное и дочитываем.
+  const resumedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeId || resumedFor.current === activeId) return;
+    // ⚠️ Ждём, пока догрузится история диалога: она приходит отдельным запросом и
+    // ЗАМЕНЯЕТ список сообщений целиком. Подключись мы раньше — дописанный ответ
+    // мог бы попасть в стор до неё и быть затёрт (в БД он есть, но повторно
+    // страница его не запросит — диалог уже помечен загруженным).
+    if (!messagesLoaded) return;
+    resumedFor.current = activeId;
+
+    let alive = true;
+    void (async () => {
+      let attached = false;
+      try {
+        const res = await fetch(`/api/chat/active?conversationId=${encodeURIComponent(activeId)}`);
+        if (!res.ok || !alive) return;
+        const data = (await res.json()) as {
+          run?: { id: string; text: string; searching: boolean; analyzingVideo: boolean } | null;
+        };
+        const run = data.run;
+        if (!run || !alive) return;
+
+        attached = true;
+        runIdRef.current = run.id;
+        streamPrefixRef.current = run.text;
+        dispatch(setLoading(true));
+        // Уже написанное показываем СРАЗУ, без печати: человек его, скорее всего,
+        // видел до перезагрузки, и «допечатывание» с нуля выглядит как сбой.
+        dispatch(setStreamingContent(run.text));
+        if (run.searching) dispatch(setSearching(true));
+        if (run.analyzingVideo) dispatch(setAnalyzingVideo(true));
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const stream = await fetch(
+          `/api/chat/stream?runId=${encodeURIComponent(run.id)}&from=${run.text.length}`,
+          { signal: controller.signal }
+        );
+        if (!stream.ok) {
+          // Прогон исчез между двумя запросами — ответ уже в истории диалога.
+          dispatch(finalizeStreaming());
+          return;
+        }
+        await consumeRun(stream, { from: run.text.length });
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+        console.error("[chat] resume error:", err);
+        dispatch(finalizeStreaming());
+      } finally {
+        if (attached) {
+          abortRef.current = null;
+          runIdRef.current = null;
+          streamPrefixRef.current = "";
+          dispatch(setLoading(false));
+        }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [activeId, messagesLoaded, dispatch, consumeRun]);
 
   const handleSend = useCallback(async () => {
     const question = input.trim();
@@ -278,16 +451,10 @@ export default function ChatInput({
       content: m.content,
     }));
 
-    // Печатная машинка: ровно «допечатывает» рваные дельты стрима в стор.
-    const typewriter = makeTypewriter((chunk) =>
-      dispatch(appendStreamingContent(chunk))
-    );
-
     const controller = new AbortController();
     abortRef.current = controller;
-    // Текст копим снаружи try: при остановке он нужен в catch, чтобы сохранить
-    // уже сгенерированную часть ответа, а не потерять её.
-    let fullContent = "";
+    runIdRef.current = null;
+    streamPrefixRef.current = "";
 
     try {
       const response = await fetch("/api/chat", {
@@ -321,82 +488,14 @@ export default function ChatInput({
         throw new Error(msg);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("Нет потока ответа");
-
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") break;
-
-            let parsed: {
-              token?: string;
-              error?: string;
-              searching?: boolean;
-              analyzingVideo?: boolean;
-            };
-            try {
-              parsed = JSON.parse(data);
-            } catch {
-              // битый JSON-чанк — пропускаем
-              continue;
-            }
-            // Ошибку стрима пробрасываем НАРУЖУ (не глотаем catch'ем парсинга),
-            // иначе в историю попадёт пустой ответ вместо алерта об ошибке.
-            if (parsed.error) throw new Error(parsed.error);
-            // Сервер сообщил, что перед генерацией идёт веб-поиск — индикатор
-            // покажет «Ищу в интернете» (поиск заметно добавляет к TTFT).
-            if (parsed.searching) dispatch(setSearching(true));
-            // В сообщении есть ссылка на ролик — сервер тянет расшифровку. Это
-            // тоже секунды до первого токена, поэтому индикатор говорит, чем занят.
-            if (parsed.analyzingVideo) dispatch(setAnalyzingVideo(true));
-            if (parsed.token) {
-              fullContent += parsed.token;
-              typewriter.push(parsed.token);
-            }
-          }
-        }
-      }
-
-      // Стрим закончился — дать машинке допечатать остаток буфера, потом финализ.
-      await typewriter.end();
-      dispatch(finalizeStreaming());
-      dispatch(
-        addMessage({
-          id: uuidv4(),
-          role: "assistant",
-          content: fullContent,
-          createdAt: new Date().toISOString(),
-        })
-      );
-      // Списали 1 запрос на сервере (квота) — отражаем оптимистично на клиенте,
-      // чтобы остаток в биллинге не отставал. Серверу это не доверяем (там — истина).
-      dispatch(bumpRequestsUsed());
+      // Дальше всё общее с переподключением: чтение потока, печать, финализация.
+      await consumeRun(response);
     } catch (err) {
-      typewriter.cancel(); // не оставляем таймер печати висеть
-      // Остановка пользователем — не ошибка: молча сохраняем то, что успело
-      // сгенерироваться, и НЕ списываем запрос (сервер тоже не спишет).
+      // ⚠️ Обрыв чтения (ушли со страницы, размонтировались) — НЕ ошибка и НЕ
+      // потеря ответа: генерация живёт на сервере и допишется в историю, а
+      // вернувшаяся вкладка подхватит её через /api/chat/active.
       if (controller.signal.aborted) {
         dispatch(finalizeStreaming());
-        if (fullContent.trim()) {
-          dispatch(
-            addMessage({
-              id: uuidv4(),
-              role: "assistant",
-              content: fullContent,
-              createdAt: new Date().toISOString(),
-            })
-          );
-        }
       } else {
         const message = err instanceof Error ? err.message : "Произошла ошибка";
         dispatch(setError(message));
@@ -404,9 +503,11 @@ export default function ChatInput({
       }
     } finally {
       abortRef.current = null;
+      runIdRef.current = null;
+      streamPrefixRef.current = "";
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch]);
+  }, [input, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch, consumeRun]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -472,8 +573,9 @@ export default function ChatInput({
           style={{ flex: 1 }}
           styles={{ input: { paddingTop: 6, paddingBottom: 6, paddingLeft: 6 } }}
         />
-        {/* Во время генерации кнопка превращается в «стоп»: остановка рвёт стрим,
-            сохраняет напечатанное и НЕ тратит запрос из квоты. */}
+        {/* Во время генерации кнопка превращается в «стоп»: останов уходит на
+            сервер отдельным запросом (/api/chat/stop), напечатанное сохраняется,
+            запрос из квоты НЕ тратится. */}
         {isLoading ? (
           <Tooltip label="Остановить генерацию" withArrow>
             <ActionIcon

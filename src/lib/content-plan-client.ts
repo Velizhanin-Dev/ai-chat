@@ -190,6 +190,29 @@ export async function apiRegenerateVideo(
   }
 }
 
+/**
+ * Переработать залетевший ролик конкурента в свою карточку плана (по методике).
+ * ⚠️ Дольше обычной генерации: сервер сначала разбирает донора и тянет его
+ * расшифровку, поэтому на клиенте показываем прогресс, а не ждём молча.
+ */
+export async function apiAdaptCompetitorVideo(
+  planId: string,
+  videoId: string,
+  kind: "video" | "short" = "video"
+): Promise<Result<{ video: VideoView }>> {
+  try {
+    return json(
+      await fetch(`/api/content-plan/${planId}/adapt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId, kind }),
+      })
+    );
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
 export async function apiAddVideo(
   planId: string,
   body: {

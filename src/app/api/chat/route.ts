@@ -5,6 +5,7 @@ import { buildVideoTranscriptBlock } from "@/lib/youtube-transcript";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
+import { resolveProjectContext } from "@/lib/chat-project-context";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
@@ -13,10 +14,16 @@ import { isAdmin } from "@/lib/admin";
 import { getQuotaState } from "@/lib/quota";
 import { prisma } from "@/lib/prisma";
 import { track } from "@/lib/achievements-server";
+import { SSE_HEADERS, startRun, streamRun, getRun } from "@/lib/chat-runs";
 
 // Сборка system-промпта (методика/голос/знания) вынесена в src/lib/llm/system.ts
 // (buildSystem) — её переиспользует и ИИ-разбор видео. route.ts отвечает за
 // роутинг знаний, гейты (auth/launch/бриф/квота) и SSE-обёртку стрима.
+//
+// ⚠️ Сама генерация живёт НЕ в этом запросе, а в «прогоне» (src/lib/chat-runs.ts):
+// запрос лишь подписывается на него. Поэтому обновление страницы больше не убивает
+// ответ — вкладка вернётся и дочитает его с той же позиции. Останов — отдельным
+// запросом POST /api/chat/stop, а не обрывом соединения.
 
 const HISTORY_LIMIT = 20;
 
@@ -228,17 +235,29 @@ export async function POST(request: NextRequest) {
     //  • routing "smart" — BM25-роутинг: классифицируем и грузим только релевантное.
     const lastUser = messages[messages.length - 1].content;
     const tRoute0 = Date.now();
-    const [channel, route] = await Promise.all([
+    const [channel, route, projectBlocks] = await Promise.all([
       resolveChannelContext(conversationId, messages),
       settings.routing === "full"
         ? Promise.resolve(fullModeRoute(lastUser))
         : routeQuery(messages, provider, { userId: sessionUser.id, conversationId }),
+      // Рабочие данные проекта: контент-план (сетка + портреты ЦА + лестница
+      // Ханта) и конкуренты (свой список + залетевшие ролики ниши). Только БД —
+      // ни одного вызова YouTube API, поэтому ни units, ни заметной задержки.
+      resolveProjectContext(conversationId),
     ]);
     const routeMs = Date.now() - tRoute0;
 
     const systemBlocks =
       settings.routing === "full"
-        ? buildFullSystem(route.category, aboutYou, brief, userName, channel.channelBlock, channel.nudge)
+        ? buildFullSystem(
+            route.category,
+            aboutYou,
+            brief,
+            userName,
+            channel.channelBlock,
+            channel.nudge,
+            projectBlocks
+          )
         : buildSystem(
             route,
             // Слова ниши клиента подмешиваем в запрос к базе: без них BM25 ранжирует
@@ -249,7 +268,8 @@ export async function POST(request: NextRequest) {
             brief,
             userName,
             channel.channelBlock,
-            channel.nudge
+            channel.nudge,
+            projectBlocks
           );
 
     // Ссылки на ролики в текущем сообщении: расшифровку добываем МЫ, а не человек.
@@ -267,137 +287,91 @@ export async function POST(request: NextRequest) {
         ? settings.webSearch.maxResults
         : 0;
 
-    const encoder = new TextEncoder();
+    const runInfo = startRun({
+      userId: sessionUser.id,
+      conversationId,
+      question: lastUserContent,
+      generate: async ({ push, setSearching, setAnalyzingVideo, stopped }) => {
+        if (webSearch > 0) setSearching();
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        // Пользователь нажал «Остановить» (или закрыл вкладку) → fetch отменён,
-        // request.signal взводится. Прерываем генерацию, квоту НЕ списываем, но уже
-        // сгенерированный кусок сохраняем в историю (он остался на экране).
-        let closed = false;
-        const send = (chunk: string) => {
-          if (closed) return;
-          try {
-            controller.enqueue(encoder.encode(chunk));
-          } catch {
-            closed = true; // клиент отвалился между чанками
-          }
-        };
-        try {
-          send(": ping\n\n");
+        // Ролик по ссылке: расшифровку тянет внешний сервис, это секунды, поэтому
+        // сразу поднимаем флаг — иначе молчание до первого токена читается как
+        // «завис».
+        let systemForRun = systemBlocks;
+        if (videoIds.length > 0) {
+          setAnalyzingVideo();
+          // ⚠️ Ждём не дольше TRANSCRIPT_WAIT_MS: не успели — отвечаем без текста
+          // ролика, а сервис дотянет расшифровку в кэш к следующему разу.
+          const block = await Promise.race([
+            buildVideoTranscriptBlock(videoIds),
+            new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_WAIT_MS)),
+          ]).catch(() => "");
+          if (block) systemForRun = [...systemBlocks, { type: "text" as const, text: block }];
+        }
 
-          // Веб-поиск включён — говорим клиенту, чтобы индикатор показал «Ищу в
-          // интернете» вместо обычной цепочки «думаю». Отдельное SSE-событие, а не
-          // токен: до первого токена стрим и так молчит, а поиск заметно добавляет
-          // к TTFT — без подписи это выглядит как «завис».
-          if (webSearch > 0) send(`data: ${JSON.stringify({ searching: true })}\n\n`);
+        // Стратегия провайдера: claude (Anthropic SDK, кэш/effort), glm или
+        // openrouter. Все отдают текстовые дельты.
+        const strategy = getStrategy(provider);
+        for await (const token of strategy.stream({
+          system: systemForRun,
+          messages,
+          route,
+          routeMs,
+          model: settings.openrouterModel,
+          orParams: settings.openrouterParams,
+          orProvider: settings.openrouterProvider,
+          webSearch,
+          meta: { userId: sessionUser.id, conversationId },
+        })) {
+          if (stopped()) break;
+          push(token);
+        }
+      },
+      onFinish: async ({ text, stopped }) => {
+        if (stopped) {
+          console.log(`[chat] stopped by user after ${text.length} chars — квота не списана`);
+        }
 
-          // Ролик по ссылке: расшифровку тянет внешний сервис, это секунды, поэтому
-          // сразу говорим клиенту показать «Разбираю видео» — как с веб-поиском,
-          // иначе молчание до первого токена читается как «завис».
-          let systemForRun = systemBlocks;
-          if (videoIds.length > 0) {
-            send(`data: ${JSON.stringify({ analyzingVideo: true })}\n\n`);
-            // ⚠️ Ждём не дольше TRANSCRIPT_WAIT_MS: не успели — отвечаем без текста
-            // ролика, а сервис дотянет расшифровку в кэш к следующему разу.
-            const block = await Promise.race([
-              buildVideoTranscriptBlock(videoIds),
-              new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_WAIT_MS)),
-            ]).catch(() => "");
-            // Блок идёт ПОСЛЕДНИМ: модель сильнее весит то, что ближе к вопросу
-            // (тот же recency-приём, что у ретрива знаний).
-            if (block) systemForRun = [...systemBlocks, { type: "text" as const, text: block }];
-          }
+        // Успешный ответ — списываем 1 единицу квоты (kind=chat = 1 запрос).
+        // Остановленную генерацию не тарифицируем. Атомарный increment; админам
+        // не списываем (гейт их и не проверяет).
+        if (!stopped && text.trim() && !isAdmin(sessionUser)) {
+          prisma.user
+            .update({
+              where: { id: sessionUser.id },
+              data: { requestsUsed: { increment: 1 } },
+            })
+            .catch((err) => console.error("[chat] requestsUsed increment error:", err));
+        }
 
-          // Стратегия провайдера: claude (Anthropic SDK, кэш/effort) или glm
-          // (OpenAI-совместимый стрим). Обе отдают текстовые дельты.
-          const strategy = getStrategy(provider);
-          let assistantText = "";
-          for await (const token of strategy.stream({
-            system: systemForRun,
-            messages,
-            route,
-            routeMs,
-            model: settings.openrouterModel,
-            orParams: settings.openrouterParams,
-            orProvider: settings.openrouterProvider,
-            webSearch,
-            meta: { userId: sessionUser.id, conversationId },
-          })) {
-            if (request.signal.aborted) break;
-            assistantText += token;
-            send(`data: ${JSON.stringify({ token })}\n\n`);
-          }
+        // Геймификация: засчитываем действие (docs/achievements.md).
+        // Fire-and-forget, админов тоже считаем — ачивки не про биллинг.
+        if (!stopped && text.trim()) track(sessionUser.id, "chat_message");
 
-          const stopped = request.signal.aborted;
-          if (stopped) {
-            console.log(
-              `[chat] stopped by user after ${assistantText.length} chars — квота не списана`
-            );
-          }
-
-          // Успешный ответ — списываем 1 единицу квоты (kind=chat = 1 запрос).
-          // Остановленную генерацию не тарифицируем (см. выше). Атомарный
-          // increment; админам не списываем (гейт их и не проверяет).
-          // Fire-and-forget: сбой счётчика не должен ронять уже отданный ответ.
-          if (!stopped && assistantText.trim() && !isAdmin(sessionUser)) {
-            prisma.user
-              .update({
-                where: { id: sessionUser.id },
-                data: { requestsUsed: { increment: 1 } },
-              })
-              .catch((err) => console.error("[chat] requestsUsed increment error:", err));
-          }
-
-          // Геймификация: засчитываем действие (docs/achievements.md).
-          // Fire-and-forget, админов тоже считаем — ачивки не про биллинг.
-          if (!stopped && assistantText.trim()) track(sessionUser.id, "chat_message");
-
-          // Успешный ответ — дописываем пару «вопрос+ответ» в историю. Вложенный
-          // create обновляет диалог (триггерит @updatedAt → свежие сверху).
-          // Ошибку записи глотаем: ответ уже у пользователя, история вторична.
-          if (persistId && assistantText.trim()) {
-            prisma.conversation
-              .update({
-                where: { id: persistId },
-                data: {
-                  messages: {
-                    create: [
-                      { role: "user", content: lastUserContent },
-                      { role: "assistant", content: assistantText },
-                    ],
-                  },
-                },
-              })
-              .catch((err) => console.error("[chat] persist messages error:", err));
-          }
-
-          send("data: [DONE]\n\n");
-          try {
-            controller.close();
-          } catch {
-            /* уже закрыт обрывом клиента */
-          }
-        } catch (err) {
-          console.error("Stream error:", err);
-          // Проект существует независимо от ответа (его создал бриф) — чистить нечего.
-          send(`data: ${JSON.stringify({ error: "Ошибка генерации ответа" })}\n\n`);
-          try {
-            controller.close();
-          } catch {
-            /* ignore */
-          }
+        // Ответ в историю. ⚠️ Вопрос пользователя уже записан при СТАРТЕ прогона
+        // (chat-runs.ts): иначе после перезагрузки лента открывалась бы без него.
+        // Остановленный ответ тоже сохраняем — он остался на экране.
+        if (text.trim()) {
+          await prisma.conversation
+            .update({
+              where: { id: conversationId },
+              data: { messages: { create: [{ role: "assistant", content: text }] } },
+            })
+            .catch((err) => console.error("[chat] persist answer error:", err));
         }
       },
     });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    const run = getRun(runInfo.id, sessionUser.id);
+    if (!run) {
+      return new Response(JSON.stringify({ error: "Не удалось запустить генерацию" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const stream = streamRun(run);
+
+    return new Response(stream, { headers: SSE_HEADERS });
   } catch (error) {
     console.error("Chat error:", error);
     const message =

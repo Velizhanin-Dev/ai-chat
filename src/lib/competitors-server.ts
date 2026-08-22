@@ -990,6 +990,22 @@ function weeklyGrowth(
   };
 }
 
+/**
+ * Свежайшая лента конкурентов ИЗ ПАМЯТИ — без единого похода в YouTube.
+ *
+ * ⚠️ Нужна чату: там контекст собирается на каждое сообщение, и платить за него
+ * units нельзя. Кэша нет (никто не открывал раздел / был рестарт) — отдаём null,
+ * а не грузим ленту: чат обойдётся без этой части контекста.
+ */
+export function cachedTrackedFeed(conversationId: string): TrackedFeedResult | null {
+  let best: { at: number; data: TrackedFeedResult } | null = null;
+  Array.from(feedCache.entries()).forEach(([k, v]) => {
+    if (!k.startsWith(`${conversationId}|feed|`)) return;
+    if (!best || v.at > best.at) best = v;
+  });
+  return best ? (best as { at: number; data: TrackedFeedResult }).data : null;
+}
+
 /** Сброс кэша ленты — состав списка конкурентов изменился. */
 export function clearTrackedFeedCache(conversationId: string): void {
   Array.from(feedCache.keys()).forEach((k) => {

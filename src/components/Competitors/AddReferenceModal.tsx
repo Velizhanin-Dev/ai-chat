@@ -14,20 +14,24 @@ import {
   Text,
   UnstyledButton,
 } from "@mantine/core";
-import { IconAlertTriangle, IconBulb, IconCheck, IconLink } from "@tabler/icons-react";
+import { IconAlertTriangle, IconBulb, IconCheck, IconLink, IconWand } from "@tabler/icons-react";
 import {
+  apiAdaptCompetitorVideo,
   apiAddVideo,
   apiContentPlan,
   apiContentPlans,
   apiUpdateVideo,
 } from "@/lib/content-plan-client";
 import {
+  CONTENT_PLAN_ADAPT_QUOTA_COST,
   STATUS_META,
   primaryTitle,
   type ContentPlanMeta,
   type VideoView,
 } from "@/lib/content-plan";
 import { formatRatio, type CompetitorVideo } from "@/lib/competitors";
+import { bumpRequestsUsed } from "@/store/authSlice";
+import { useAppDispatch } from "@/store/hooks";
 
 // Положить найденный ролик конкурента референсом в конкретную карточку
 // контент-плана. Смысл связки: в разделе «Референсы» видно, ЧТО выстрелило в нише,
@@ -50,6 +54,7 @@ export default function AddReferenceModal({
   video: CompetitorVideo | null;
   onClose: () => void;
 }) {
+  const dispatch = useAppDispatch();
   const [plans, setPlans] = useState<ContentPlanMeta[] | null>(null);
   const [planId, setPlanId] = useState<string | null>(null);
   const [videos, setVideos] = useState<VideoView[] | null>(null);
@@ -58,6 +63,8 @@ export default function AddReferenceModal({
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [adapting, setAdapting] = useState(false);
+  const [adaptedId, setAdaptedId] = useState<string | null>(null);
 
   // Список планов проекта — при каждом открытии (планы могли добавиться).
   useEffect(() => {
@@ -65,6 +72,7 @@ export default function AddReferenceModal({
     setError(null);
     setSavedId(null);
     setCreatedId(null);
+    setAdaptedId(null);
     apiContentPlans(projectId).then((res) => {
       if (!res.ok) {
         setError(res.error);
@@ -138,6 +146,31 @@ export default function AddReferenceModal({
     setVideos((cur) => (cur ? [...cur, res.data.video] : cur));
   };
 
+  /**
+   * Переработать ролик донора в ПОЛНОЦЕННУЮ карточку по методике.
+   *
+   * ⚠️ Отличие от «завести идею» выше: там в карточку ложится чужое название как
+   * заготовка, и дальше человек остаётся с ней один на один. Здесь сервер реально
+   * разбирает донора (упаковка, описание, комментарии, а если есть — субтитры) и
+   * собирает СВОЮ тему на его механике: название по ВИСП, текст на превью, боль,
+   * стадия Ханта, 10 вопросов, опенинг, CTA.
+   */
+  const adapt = async () => {
+    if (!video || !planId) return;
+    setAdapting(true);
+    setError(null);
+    const res = await apiAdaptCompetitorVideo(planId, video.id, video.isShort ? "short" : "video");
+    setAdapting(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setAdaptedId(res.data.video.id);
+    setVideos((cur) => (cur ? [...cur, res.data.video] : cur));
+    // Квота списана на сервере — держим кружок в шапке в актуальном состоянии.
+    dispatch(bumpRequestsUsed(CONTENT_PLAN_ADAPT_QUOTA_COST));
+  };
+
   return (
     <Modal
       opened={video != null}
@@ -189,12 +222,33 @@ export default function AddReferenceModal({
 
           {plans && plans.length > 0 && (
             <Button
+              color="brand"
+              leftSection={<IconWand size={16} />}
+              onClick={() => void adapt()}
+              loading={adapting}
+              disabled={adaptedId != null || creating}
+            >
+              {adaptedId
+                ? "Карточка собрана — она в плане"
+                : "Переработать по методике в карточку"}
+            </Button>
+          )}
+          {plans && plans.length > 0 && !adaptedId && (
+            <Text size="xs" c="dimmed" mt={-8}>
+              Разберу этот ролик — упаковку, описание, комментарии и речь по субтитрам — и соберу
+              свою тему на его механике: название, текст на превью, боль ЦА, 10 вопросов, опенинг.
+              Займёт до минуты.
+            </Text>
+          )}
+
+          {plans && plans.length > 0 && (
+            <Button
               variant="light"
               color="brand"
               leftSection={<IconBulb size={16} />}
               onClick={() => void createIdea()}
               loading={creating}
-              disabled={createdId != null}
+              disabled={createdId != null || adapting}
             >
               {createdId
                 ? "Идея заведена — переписать название можно в контент-плане"

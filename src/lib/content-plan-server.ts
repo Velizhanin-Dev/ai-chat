@@ -596,3 +596,115 @@ export function toPlanView(
     funnel: (plan.funnel as unknown as Funnel | null) ?? null,
   };
 }
+
+// ── Залетевший ролик конкурента → своя карточка плана ────────────────────────
+//
+// ⚠️ Раньше из «Референсов» в план уезжала ОДНА СТРОКА: чужое название и ссылка.
+// Дальше человек оставался с этим наедине, а методика прямо запрещает копировать
+// чужие названия (Антипаттерн №15) — то есть заготовка была нерабочей по
+// определению. Здесь ролик-донор реально РАЗБИРАЕТСЯ (упаковка, заявленная в
+// описании структура, реакция в комментариях, а если есть субтитры — и сама речь),
+// и на его МЕХАНИКЕ собирается полноценная карточка под нишу клиента.
+//
+// ⚠️ Расшифровка — best-effort и не обязательна: у чужого ролика субтитров может
+// не быть вовсе. Не достали — так и говорим модели, чтобы она не пересказывала
+// содержание, которого не видела (Антипаттерн №9).
+import { insightPromptBlock, type VideoInsight } from "./competitors";
+import { condenseTranscript, getTranscript } from "./youtube-transcript";
+
+/** Расшифровка ролика-донора для промпта (или пояснение, почему её нет). */
+export async function competitorTranscriptBlock(videoId: string): Promise<string> {
+  const res = await getTranscript(videoId).catch(() => null);
+  if (!res || res.status !== "ok") {
+    return (
+      "Расшифровки этого ролика нет" +
+      (res?.status === "none" ? " (у него нет субтитров)" : " (сервис не отдал текст)") +
+      ". Разбирай по названию, описанию и комментариям; СОДЕРЖАНИЕ, которого не видел, не пересказывай и не выдумывай."
+    );
+  }
+  const t = res.transcript;
+  return (
+    `Что в ролике реально говорят (${t.auto ? "автосубтитры, пунктуация машинная" : "субтитры автора"}):\n` +
+    condenseTranscript(t)
+  );
+}
+
+/**
+ * Переработать ролик конкурента в карточку контент-плана под клиента.
+ * Возвращает одну строку плана (throws на сбое LLM). Гейт/квота/запись — в роуте.
+ */
+export async function adaptCompetitorVideo(opts: {
+  userId: string;
+  projectId: string;
+  brief: Brief | null;
+  insight: VideoInsight;
+  transcriptBlock: string;
+}): Promise<GenVideo | null> {
+  const { userId, projectId, brief, insight, transcriptBlock } = opts;
+  const settings = await getSettings();
+  const provider = settings.provider;
+
+  const routeHint =
+    "переработать залетевший ролик конкурента в свою тему: висп название превью лестница ханта боль ца 10 вопросов опенинг";
+  const route: RouteDecision = await routeQuery(
+    [{ role: "user", content: routeHint }],
+    provider,
+    { userId, conversationId: projectId }
+  );
+  // Одна карточка, а не месячная сетка: эталон плана не нужен, слой ВИСП/превью и
+  // разборы — нужны. Категория long — тут собирается скелет ролика, а не болтовня.
+  route.category = "long";
+  route.contentPlan = false;
+  route.book = false;
+  route.formats = false;
+  route.tgClosed = true;
+  route.youtube = true;
+
+  // Данные канала клиента: чтобы новая тема ложилась на то, что у НЕГО уже заходит,
+  // а не жила отдельной жизнью. Best-effort.
+  const channelBlock = await resolveChannelBlock(projectId);
+
+  const systemBlocks = buildSystem(
+    route,
+    withBriefTerms(route.searchQuery || routeHint, brief),
+    "",
+    brief,
+    "",
+    channelBlock
+  );
+  systemBlocks.push({ type: "text", text: JSON_FORMAT_BLOCK });
+
+  const genPrompt = [
+    "Вот ролик конкурента из этой ниши, который вылетел за свою аудиторию. Разбери, ПОЧЕМУ он залетел, и собери на этой механике ОДИН ролик под мой канал.",
+    "",
+    insightPromptBlock(insight),
+    "",
+    transcriptBlock,
+    "",
+    "Жёстко: название и тему НЕ копируй и не перефразируй — бери только механику (на какую боль бьёт, каким триггером цепляет, как держит внимание) и переноси её на нишу и экспертизу из брифа. Если тема донора к нише клиента не подходит — возьми тот же триггер и найди свою тему.",
+    'Верни строго JSON {"videos":[ОДИН объект]} по схеме из system. В поле reference впиши ровно: ' +
+      `«${insight.title} — https://youtu.be/${insight.id}».`,
+  ].join("\n");
+
+  const strategy = getStrategy(provider);
+  let full = "";
+  for await (const token of strategy.stream({
+    system: systemBlocks,
+    messages: [{ role: "user", content: genPrompt }],
+    route,
+    routeMs: 0,
+    model: settings.openrouterModel,
+    orParams: settings.openrouterParams,
+    orProvider: settings.openrouterProvider,
+    meta: { userId, conversationId: projectId },
+  })) {
+    full += token;
+  }
+
+  const videos = extractVideos(full);
+  if (!videos.length) return null;
+  const v = videos[0];
+  // Ссылку на донора ставим САМИ, а не полагаемся на модель: ссылки она выдумывает
+  // (в JSON_FORMAT_BLOCK это прямо запрещено), а тут донор известен точно.
+  return { ...v, reference: `${insight.title} — https://youtu.be/${insight.id}` };
+}

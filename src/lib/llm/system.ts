@@ -344,7 +344,8 @@ export function buildSystem(
   brief: Brief | null,
   userName: string,
   channelBlock: string | null = null,
-  nudge: ConnectNudge = "off"
+  nudge: ConnectNudge = "off",
+  projectBlocks: string[] = []
 ): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_CORE },
@@ -442,6 +443,10 @@ export function buildSystem(
   const channelTail = channelTailBlock(channelBlock, nudge);
   if (channelTail) blocks.push(channelTail);
 
+  // Рабочие данные проекта (контент-план + конкуренты) — тем же хвостом, что и
+  // канал: это его собственная фактура, и она должна лежать вплотную к вопросу.
+  for (const b of projectBlocks) blocks.push({ type: "text", text: b });
+
   // Проверка фактуры — САМЫМ последним, вплотную к вопросу (recency). Только на
   // генеративных запросах: болтовне не нужна. В full-режиме её роль играет
   // FINAL_CHECKLIST, поэтому там этот блок не добавляется.
@@ -474,7 +479,8 @@ export function buildFullSystem(
   brief: Brief | null,
   userName: string,
   channelBlock: string | null = null,
-  nudge: ConnectNudge = "off"
+  nudge: ConnectNudge = "off",
+  projectBlocks: string[] = []
 ): Anthropic.TextBlockParam[] {
   const blocks: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_CORE },
@@ -534,6 +540,9 @@ export function buildFullSystem(
   // Данные канала / приглашение подключить — перед финальной самопроверкой.
   const channelTail = channelTailBlock(channelBlock, nudge);
   if (channelTail) blocks.push(channelTail);
+
+  // Рабочие данные проекта (контент-план + конкуренты) — см. buildSystem.
+  for (const b of projectBlocks) blocks.push({ type: "text", text: b });
 
   // Финальная самопроверка — ПОСЛЕДНИМ блоком, вплотную к вопросу (recency).
   // В full-режиме правила «тонут» за ~200К токенов базы; повтор жёстких правил
