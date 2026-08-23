@@ -157,7 +157,7 @@ export default function CompetitorsBoard() {
 
   const [queries, setQueries] = useState<string[]>([]);
   const [periodDays, setPeriodDays] = useState(90);
-  const [order, setOrder] = useState<CompetitorOrder>("viewCount");
+  const [order, setOrder] = useState<CompetitorOrder>("relevance");
 
   const [filters, setFilters] = useState<CompetitorFilters>(DEFAULT_FILTERS);
 
@@ -193,7 +193,7 @@ export default function CompetitorsBoard() {
       if (draft?.queries?.length) {
         setQueries(draft.queries.slice(0, COMPETITOR_MAX_QUERIES));
         setPeriodDays(draft.periodDays ?? 90);
-        setOrder(draft.order ?? "viewCount");
+        setOrder(draft.order ?? "relevance");
       } else {
         setQueries(res.data.suggested.slice(0, 3));
       }
@@ -378,10 +378,10 @@ export default function CompetitorsBoard() {
                   className="cmp-select"
                   size="sm"
                   value={order}
-                  onChange={(v) => setOrder((v as CompetitorOrder) ?? "viewCount")}
+                  onChange={(v) => setOrder((v as CompetitorOrder) ?? "relevance")}
                   data={[
-                    { value: "viewCount", label: "Самые просматриваемые" },
                     { value: "relevance", label: "Самые релевантные" },
+                    { value: "viewCount", label: "Самые просматриваемые" },
                     { value: "date", label: "Самые свежие" },
                   ]}
                   allowDeselect={false}
@@ -400,6 +400,16 @@ export default function CompetitorsBoard() {
                 Найти
               </Button>
             </Box>
+
+            {/* ⚠️ Оговорка про сортировку не косметическая: «самые просматриваемые»
+                на широком запросе тянет всевременной топ — гигантов и иноязычные
+                ролики, — и после фильтра по кратности не остаётся ничего. Замерено
+                на «майнкрафт»: 0 подходящих против 4 по релевантности. */}
+            <Text size="xs" c="dimmed">
+              По умолчанию берём самые релевантные — они держат нишу и свежесть.
+              «Самые просматриваемые» показывают всевременной топ: там каналы-миллионники,
+              у которых кратность к подписчикам почти никогда не набирается.
+            </Text>
 
             {/* ⚠️ Про units квоты и остаток по ключам тут НЕ пишем: это наша
                 внутренняя кухня, для человека раздел — просто рабочая функция.

@@ -213,11 +213,14 @@ export async function fetchVideoTags(videoId: string): Promise<ScrapedVideoTags 
   const hit = cached<ScrapedVideoTags>(key);
   if (hit) return hit;
 
-  // Теги лежат в <head> и в плеерном JSON почти в начале документа — тянуть весь
-  // полуторамегабайтный документ незачем.
+  // ⚠️⚠️ Тянем страницу ЦЕЛИКОМ, и это не расточительность. Первая версия грузила
+  // 512 КБ «потому что теги в head» — и всегда возвращала пусто: замерено на живой
+  // странице, `<meta name="keywords">` лежит на отметке ~676 КБ, а
+  // `ytInitialPlayerResponse` — на ~685 КБ (в начале документа только скрипты
+  // плеера). Урезать лимит можно, только если сначала померить заново.
   const html = await loadPage(
     `https://www.youtube.com/watch?v=${videoId}&${LOCALE}`,
-    512 * 1024
+    3 * 1024 * 1024
   );
   if (!html) return null;
 
@@ -386,15 +389,16 @@ export interface ScrapedSearchPage {
  */
 export async function fetchSearchPage(
   query: string,
-  opts: { order?: "viewCount" | "relevance" | "date"; publishedAfter?: string | null } = {}
+  opts: {
+    order?: "viewCount" | "relevance" | "date";
+    /** Окно в днях; 0/null — за всё время. Уходит в фильтр страницы (см. buildSp). */
+    periodDays?: number | null;
+  } = {}
 ): Promise<ScrapedSearchPage | null> {
   const q = query.trim().slice(0, 120);
   if (!q) return null;
 
-  // Сортировка и период задаются параметром `sp` (это закодированный protobuf-фильтр).
-  // ⚠️ Готовые значения, а не сборка на лету: строить protobuf руками ради двух
-  // ручек — лишний код, который сломается тише, чем заметишь.
-  const sp = SEARCH_SORT[opts.order ?? "viewCount"];
+  const sp = buildSp(opts.order, opts.periodDays ?? null);
   const url =
     `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&${LOCALE}` +
     (sp ? `&sp=${sp}` : "");
@@ -415,12 +419,49 @@ export async function fetchSearchPage(
   };
 }
 
-// Значения параметра `sp` для сортировки выдачи (проверены на живой странице).
-const SEARCH_SORT: Record<string, string> = {
-  relevance: "",
-  viewCount: "CAMSAhAB",
-  date: "CAISAhAB",
-};
+/**
+ * Параметр `sp` — фильтры страницы выдачи (сортировка + период + тип).
+ *
+ * ⚠️⚠️ ПЕРИОД ОБЯЗАТЕЛЕН, если он задан. На этом уже обожглись: сортировка «по
+ * просмотрам» БЕЗ фильтра даты возвращает всевременной топ, и по широкому запросу
+ * («майнкрафт») в выдаче не оказалось НИ ОДНОГО ролика свежее 90 дней — самому
+ * молодому было 222 дня. Раздел показывал ноль, хотя свежие ролики в нише есть.
+ * Проверено живьём: с фильтром «за месяц» по тому же запросу приезжают ролики
+ * возрастом 10–20 дней.
+ *
+ * Формат — protobuf в base64url: поле 1 — сортировка (2 = по дате, 3 = по
+ * просмотрам; для релевантности поле не ставится вовсе), поле 2 — вложенные фильтры
+ * { поле 1 — период загрузки, поле 2 — тип «видео» }.
+ */
+function buildSp(order: string | undefined, periodDays: number | null): string {
+  const sort = order === "viewCount" ? 3 : order === "date" ? 2 : 0;
+
+  // Периоды страницы грубее наших: неделя / месяц / год. Берём ближайший СВЕРХУ —
+  // лишнее отсечём по точной дате уже у себя (см. collectPage), а вот недобрать
+  // свежее нельзя: именно это и ломало выдачу.
+  const upload =
+    periodDays == null || periodDays <= 0
+      ? 0
+      : periodDays <= 7
+        ? 3
+        : periodDays <= 31
+          ? 4
+          : 5;
+
+  const filters: number[] = [];
+  if (upload) filters.push(0x08, upload);
+  filters.push(0x10, 0x01); // тип: видео
+
+  const bytes: number[] = [];
+  if (sort) bytes.push(0x08, sort);
+  bytes.push(0x12, filters.length, ...filters);
+
+  return Buffer.from(bytes)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 function matchOne(text: string, re: RegExp): string | null {
   const m = re.exec(text);

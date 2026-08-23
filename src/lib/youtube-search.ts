@@ -138,7 +138,13 @@ export async function searchVideoPageCheap(opts: {
 
   // Первая страница: пробуем бесплатно.
   if (!token) {
-    const page = await fetchSearchPage(opts.q, { order: opts.order }).catch(() => null);
+    // ⚠️ Период передаём В ЗАПРОС, а не отсекаем только после: сортировка по
+    // просмотрам без фильтра даты отдаёт всевременной топ, и на широком запросе
+    // свежих роликов в выдаче не оказывается вовсе (ловили на «майнкрафт»).
+    const page = await fetchSearchPage(opts.q, {
+      order: opts.order,
+      periodDays: daysFrom(opts.publishedAfter),
+    }).catch(() => null);
     if (page && page.ids.length > 0) {
       const state = {
         apiKey: page.apiKey,
@@ -158,6 +164,14 @@ export async function searchVideoPageCheap(opts: {
 }
 
 export const FREE_TOKEN_PREFIX = "free:";
+
+/** Сколько дней назад начинается окно (из ISO-даты, которую ждёт Data API). */
+function daysFrom(publishedAfter?: string | null): number | null {
+  if (!publishedAfter) return null;
+  const from = Date.parse(publishedAfter);
+  if (Number.isNaN(from)) return null;
+  return Math.max(1, Math.round((Date.now() - from) / (24 * 60 * 60 * 1000)));
+}
 
 export interface PublicVideo {
   id: string;

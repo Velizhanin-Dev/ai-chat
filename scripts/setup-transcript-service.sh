@@ -267,6 +267,64 @@ class Handler(BaseHTTPRequestHandler):
 
         self.reply(200, {"html": data.decode("utf-8", errors="replace")})
 
+    def serve_post(self, query, payload):
+        """Пробрасывает POST на внутренний эндпоинт YouTube (продолжение выдачи).
+
+        ⚠️ Без него листание выдачи не работает ВООБЩЕ: у публичной страницы своей
+        «второй страницы» нет, всё подгружается POST-запросом на youtubei. Ловили
+        на проде — раздел всегда показывал ровно одну страницу результатов.
+
+        ⚠️ Белый список хостов и путей обязателен: иначе это открытый POST-прокси.
+        """
+        raw = (query.get("url") or [""])[0]
+        try:
+            target = urlparse(raw)
+        except ValueError:
+            target = None
+
+        ok = (
+            target
+            and target.scheme == "https"
+            and target.hostname == "www.youtube.com"
+            and target.path.startswith("/youtubei/v1/")
+        )
+        if not ok:
+            self.reply(400, {"error": "bad post url"})
+            return
+
+        try:
+            req = urllib.request.Request(
+                raw,
+                data=payload,
+                headers={
+                    "User-Agent": BROWSER_UA,
+                    "Content-Type": "application/json",
+                    "Accept-Language": "ru,en;q=0.8",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=PAGE_TIMEOUT) as up:
+                data = up.read(PAGE_MAX_BYTES)
+        except Exception:
+            self.reply(200, {"body": ""})
+            return
+
+        self.reply(200, {"body": data.decode("utf-8", errors="replace")})
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        if TOKEN and self.headers.get("X-Token") != TOKEN:
+            self.reply(403, {"error": "forbidden"})
+            return
+        if url.path.rstrip("/") != "/post":
+            self.reply(404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        payload = self.rfile.read(min(length, 256 * 1024)) if length else b"{}"
+        self.serve_post(parse_qs(url.query), payload)
+
     def serve_suggest(self, query):
         """Автодополнение поиска YouTube — сигнал спроса, которого нет в API."""
         q = (query.get("q") or [""])[0].strip()
