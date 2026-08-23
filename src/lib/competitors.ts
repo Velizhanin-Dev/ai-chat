@@ -32,11 +32,13 @@ export const ALERT_MIN_RATIO = 5;
 export const ALERT_MIN_VIEWS = 1000;
 export const ALERT_WINDOW_DAYS = 14;
 
-// ⚠️ Потолок автодогрузки за одно нажатие «Найти». Каждая страница — 100 units на
-// КАЖДЫЙ живой запрос (у пяти запросов страница стоит 500 из 10 000 суточных на
-// ключ). Без потолка узкая ниша, где двадцати подходящих роликов просто нет,
-// вычерпает выдачу до конца (~500 результатов) и сожжёт дневную квоту.
-export const COMPETITOR_MAX_AUTO_PAGES = 4;
+// ⚠️ Потолок автодогрузки за одно нажатие «Найти». Раньше стоял на 4, потому что
+// страница стоила 100 units на КАЖДЫЙ живой запрос. С бесплатным путём
+// (searchVideoPageCheap: страница выдачи + continuation) страница стоит около одного
+// unit на добор метаданных, поэтому потолок поднят. Совсем убирать нельзя: в узкой
+// нише двадцати подходящих роликов может не быть вовсе, и цикл будет листать выдачу
+// до конца — это уже не про деньги, а про время ответа и трафик.
+export const COMPETITOR_MAX_AUTO_PAGES = 10;
 
 /** Ролики короче этого — шортсы (YouTube поднял планку до 3 минут). */
 export const SHORT_MAX_SECONDS = 180;
@@ -73,6 +75,23 @@ export interface CompetitorVideo {
   ratio: number;
   /** По какому запросу нашли (для отладки подбора ключевых слов). */
   query: string;
+  /**
+   * Скорость набора: просмотров в сутки. null — посчитать не из чего.
+   *
+   * ⚠️ Зачем отдельно от кратности: «×5» у ролика годовалой давности и у ролика
+   * недельной — совершенно разные новости, а по одной кратности они неотличимы.
+   * Скорость показывает, что происходит СЕЙЧАС.
+   */
+  viewsPerDay: number | null;
+  /**
+   * true — скорость измерена по НАШИМ снимкам (два разных дня), false — прикинута
+   * как «всего просмотров / возраст ролика».
+   *
+   * ⚠️ Разница принципиальная, и её видно в интерфейсе: оценка по возрасту у
+   * старого ролика показывает среднее за всю жизнь и занижает всплеск, а у совсем
+   * свежего наоборот завышает. Выдавать её за измерение нельзя.
+   */
+  velocityMeasured: boolean;
 }
 
 export interface CompetitorResult {
@@ -230,6 +249,12 @@ export interface VideoInsight {
   subscribers: number;
   description: string;
   topComments: { text: string; likes: number }[];
+  /**
+   * Теги ролика. ⚠️ В Data API их нет (с 2021 их видит только владелец канала) —
+   * достаём со страницы ролика, см. youtube-scrape.ts. Пустой массив = не достали,
+   * это штатно.
+   */
+  tags: string[];
 }
 
 /** id ролика из ссылки любой формы (в reference лежит именно ссылка). */
@@ -261,6 +286,7 @@ export function insightPromptBlock(i: VideoInsight): string {
     .slice(0, 5)
     .map((c) => `- «${c.text.replace(/\s+/g, " ").slice(0, 220)}» (${c.likes} лайков)`)
     .join("\n");
+  const tags = i.tags.slice(0, 25).join(", ");
 
   return [
     `РЕФЕРЕНС — разбери его, прежде чем писать своё:`,
@@ -273,6 +299,12 @@ ${desc}` : "",
     comments ? `
 Что пишут в комментариях (по популярности):
 ${comments}` : "",
+    // ⚠️ Теги — живая лексика ниши словами автора, который уже собрал этот охват.
+    // Именно по ним видно, какими СЛОВАМИ зритель ищет тему, — то, чего не видно
+    // ни из названия, ни из описания.
+    tags ? `
+Теги, которые автор поставил ролику (лексика ниши, как её ищут):
+${tags}` : "",
     `
 Разбери: какой тут заход, на какую боль бьёт, что зацепило зрителей. Своё делай на той же механике, но НЕ копией.`,
   ]
@@ -325,6 +357,38 @@ export function isoSeconds(iso: string): number {
  */
 export function viewsPerSub(views: number, subscribers: number): number {
   return views / Math.max(subscribers, 1);
+}
+
+/**
+ * Скорость набора просмотров: по нашим снимкам, если их хватает, иначе оценкой
+ * «всего просмотров / возраст ролика».
+ *
+ * ⚠️ Оценка нужна с первого дня: копить снимки — это недели, а вопрос «этот пошёл
+ * быстрее прочих» стоит уже сейчас. Поэтому считаем сразу, но честно помечаем, что
+ * это оценка (velocityMeasured=false).
+ */
+export function videoVelocity(input: {
+  views: number;
+  publishedAt: string;
+  /** Снимки просмотров: день (UTC-полночь) → просмотры. */
+  snapshots?: { day: number; views: number }[];
+}): { viewsPerDay: number | null; measured: boolean } {
+  const snaps = [...(input.snapshots ?? [])].sort((a, b) => a.day - b.day);
+  if (snaps.length >= 2) {
+    const first = snaps[0];
+    const last = snaps[snaps.length - 1];
+    const days = (last.day - first.day) / (24 * 60 * 60 * 1000);
+    if (days >= 1) {
+      return { viewsPerDay: Math.max(0, Math.round((last.views - first.views) / days)), measured: true };
+    }
+  }
+
+  const published = Date.parse(input.publishedAt);
+  if (Number.isNaN(published)) return { viewsPerDay: null, measured: false };
+  // Возраст в днях, но не меньше суток: ролик, вышедший час назад, иначе даст
+  // фантастическую «скорость» от деления на 0,04 дня.
+  const ageDays = Math.max(1, (Date.now() - published) / (24 * 60 * 60 * 1000));
+  return { viewsPerDay: Math.round(input.views / ageDays), measured: false };
 }
 
 /** «×5,3» — на карточке это главная цифра, поэтому с одним знаком и запятой. */
@@ -406,6 +470,32 @@ const STOP_WORDS = new Set([
   "2024",
   "2025",
   "2026",
+  // ⚠️ Слова-связки и «оболочка» из брифа: ниша там пишется человеческой фразой
+  // («Майнкрафт-контент с обзорами модов»), и такие слова в поисковый запрос идти
+  // не должны — по ним ничего не находится.
+  "контент",
+  "контента",
+  "тематика",
+  "ниша",
+  "про",
+  "для",
+  "или",
+  "как",
+  "что",
+  "это",
+  "мой",
+  "моя",
+  "своих",
+  "разных",
+  "необычных",
+  "интересных",
+  "лучших",
+  "топ",
+]);
+
+// Предлоги и союзы: одна буква или две — в ключ не идут никогда.
+const GLUE_WORDS = new Set([
+  "с", "и", "в", "на", "по", "у", "о", "об", "от", "до", "за", "из", "к", "не", "а", "но",
 ]);
 
 function normalize(s: string): string {
@@ -435,6 +525,36 @@ export function splitPhrases(raw: string): string[] {
     .split(/[,;|\/\n]+/)
     .map(normalize)
     .filter(Boolean);
+}
+
+/**
+ * Поисковые КЛЮЧИ из человеческой фразы.
+ *
+ * ⚠️ Зачем: ниша в брифе написана для нас, предложением — «Майнкрафт-контент с
+ * обзорами модов, шейдеров, скинов и необычных механик». Раньше такая строка резалась
+ * только по запятым и уезжала в подсказки кусками («Майнкрафт-контент с обзорами
+ * модов»), а как поисковый запрос это мёртвая фраза: ни один зритель так не ищет.
+ * Ловили на живом канале про Minecraft.
+ *
+ * Поэтому из фразы достаём КОРНИ: значимые слова по одному (широкий охват — «майнкрафт»)
+ * и пары соседних (уже конкретнее — «обзор модов»). Хвост из падежей и синонимов
+ * доберёт автодополнение YouTube (см. fetchSuggestions), оно знает живые формулировки
+ * лучше любого нашего словаря.
+ */
+export function searchKeys(raw: string): string[] {
+  const meaningful = words(raw).filter(
+    (w) => w.length >= 3 && !STOP_WORDS.has(w) && !GLUE_WORDS.has(w)
+  );
+  if (meaningful.length === 0) return [];
+
+  const out: string[] = [];
+  // Одиночные слова — сначала: это самые охватные ключи, от них и пляшем.
+  for (const w of meaningful.slice(0, 4)) out.push(w);
+  // Пары соседних — конкретика вроде «обзор модов».
+  for (let i = 0; i + 1 < meaningful.length && out.length < 8; i += 1) {
+    out.push(`${meaningful[i]} ${meaningful[i + 1]}`);
+  }
+  return out;
 }
 
 /**
@@ -498,8 +618,16 @@ export function suggestQueries(input: {
 
   for (const r of ranked) push(r.text);
 
-  // Ниша из брифа — в конец списка и тоже по частям.
-  for (const v of splitPhrases(input.brief?.niche ?? "")) push(v.slice(0, 60));
+  // Ниша из брифа — в конец списка. ⚠️ Не куском фразы, а КЛЮЧАМИ (см. searchKeys):
+  // «Майнкрафт-контент с обзорами модов» как запрос не находит ничего, а «майнкрафт»
+  // и «обзор модов» — находят.
+  for (const phrase of splitPhrases(input.brief?.niche ?? "")) {
+    if (words(phrase).length <= 2) {
+      push(phrase.slice(0, 60));
+      continue;
+    }
+    for (const key of searchKeys(phrase)) push(key);
+  }
 
   return out.slice(0, 14);
 }

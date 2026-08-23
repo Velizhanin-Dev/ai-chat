@@ -29,11 +29,39 @@ import type {
 // Cookie с антифрод-state на время редиректа к Google.
 export const YT_STATE_COOKIE = "yt_oauth_state";
 
-// Права: чтение канала/видео (Data API) + аналитика по дням (Analytics API).
+// Права: чтение канала/видео (Data API) + аналитика по дням (Analytics API) +
+// ЗАПИСЬ метаданных ролика (название, описание, теги).
+//
+// ⚠️⚠️ `youtube.force-ssl` — «чувствительное» право у Google: оно даёт не только
+// правку метаданных, но и загрузку/удаление роликов, поэтому приложение с ним
+// проходит проверку Google, а пользователи на экране согласия видят более широкий
+// список. Мы используем его РОВНО для одного вызова `videos.update` с полем snippet
+// (см. updateVideoMetadata) — ничего не загружаем и не удаляем.
+//
+// ⚠️ Уже подключённые каналы этого права НЕ имеют: refresh-токен выдан под старый
+// набор. Такой канал не сломается — просто кнопка «Применить» попросит переподключить
+// (см. hasWriteScope и код SCOPE_REQUIRED).
+export const YT_WRITE_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
+
+// ⚠️⚠️ ПРАВО НА ЗАПИСЬ СЕЙЧАС НЕ ЗАПРАШИВАЕТСЯ — решение владельца (2026-08-23).
+// Причина: `youtube.force-ssl` у Google «чувствительное» (оно же даёт загрузку и
+// удаление роликов), приложение с ним проходит проверку, а пользователи видят на
+// экране согласия куда более широкий список прав. Пока этот разговор с Google не
+// начат, набор прав остаётся прежним.
+//
+// Серверная часть при этом ГОТОВА и лежит рядом (updateVideoMetadata + роут
+// /api/integrations/youtube/apply): она просто никогда не срабатывает, потому что
+// hasWriteScope у всех подключений false. Чтобы включить — добавить YT_WRITE_SCOPE
+// в SCOPES ниже и заново подключить канал; больше ничего менять не нужно.
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube.readonly",
   "https://www.googleapis.com/auth/yt-analytics.readonly",
 ];
+
+/** Выдано ли этому подключению право на правку роликов. */
+export function hasWriteScope(scope: string | null | undefined): boolean {
+  return typeof scope === "string" && scope.includes(YT_WRITE_SCOPE);
+}
 
 function appUrl(): string {
   return (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
@@ -657,6 +685,83 @@ export function isValidYmd(v: string | null): v is string {
 }
 
 // Временной ряд аналитики за окно [startDate, endDate] (просмотры/минуты/подписчики).
+/**
+ * Записать новые название / описание / теги ролика НА КАНАЛ.
+ *
+ * ⚠️⚠️ `videos.update` работает по принципу «что передал — то и стало»: если
+ * отправить snippet без `categoryId` или без `title`, эти поля обнулятся или запрос
+ * упадёт. Поэтому сначала читаем текущий snippet (1 unit) и правим только то, что
+ * человек реально поменял. Сама запись стоит 50 units — дорого по меркам API, но
+ * это разовое осознанное действие, а не фоновая синхронизация.
+ *
+ * ⚠️ Категорию и язык не трогаем вообще: их смена меняет продвижение ролика, а
+ * человек об этом не просил.
+ */
+export async function updateVideoMetadata(
+  accessToken: string,
+  videoId: string,
+  patch: { title?: string; description?: string; tags?: string[] }
+): Promise<{ ok: true } | { ok: false; reason: "not_found" | "forbidden" | "error"; message: string }> {
+  const current = await ytGet<{
+    items?: {
+      snippet?: {
+        title?: string;
+        description?: string;
+        tags?: string[];
+        categoryId?: string;
+        defaultLanguage?: string;
+      };
+    }[];
+  }>(
+    `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(videoId)}`,
+    accessToken
+  ).catch(() => null);
+
+  const snippet = current?.items?.[0]?.snippet;
+  if (!snippet) return { ok: false, reason: "not_found", message: "Ролик не найден" };
+
+  const body = {
+    id: videoId,
+    snippet: {
+      // ⚠️ Обязательные поля отправляем ВСЕГДА, даже если не меняем: без них API
+      // отвечает 400, а без categoryId ролик теряет категорию.
+      title: patch.title?.trim() || snippet.title || "",
+      description: patch.description ?? snippet.description ?? "",
+      tags: patch.tags ?? snippet.tags ?? [],
+      categoryId: snippet.categoryId ?? "22",
+      ...(snippet.defaultLanguage ? { defaultLanguage: snippet.defaultLanguage } : {}),
+    },
+  };
+
+  try {
+    const res = await fetch("https://www.googleapis.com/youtube/v3/videos?part=snippet", {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return { ok: true };
+
+    // 403 тут почти всегда значит «прав на запись не выдавали» — так и говорим,
+    // вместо общего «ошибка YouTube».
+    if (res.status === 403) {
+      return {
+        ok: false,
+        reason: "forbidden",
+        message: "YouTube не дал права на правку — переподключите канал",
+      };
+    }
+    const text = await res.text().catch(() => "");
+    console.error("[youtube] videos.update", res.status, text.slice(0, 300));
+    return { ok: false, reason: "error", message: "YouTube не принял изменения" };
+  } catch (err) {
+    console.error("[youtube] videos.update", err);
+    return { ok: false, reason: "error", message: "Не удалось связаться с YouTube" };
+  }
+}
+
 // Требует scope yt-analytics.readonly. При любой ошибке возвращает null — график
 // на дашборде просто не рисуем (частая причина: у канала нет доступа к аналитике).
 export async function fetchDailyAnalytics(

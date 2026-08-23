@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { fetchSuggestions, fetchVideoTags } from "./youtube-scrape";
 import { sanitizeBrief, type Brief } from "./brief";
 import {
   getValidAccessToken,
@@ -7,7 +8,7 @@ import {
   fetchRecentVideos,
 } from "./youtube";
 import {
-  searchVideoPage,
+  searchVideoPageCheap,
   fetchVideosByIds,
   fetchChannelsByIds,
   fetchFeaturedChannels,
@@ -35,6 +36,7 @@ import {
   looksRussian,
   suggestQueries,
   viewsPerSub,
+  videoVelocity,
   type CompetitorChannel,
   type CompetitorFilters,
   type NicheChannelsResult,
@@ -202,6 +204,40 @@ export interface CompetitorContext {
   telegramLinked: boolean;
 }
 
+/**
+ * Достраиваем подсказки живыми формулировками из автодополнения YouTube.
+ *
+ * ⚠️ Зачем: наши кандидаты — это корни («майнкрафт», «обзор модов»), вытащенные из
+ * ниши и тегов. Зритель ищет иначе, и как именно — знает только YouTube. Поэтому по
+ * трём верхним корням спрашиваем автодополнение и подмешиваем то, что люди реально
+ * дописывают. Без этого раздел предлагал куски фразы из брифа, по которым не
+ * находилось ничего (ловили на канале про Minecraft).
+ *
+ * ⚠️ Стоит НОЛЬ units: автодополнение живёт мимо Data API (см. youtube-scrape.ts) и
+ * кэшируется. Сбой — просто отдаём исходный список, раздел не падает.
+ */
+async function withLiveSuggestions(base: string[]): Promise<string[]> {
+  const roots = base.filter((q) => q.split(" ").length <= 2).slice(0, 3);
+  if (roots.length === 0) return base;
+
+  const expanded = await Promise.all(
+    roots.map((root) => fetchSuggestions(root).catch(() => [] as string[]))
+  );
+
+  const seen = new Set(base.map((q) => q.toLowerCase()));
+  const out = [...base];
+  // По четыре фразы на корень: список подсказок должен оставаться обозримым.
+  for (const list of expanded) {
+    for (const phrase of list.slice(0, 4)) {
+      const key = phrase.toLowerCase();
+      if (seen.has(key) || phrase.length > 60) continue;
+      seen.add(key);
+      out.push(phrase);
+    }
+  }
+  return out.slice(0, 20);
+}
+
 export async function getCompetitorContext(
   conversationId: string
 ): Promise<CompetitorContext> {
@@ -221,11 +257,13 @@ export async function getCompetitorContext(
     configured: hasYoutubeKeys(),
     channelConnected: Boolean(hint.channelId),
     channelTitle: hint.channelTitle,
-    suggested: suggestQueries({
-      brief,
-      tags: hint.tags,
-      channelTitle: hint.channelTitle,
-    }),
+    suggested: await withLiveSuggestions(
+      suggestQueries({
+        brief,
+        tags: hint.tags,
+        channelTitle: hint.channelTitle,
+      })
+    ),
     quota: keyPoolStatus(),
     searchCost: COMPETITOR_SEARCH_COST,
   };
@@ -266,7 +304,9 @@ async function collectPage(
     // Продолжать нечего: у этого запроса выдача кончилась.
     if (!first && !token) continue;
 
-    const page = await searchVideoPage({
+    // ⚠️ Сначала бесплатным путём (страница выдачи + continuation), и только если он
+    // не сработал — за 100 units через search.list. См. searchVideoPageCheap.
+    const page = await searchVideoPageCheap({
       q,
       order: opts.order,
       publishedAfter: opts.publishedAfter,
@@ -292,9 +332,18 @@ async function collectPage(
   let foreign = 0;
   const rows: CompetitorVideo[] = [];
   {
+    // ⚠️ Период отсекаем ЗДЕСЬ, а не в запросе: бесплатный путь фильтра по дате не
+    // имеет (у страницы только грубые «неделя/месяц/год»), зато тут есть точный
+    // publishedAt. Для платного пути это просто вторая проверка того же условия.
+    const since = opts.publishedAfter ? Date.parse(opts.publishedAfter) : NaN;
+
     for (const v of videos) {
       // Свой канал в конкурентах не показываем.
       if (hint.channelId && v.channelId === hint.channelId) continue;
+      if (!Number.isNaN(since)) {
+        const published = Date.parse(v.publishedAt);
+        if (!Number.isNaN(published) && published < since) continue;
+      }
       const ch = channels.get(v.channelId);
       if (!ch) continue;
       // Работаем только по русскоязычной нише: relevanceLanguage в поиске лишь
@@ -328,6 +377,12 @@ async function collectPage(
         subscribers: ch.subscribers,
         ratio: viewsPerSub(v.views, ch.subscribers),
         query: foundBy.get(v.id) ?? "",
+        // В выдаче поиска снимков нет (ролики каждый раз разные), поэтому скорость
+        // тут всегда оценка по возрасту — так и помечаем.
+        ...(() => {
+          const vel = videoVelocity({ views: v.views, publishedAt: v.publishedAt });
+          return { viewsPerDay: vel.viewsPerDay, velocityMeasured: vel.measured };
+        })(),
       });
     }
   }
@@ -882,6 +937,10 @@ export async function loadTrackedFeed(
           // набирает. Здесь метрика не приговор, а «этот пошёл быстрее прочих».
           ratio: viewsPerSub(v.views, subscribers),
           query: "лента конкурентов",
+          // Скорость проставляем ниже, когда прочитаны снимки просмотров: по ним
+          // она измеренная, а не прикинутая по возрасту (см. applyVelocity).
+          viewsPerDay: null,
+          velocityMeasured: false,
         });
       }
 
@@ -939,6 +998,9 @@ export async function loadTrackedFeed(
       });
     }
 
+    // Скорость набора: по НАШИМ снимкам, если они уже накоплены (см. applyVelocity).
+    await applyVelocity(videos, today);
+
     const result: TrackedFeedResult = {
       channels,
       videos: videos.sort((a, b) => b.ratio - a.ratio),
@@ -953,6 +1015,70 @@ export async function loadTrackedFeed(
     if (f.status === "no_keys") return { status: "no_keys" };
     return { status: "error", message: "Не удалось получить ленту конкурентов" };
   }
+}
+
+/**
+ * Скорость набора просмотров у роликов ленты + запись сегодняшнего снимка.
+ *
+ * ⚠️ Зачем копить самим: истории просмотров ЧУЖОГО ролика YouTube не отдаёт вовсе —
+ * ни в Data API, ни на странице. А без неё «×5» у ролика годовалой давности и у
+ * недельного выглядят одинаково, хотя это разные новости. Снимок пишем раз в сутки
+ * на ролик (уникальный ключ по дню), как и по каналам.
+ *
+ * ⚠️ Пока снимков меньше двух, скорость считается ОЦЕНКОЙ по возрасту ролика и
+ * помечается как неизмеренная (velocityMeasured=false) — «копим цифры» тут не
+ * годится: лента должна быть полезной с первого дня.
+ *
+ * Best-effort: сбой записи или чтения снимков ленту не роняет.
+ */
+async function applyVelocity(videos: CompetitorVideo[], today: Date): Promise<void> {
+  if (videos.length === 0) return;
+  const ids = videos.map((v) => v.id);
+
+  const history = await prisma.competitorVideoStat
+    .findMany({
+      where: { videoId: { in: ids } },
+      orderBy: { day: "asc" },
+      select: { videoId: true, day: true, views: true },
+    })
+    .catch((err) => {
+      console.error("[competitors] снимки роликов не прочитаны:", err);
+      return [] as { videoId: string; day: Date; views: number }[];
+    });
+
+  const byVideo = new Map<string, { day: number; views: number }[]>();
+  for (const row of history) {
+    const list = byVideo.get(row.videoId);
+    const point = { day: row.day.getTime(), views: row.views };
+    if (list) list.push(point);
+    else byVideo.set(row.videoId, [point]);
+  }
+
+  for (const v of videos) {
+    const vel = videoVelocity({
+      views: v.views,
+      publishedAt: v.publishedAt,
+      snapshots: byVideo.get(v.id),
+    });
+    v.viewsPerDay = vel.viewsPerDay;
+    v.velocityMeasured = vel.measured;
+  }
+
+  // Сегодняшний снимок — после расчёта: иначе он попадёт в выборку как вторая
+  // точка с тем же значением и «скорость» окажется нулевой.
+  await Promise.all(
+    videos.map((v) =>
+      prisma.competitorVideoStat
+        .upsert({
+          where: { videoId_day: { videoId: v.id, day: today } },
+          create: { videoId: v.id, day: today, views: v.views },
+          update: { views: v.views },
+        })
+        .catch(() => {
+          /* снимок не записался — не повод ронять ленту */
+        })
+    )
+  );
 }
 
 /**
@@ -1021,8 +1147,13 @@ export function clearTrackedFeedCache(conversationId: string): void {
 // (`channels.list`, 1 unit). Итого 3 units на ролик — против 100 за поиск.
 //
 // ⚠️ Транскрипта тут нет и быть не может: `captions.download` требует OAuth
-// владельца канала. Поэтому промпт честно говорит модели, что ролик не просмотрен,
-// и просит разбирать по названию, описанию и реакции зрителей (см. insightPromptBlock).
+// владельца канала. Расшифровку по такому ролику отдельно добывает микросервис
+// (см. competitorTranscriptBlock в content-plan-server.ts).
+//
+// ⚠️ ТЕГИ добираем МИМО API (youtube-scrape.ts, 0 units): в `videos.list` их с 2021
+// видит только владелец канала, а на странице ролика они лежат открыто. Это живая
+// лексика ниши словами автора, который уже собрал охват, — самая полезная часть
+// разбора после самого текста. Best-effort: не достали — блок просто пустой.
 //
 // Кэш общий на всех: данные публичные и от проекта не зависят.
 const INSIGHT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -1051,11 +1182,12 @@ export async function fetchVideoInsight(
 
     // Комментарии best-effort: у ролика их могли отключить, разбор от этого не
     // разваливается — просто без блока реакции.
-    const [comments, channels] = await Promise.all([
+    const [comments, channels, scraped] = await Promise.all([
       fetchTopComments(videoId),
       video.channelId
         ? fetchChannelsByIds([video.channelId])
         : Promise.resolve(new Map<string, PublicChannel>()),
+      fetchVideoTags(videoId).catch(() => null),
     ]);
 
     const insight: VideoInsight = {
@@ -1070,6 +1202,7 @@ export async function fetchVideoInsight(
       subscribers: channels.get(video.channelId)?.subscribers ?? 0,
       description: video.description,
       topComments: comments,
+      tags: scraped?.tags ?? [],
     };
     insightCache.set(videoId, { at: Date.now(), data: insight });
     return { status: "ok", insight };

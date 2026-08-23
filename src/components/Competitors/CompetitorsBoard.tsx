@@ -32,6 +32,8 @@ import {
   IconSearch,
 } from "@tabler/icons-react";
 import AddReferenceModal from "./AddReferenceModal";
+import KeywordFinder from "./KeywordFinder";
+import NicheTagsPanel from "./NicheTagsPanel";
 import {
   COMPETITOR_MAX_QUERIES,
   COMPETITOR_PERIODS,
@@ -344,6 +346,20 @@ export default function CompetitorsBoard() {
               clearable
             />
 
+            {/* Подбор ключей стоит ВПЛОТНУЮ к полю запросов и наполняет именно его:
+                это не отдельный инструмент «посмотреть цифры», а шаг перед поиском —
+                выбрал живую формулировку, по ней и ищем чужие ролики. */}
+            <KeywordFinder
+              slotsLeft={COMPETITOR_MAX_QUERIES - queries.length}
+              onPick={(phrase) =>
+                setQueries((cur) =>
+                  cur.includes(phrase) || cur.length >= COMPETITOR_MAX_QUERIES
+                    ? cur
+                    : [...cur, phrase]
+                )
+              }
+            />
+
             <Box className="cmp-fields">
               <Field label="Ролики за период">
                 <SegmentedControl
@@ -500,7 +516,10 @@ export default function CompetitorsBoard() {
           </Paper>
 
           {visible.length > 0 && (
-            <Group justify="flex-end">
+            <Group justify="space-between" align="center" gap="sm" wrap="wrap">
+              {/* Теги тех, у кого в этой нише уже сработало: лексика, которой
+                  зритель ищет тему. В Data API их нет — см. NicheTagsPanel. */}
+              <NicheTagsPanel videos={visible} />
               <Button
                 variant="light"
                 color="brand"

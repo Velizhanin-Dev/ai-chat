@@ -74,6 +74,7 @@ import os
 import re
 import subprocess
 import tempfile
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -107,6 +108,24 @@ IMAGE_HOSTS = {
 }
 IMAGE_MAX_BYTES = 8 * 1024 * 1024
 IMAGE_TIMEOUT = 15
+
+# ── Страницы YouTube (теги роликов, конкуренция по запросу, подсказки) ──────
+# Официальный API не отдаёт ни теги чужого ролика (с 2021 их видит только
+# владелец), ни автодополнение, а число результатов по запросу стоит 100 units из
+# 10 000 суточных. На странице всё это лежит открыто — на том же и построены
+# vidIQ с TubeBuddy. Разбор HTML живёт в приложении, здесь только доставка.
+#
+# ⚠️ Белый список путей обязателен: без него получается открытый прокси к любому
+# сайту, и его найдут в первые же сутки.
+PAGE_HOSTS = {"www.youtube.com", "m.youtube.com", "youtube.com"}
+PAGE_PATHS = ("/watch", "/results")
+PAGE_MAX_BYTES = 4 * 1024 * 1024
+PAGE_TIMEOUT = 20
+SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def fetch_subs(video_id: str):
@@ -204,6 +223,71 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def serve_page(self, query):
+        """Отдаёт HTML страницы YouTube приложению (оно и разбирает).
+
+        ⚠️ Разбор НЕ здесь: парсеры разметки живут в приложении
+        (src/lib/youtube-scrape.ts), рядом с прогонами на живых страницах. Две
+        реализации на разных языках неизбежно разъедутся — та же причина, по
+        которой субтитры отдаются сырым WebVTT.
+        """
+        raw = (query.get("url") or [""])[0]
+        try:
+            target = urlparse(raw)
+        except ValueError:
+            target = None
+
+        ok = (
+            target
+            and target.scheme == "https"
+            and target.hostname in PAGE_HOSTS
+            and target.path in PAGE_PATHS
+        )
+        if not ok:
+            self.reply(400, {"error": "bad page url"})
+            return
+
+        try:
+            limit = int((query.get("limit") or ["0"])[0])
+        except ValueError:
+            limit = 0
+        limit = min(limit or PAGE_MAX_BYTES, PAGE_MAX_BYTES)
+
+        try:
+            req = urllib.request.Request(
+                raw,
+                headers={"User-Agent": BROWSER_UA, "Accept-Language": "ru,en;q=0.8"},
+            )
+            with urllib.request.urlopen(req, timeout=PAGE_TIMEOUT) as up:
+                data = up.read(limit)
+        except Exception:
+            # Капча, редирект, обрыв — для приложения это штатное «данных нет».
+            self.reply(200, {"html": ""})
+            return
+
+        self.reply(200, {"html": data.decode("utf-8", errors="replace")})
+
+    def serve_suggest(self, query):
+        """Автодополнение поиска YouTube — сигнал спроса, которого нет в API."""
+        q = (query.get("q") or [""])[0].strip()
+        if not q or len(q) > 100:
+            self.reply(400, {"error": "bad query"})
+            return
+
+        url = (
+            f"{SUGGEST_URL}?client=firefox&ds=yt&hl=ru&gl=RU"
+            f"&q={urllib.parse.quote(q)}"
+        )
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+            with urllib.request.urlopen(req, timeout=PAGE_TIMEOUT) as up:
+                raw = up.read(256 * 1024)
+        except Exception:
+            self.reply(200, {"raw": ""})
+            return
+
+        self.reply(200, {"raw": raw.decode("utf-8", errors="replace")})
+
     def do_GET(self):
         url = urlparse(self.path)
 
@@ -221,6 +305,14 @@ class Handler(BaseHTTPRequestHandler):
         # эндпоинт быстро найдут.
         if TOKEN and self.headers.get("X-Token") != TOKEN:
             self.reply(403, {"error": "forbidden"})
+            return
+
+        path = url.path.rstrip("/")
+        if path == "/page":
+            self.serve_page(parse_qs(url.query))
+            return
+        if path == "/suggest":
+            self.serve_suggest(parse_qs(url.query))
             return
 
         video_id = (parse_qs(url.query).get("v") or [""])[0]

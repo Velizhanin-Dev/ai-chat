@@ -65,6 +65,7 @@ import {
 import ChannelDiagnostics from "./ChannelDiagnostics";
 import AchievementsCard from "@/components/Achievements/AchievementsCard";
 import RoadmapCard from "./RoadmapCard";
+import AudienceQuestions from "./AudienceQuestions";
 import PackagingMatrix, {
   buildMatrix,
   quadrantMeta,
@@ -470,6 +471,11 @@ function Dashboard({
 
       {/* Дорожная карта «что чинить по шагам» (docs/channel-roadmap.md). */}
       {projectId && <RoadmapCard projectId={projectId} />}
+
+      {/* Вопросы зрителей: единственный источник болей ЦА, написанных не нами и не
+          моделью, а самой аудиторией. Стоит рядом с картой — это тоже ответ на
+          «что делать дальше», только про темы, а не про починку. */}
+      {projectId && <AudienceQuestions projectId={projectId} />}
 
       {/* Метрики канала за всё время — только когда периода нет (у периода KPI
           теперь живут ВНУТРИ карточки канала, см. ChannelCard). */}

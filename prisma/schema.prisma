@@ -474,6 +474,23 @@ model TrackedChannelStat {
   @@unique([channelRowId, day])
 }
 
+// Дневной снимок просмотров ОТДЕЛЬНОГО ролика конкурента.
+//
+// ⚠️ Зачем отдельно от снимков канала: кратность «просмотры/подписчики» ничего не
+// говорит о СКОРОСТИ. Ролик с ×5 за год и ролик с ×5 за неделю — разные новости, а
+// YouTube истории просмотров чужого ролика не отдаёт вовсе. Копим сами, по одной
+// строке на ролик в сутки (как TrackedChannelStat), и считаем прирост в сутки.
+model CompetitorVideoStat {
+  id        String   @id @default(cuid())
+  videoId   String
+  day       DateTime @db.Date
+  views     Int
+  createdAt DateTime @default(now())
+
+  @@unique([videoId, day])
+  @@index([videoId, day])
+}
+
 // Сохранённая выдача поиска референсов.
 //
 // ⚠️ Раньше запуск жил ТОЛЬКО в памяти процесса, и это стоило денег: перезапуск

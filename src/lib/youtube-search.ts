@@ -1,4 +1,5 @@
 import { ytPublicGet } from "./youtube-keys";
+import { fetchSearchContinuation, fetchSearchPage } from "./youtube-scrape";
 
 // ── Публичный поиск по YouTube (раздел «Конкуренты в нише») ───────────────────
 // Отдельно от youtube.ts: там интеграция с каналом ПОЛЬЗОВАТЕЛЯ (OAuth, аналитика,
@@ -81,6 +82,82 @@ export async function searchVideoPage(opts: {
   }
   return { ids, nextPageToken: data.nextPageToken ?? null };
 }
+
+/**
+ * Страница выдачи, но СНАЧАЛА бесплатным путём.
+ *
+ * ⚠️⚠️ Ради этого затевалось: `search.list` стоит 100 units из 10 000 суточных —
+ * то есть сто поисков в день на весь продукт, отсюда и потолок в 4 страницы, и
+ * «лимит на сегодня исчерпан». Те же id лежат на публичной странице выдачи, а
+ * листается она внутренним continuation-эндпоинтом — обе операции бесплатны
+ * (см. youtube-scrape.ts). Метаданные всё равно добираются отдельным
+ * `videos.list` за 1 unit на полсотни роликов, так что качество не страдает.
+ *
+ * ⚠️ Путь неофициальный и может отвалиться в любой день — поэтому при любом сбое
+ * молча уходим в API, и раздел продолжает работать как раньше, просто дороже.
+ *
+ * ⚠️ Период (`publishedAfter`) бесплатный путь НЕ фильтрует: у страницы есть только
+ * грубые «неделя/месяц/год», а у нас 30/90/365. Отсекаем по дате уже после добора
+ * метаданных — там точный `publishedAt` (см. collectPage). Листать при этом дороже
+ * не стало: продолжения бесплатны.
+ */
+export async function searchVideoPageCheap(opts: {
+  q: string;
+  order?: SearchOrder;
+  publishedAfter?: string | null;
+  pageToken?: string | null;
+}): Promise<SearchPage> {
+  const token = opts.pageToken ?? null;
+
+  // Продолжение бесплатного пути: наш токен сериализован и помечен префиксом,
+  // чтобы не путать его с pageToken самого API.
+  if (token && token.startsWith(FREE_TOKEN_PREFIX)) {
+    try {
+      const state = JSON.parse(token.slice(FREE_TOKEN_PREFIX.length)) as {
+        apiKey: string | null;
+        clientVersion: string | null;
+        continuation: string | null;
+      };
+      const more = await fetchSearchContinuation(state);
+      if (more) {
+        return {
+          ids: more.ids,
+          nextPageToken: more.continuation
+            ? `${FREE_TOKEN_PREFIX}${JSON.stringify({ ...state, continuation: more.continuation })}`
+            : null,
+        };
+      }
+    } catch {
+      /* сломалось продолжение — начинаем страницу заново через API ниже */
+    }
+    // Бесплатное продолжение не вышло: платного эквивалента у этого токена нет,
+    // поэтому честно говорим «дальше нечего», а не платим 100 units за первую
+    // страницу повторно.
+    return { ids: [], nextPageToken: null };
+  }
+
+  // Первая страница: пробуем бесплатно.
+  if (!token) {
+    const page = await fetchSearchPage(opts.q, { order: opts.order }).catch(() => null);
+    if (page && page.ids.length > 0) {
+      const state = {
+        apiKey: page.apiKey,
+        clientVersion: page.clientVersion,
+        continuation: page.continuation,
+      };
+      return {
+        ids: page.ids,
+        nextPageToken: page.continuation
+          ? `${FREE_TOKEN_PREFIX}${JSON.stringify(state)}`
+          : null,
+      };
+    }
+  }
+
+  return searchVideoPage(opts);
+}
+
+export const FREE_TOKEN_PREFIX = "free:";
 
 export interface PublicVideo {
   id: string;

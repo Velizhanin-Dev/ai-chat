@@ -13,6 +13,7 @@ import {
 } from "@tabler/icons-react";
 import { formatRatio, type CompetitorVideo } from "@/lib/competitors";
 import { formatCount, formatDuration, formatShortDate } from "@/lib/youtube-client";
+import VideoTagsButton from "./VideoTagsButton";
 
 // Карточка чужого ролика. Используется на ОБЕИХ страницах — и в поиске референсов,
 // и в списке конкурентов, — поэтому вынесена из доски в свой файл.
@@ -152,6 +153,25 @@ export default function CompetitorCard({
                 {formatShortDate(video.publishedAt)}
               </Text>
             )}
+            {/* Скорость набора: «×5» у годовалого ролика и у недельного — разные
+                новости, по одной кратности они неотличимы. ⚠️ Пока снимков мало,
+                это ОЦЕНКА по возрасту (в среднем за всё время) — помечаем тильдой
+                и говорим об этом в подсказке, чтобы её не приняли за замер. */}
+            {video.viewsPerDay != null && video.viewsPerDay > 0 && (
+              <Tooltip
+                withArrow
+                label={
+                  video.velocityMeasured
+                    ? "Скорость набора по нашим замерам за последние дни"
+                    : "Примерная скорость: всего просмотров за время с выхода. Точнее станет, когда накопим замеры"
+                }
+              >
+                <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+                  {video.velocityMeasured ? "" : "~"}
+                  {formatCount(video.viewsPerDay)} в сутки
+                </Text>
+              </Tooltip>
+            )}
             <IconExternalLink size={12} style={{ color: "var(--mantine-color-dimmed)" }} />
           </Group>
 
@@ -184,6 +204,10 @@ export default function CompetitorCard({
           </ActionIcon>
         </Tooltip>
       )}
+      {/* Теги чужого ролика — того, чего официальный API не отдаёт вовсе.
+          Грузятся по клику (см. VideoTagsButton). */}
+      <VideoTagsButton videoId={video.id} top={onAddChannel ? 96 : 52} />
+
       <Tooltip label="Добавить референсом в контент-план" withArrow>
         <ActionIcon
           variant="filled"
