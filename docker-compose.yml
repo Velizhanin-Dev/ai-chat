@@ -36,9 +36,15 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runner
-      # NEXT_PUBLIC_* должны быть в окружении build-стадии (инлайнятся при next build).
+      # ⚠️ NEXT_PUBLIC_* инлайнятся ПРИ СБОРКЕ, поэтому передаются сюда, а не только
+      # в рантайм. Забыли переменную — фича тихо выключается в браузере: ошибок нет,
+      # просто пусто (ловили на прокси картинок: превью не грузились без VPN).
+      # Добавляете новую NEXT_PUBLIC_* — добавьте и сюда, и в Dockerfile (ARG+ENV).
       args:
         NEXT_PUBLIC_YM_ID: ${NEXT_PUBLIC_YM_ID}
+        NEXT_PUBLIC_YT_IMG_PROXY: ${NEXT_PUBLIC_YT_IMG_PROXY}
+        NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID: ${NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     restart: unless-stopped
     # наружу порт не публикуем — трафик идёт через Caddy по внутренней сети.
     expose:

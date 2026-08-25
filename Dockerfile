@@ -18,6 +18,20 @@ COPY . .
 # в build-стадию как ARG (из build.args в docker-compose), а не только в рантайм.
 ARG NEXT_PUBLIC_YM_ID
 ENV NEXT_PUBLIC_YM_ID=$NEXT_PUBLIC_YM_ID
+# ⚠️⚠️ КАЖДАЯ переменная NEXT_PUBLIC_* должна быть здесь, иначе в бандл попадёт
+# пустая строка и фича молча выключится в браузере — без единой ошибки в логах.
+# Так уже ловили: прокси картинок не попал в сборку, и превью роликов у российских
+# пользователей грузились напрямую с i.ytimg.com, то есть не грузились вовсе.
+#
+# Прокси картинок YouTube (i.ytimg.com и аватары каналов в РФ не открываются).
+ARG NEXT_PUBLIC_YT_IMG_PROXY
+ENV NEXT_PUBLIC_YT_IMG_PROXY=$NEXT_PUBLIC_YT_IMG_PROXY
+# Публичный id CloudPayments — без него кнопка «Зарубежная карта» неактивна.
+ARG NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID
+ENV NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID=$NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID
+# Публичный адрес приложения: канонические ссылки, OG, sitemap, redirect_uri.
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 RUN npx prisma generate
 RUN npm run build
 

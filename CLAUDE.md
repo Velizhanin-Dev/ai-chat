@@ -3273,6 +3273,14 @@ Redux, который перезагрузку не переживает. Отв
 локальный `yt-dlp` (он есть в образе), но с российского прода YouTube субтитры не отдаст.
 Картинки: `NEXT_PUBLIC_YT_IMG_PROXY` (напр. `https://aiproxy.velizhanin.com/img`) —
 ⚠️ инлайнится при СБОРКЕ, задавать в args docker-compose.
+⚠️⚠️ **На это уже наступили (2026-08-25): в `build.args` был ТОЛЬКО `NEXT_PUBLIC_YM_ID`**, а
+`NEXT_PUBLIC_YT_IMG_PROXY`, `NEXT_PUBLIC_CLOUDPAYMENTS_PUBLIC_ID` и `NEXT_PUBLIC_APP_URL` в
+сборку не передавались. В бандл уходила пустая строка, `ytImage` возвращал прямой адрес
+i.ytimg.com — и превью роликов у российских пользователей не грузились без VPN (а кнопка
+«Зарубежная карта» была вечно неактивной). Ошибок при этом нет НИГДЕ: ни в логах сборки, ни в
+рантайме — фича просто молча выключена. Все четыре переменные теперь есть и в `Dockerfile`
+(ARG+ENV), и в `docker-compose.yml` (build.args), и в `.env.example`. **Добавляешь новую
+`NEXT_PUBLIC_*` — пропиши её в обоих местах, иначе повторится то же самое.**
 Опц. `YTDLP_PROXY` (прокси для локального yt-dlp), `YTDLP_TIMEOUT_MS` (60000).
 Подбор ключей и теги конкурентов (мимо Data API, см. раздел про youtube-scrape):
 `YT_SCRAPE_URL` — база того же сервиса (`https://aiproxy.velizhanin.com/yt`); не задана —
