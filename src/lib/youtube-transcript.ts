@@ -44,6 +44,10 @@ const PROXY = process.env.YTDLP_PROXY || "";
 // 60 секунд с запасом; дольше ждать бессмысленно, человек уже ушёл.
 const TIMEOUT_MS = Math.max(10_000, Number(process.env.YTDLP_TIMEOUT_MS ?? 60_000));
 
+// Сколько помним «у ролика нет субтитров». Сутки, а не вечно: см. комментарий в
+// getTranscript — эта отметка нередко означает «не смогли забрать», а не «их нет».
+const NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
+
 // Языки по приоритету: родная русская дорожка → автоматическая русская →
 // автоперевод на русский (ru-en и подобные) → английская. Русский первым, потому
 // что клиенты русскоязычные, а перевод хуже оригинала.
@@ -83,17 +87,31 @@ export async function getTranscript(videoId: string): Promise<TranscriptResult> 
   if (cached) {
     // Пустой текст в кэше — это запомненное «субтитров нет»: не дёргаем yt-dlp
     // заново на каждый разбор ролика, у которого их и не было.
-    if (!cached.text) return { status: "none" };
-    return {
-      status: "ok",
-      transcript: {
-        videoId,
-        language: cached.language,
-        auto: cached.auto,
-        segments: (cached.segments as unknown as TranscriptSegment[]) ?? [],
-        text: cached.text,
-      },
-    };
+    //
+    // ⚠️ Но помним такое ТОЛЬКО СУТКИ, в отличие от самих субтитров (они не
+    // меняются и лежат вечно). Причина: «нет субтитров» — это не всегда правда.
+    // yt-dlp отдаёт ту же отметку, когда не смог их забрать по своей причине
+    // (бот-проверка не распозналась как блокировка, ролик только вышел и авто-
+    // субтитры ещё не сгенерированы, сервис моргнул). Без срока годности одна
+    // такая осечка навсегда помечала бы ролик как «неразбираемый».
+    const negativeAgeMs = Date.now() - cached.createdAt.getTime();
+    if (!cached.text && negativeAgeMs < NEGATIVE_TTL_MS) return { status: "none" };
+    if (!cached.text) {
+      // Срок вышел — пробуем добыть заново, а протухшую отметку убираем, чтобы
+      // не мешала записать свежий результат (videoId уникален).
+      await prisma.videoTranscript.delete({ where: { videoId } }).catch(() => {});
+    } else {
+      return {
+        status: "ok",
+        transcript: {
+          videoId,
+          language: cached.language,
+          auto: cached.auto,
+          segments: (cached.segments as unknown as TranscriptSegment[]) ?? [],
+          text: cached.text,
+        },
+      };
+    }
   }
 
   const fresh = SERVICE_URL ? await fromService(videoId) : await runYtDlp(videoId);
