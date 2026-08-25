@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { routeQuery, fullModeRoute } from "@/lib/router";
 import { extractVideoIds } from "@/lib/chat-video";
-import { buildVideoTranscriptBlock } from "@/lib/youtube-transcript";
+import { buildVideoTranscriptBlock, transcriptPendingBlock } from "@/lib/youtube-transcript";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
@@ -306,7 +306,12 @@ export async function POST(request: NextRequest) {
             buildVideoTranscriptBlock(videoIds),
             new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_WAIT_MS)),
           ]).catch(() => "");
-          if (block) systemForRun = [...systemBlocks, { type: "text" as const, text: block }];
+          // ⚠️ Блок добавляем ВСЕГДА, когда в сообщении была ссылка: пустой ответ
+          // (таймаут ожидания) раньше означал, что в промпт не уходит ничего — и
+          // модель отвечала по общему правилу «по ссылке я не смотрю», как будто
+          // разбора роликов у нас нет вовсе. Ловили на проде.
+          const videoBlock = block || transcriptPendingBlock(videoIds);
+          systemForRun = [...systemBlocks, { type: "text" as const, text: videoBlock }];
         }
 
         // Стратегия провайдера: claude (Anthropic SDK, кэш/effort), glm или
