@@ -88,7 +88,7 @@ HOST = os.environ.get("TRANSCRIPT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("TRANSCRIPT_PORT", "8791"))
 TOKEN = os.environ.get("TRANSCRIPT_TOKEN", "")
 YTDLP = os.environ.get("YTDLP_PATH", "/usr/local/bin/yt-dlp")
-TIMEOUT = int(os.environ.get("YTDLP_TIMEOUT", "90"))
+TIMEOUT = int(os.environ.get("YTDLP_TIMEOUT", "180"))
 
 # Русский первым: клиенты русскоязычные, а автоперевод хуже оригинала.
 SUB_LANGS = "ru,ru-orig,ru-.*,en,en-orig,en-.*"
@@ -128,51 +128,106 @@ BROWSER_UA = (
 )
 
 
+# ⚠️⚠️ Клиенты плеера, которыми пробуем забрать субтитры, ПО ОЧЕРЕДИ.
+#
+# Причина: с серверного адреса обычный веб-клиент часто упирается в «Sign in to
+# confirm you're not a bot» — YouTube требует proof-of-origin токен, которого у
+# датацентра нет. Клиенты мобильных приложений этой проверки обычно не получают.
+# Поймано вживую: у ролика есть русская авто-дорожка (видно в плеере), а сервис
+# возвращал «субтитров нет».
+#
+# Пустая строка = поведение по умолчанию (yt-dlp сам выберет клиента).
+#
+# ⚠️ Клиентов ТРИ, а не больше: общий бюджет времени делится между попытками
+# (per_try = TIMEOUT // len(PLAYER_CLIENTS)), и на четырёх попытка получается
+# слишком короткой — yt-dlp не успевает даже на быстром клиенте. Замерено на
+# проде: обычный веб-клиент упирался в 90 секунд и отдавал таймаут. При TIMEOUT=180
+# на попытку приходится по минуте — этого хватает и часовому ролику: качается
+# только дорожка субтитров (сотни килобайт), а минуты уходят на обход бот-проверки.
+PLAYER_CLIENTS = ["ios", "android", ""]
+
+
+def _run_ytdlp(video_id: str, client: str, tmp: str):
+    """Одна попытка. Возвращает (файлы, stderr) или (None, причина-ошибки)."""
+    cmd = [
+        YTDLP,
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs", SUB_LANGS,
+        "--sub-format", "vtt",
+        "--no-warnings",
+        "--no-progress",
+        "--no-playlist",
+        "-o", str(Path(tmp) / "%(id)s.%(ext)s"),
+    ]
+    if client:
+        cmd += ["--extractor-args", f"youtube:player_client={client}"]
+    cmd.append(f"https://www.youtube.com/watch?v={video_id}")
+
+    # ⚠️ Бюджет времени делим на число попыток: клиентов несколько, а общий потолок
+    # должен остаться прежним — на той стороне человек уже смотрит на индикатор.
+    per_try = max(15, TIMEOUT // len(PLAYER_CLIENTS))
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=per_try)
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    return sorted(Path(tmp).glob("*.vtt")), (done.stderr or "")
+
+
 def fetch_subs(video_id: str):
     """Возвращает (language, vtt) или (None, причина)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        cmd = [
-            YTDLP,
-            "--skip-download",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs", SUB_LANGS,
-            "--sub-format", "vtt",
-            "--no-warnings",
-            "--no-progress",
-            "--no-playlist",
-            "-o", str(Path(tmp) / "%(id)s.%(ext)s"),
-            f"https://www.youtube.com/watch?v={video_id}",
-        ]
-        try:
-            done = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            return None, "timeout"
+    last_err = ""
+    for client in PLAYER_CLIENTS:
+        with tempfile.TemporaryDirectory() as tmp:
+            files, err = _run_ytdlp(video_id, client, tmp)
+            if files is None:
+                # Таймаут одной попытки — идём к следующему клиенту: обычно он и
+                # оказывается быстрым. Если упрутся все, отдадим "timeout" ниже.
+                last_err = err
+                continue
+            if files:
+                if client:
+                    print(f"[subs] {video_id}: сработал клиент {client}", flush=True)
+                return _pick_best(files)
 
-        files = sorted(Path(tmp).glob("*.vtt"))
-        if not files:
-            err = (done.stderr or "").lower()
+            last_err = err
+            low = err.lower()
             # «Sign in to confirm you're not a bot» — это защита, а не отсутствие
-            # субтитров. Разные вещи: первое чинится, второе нет.
-            if "sign in" in err or "bot" in err or "blocked" in err:
-                return None, "blocked"
-            return None, "none"
+            # субтитров. Разные вещи: первое лечится другим клиентом, второе нет.
+            blocked = "sign in" in low or "bot" in low or "blocked" in low
+            # Не заблокировали, а просто нет дорожек — перебирать клиентов
+            # бессмысленно, у всех будет то же самое.
+            if not blocked and "subtitle" not in low and "requested format" not in low:
+                return None, "none"
 
-        def rank(p: Path) -> int:
-            lang = p.name.split(".")[-2] if p.name.count(".") >= 2 else ""
-            if lang == "ru":
-                return 0
-            if lang.startswith("ru"):
-                return 1
-            if lang == "en":
-                return 2
-            if lang.startswith("en"):
-                return 3
-            return 4
+    # ⚠️ Причину пишем в журнал: без неё «нет субтитров» и «нас забанили»
+    # выглядят одинаково, и диагностировать нечем (ловили на проде).
+    print(f"[subs] {video_id}: не получилось — {last_err.strip()[:300]}", flush=True)
+    if last_err == "timeout":
+        return None, "timeout"
+    return None, "blocked" if last_err else "none"
 
-        best = sorted(files, key=rank)[0]
-        lang = best.name.split(".")[-2] if best.name.count(".") >= 2 else ""
-        return lang, best.read_text(encoding="utf-8", errors="replace")
+
+def _pick_best(files):
+
+    def rank(p: Path) -> int:
+        lang = p.name.split(".")[-2] if p.name.count(".") >= 2 else ""
+        if lang == "ru":
+            return 0
+        if lang.startswith("ru"):
+            return 1
+        if lang == "en":
+            return 2
+        if lang.startswith("en"):
+            return 3
+        return 4
+
+    best = sorted(files, key=rank)[0]
+    lang = best.name.split(".")[-2] if best.name.count(".") >= 2 else ""
+    # ⚠️ Файл читаем ДО выхода из блока TemporaryDirectory вызывающего кода —
+    # поэтому _pick_best вызывается внутри `with`, а не после него.
+    return lang, best.read_text(encoding="utf-8", errors="replace")
 
 
 class Handler(BaseHTTPRequestHandler):
