@@ -31,15 +31,82 @@ DIR=/opt/transcript-service
 
 echo "── Зависимости ──────────────────────────────────────────────────"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq python3 curl >/dev/null
+
+# ⚠️⚠️ apt-get update тут НЕ ВЫЗЫВАЕТСЯ просто так — только если чего-то реально
+# не хватает. Причина: на слабом сервере он отваливается по таймауту к зеркалам и
+# тянет за собой apt_news/esm_cache, забивающие единственное ядро на минуты.
+# Переустановка сервиса должна занимать секунды: правки в server.py делаются часто.
+apt_install() {
+  if [ -z "${APT_UPDATED:-}" ]; then
+    apt-get update -qq || echo "  ⚠️ apt-get update не прошёл — ставим из того, что есть"
+    APT_UPDATED=1
+  fi
+  apt-get install -y -qq "$@" >/dev/null 2>&1
+}
+
+if ! command -v python3 >/dev/null 2>&1; then
+  apt_install python3 || { echo "python3 не установился — без него никак"; exit 1; }
+fi
+command -v curl >/dev/null 2>&1 || apt_install curl || true
+
+# ⚠️⚠️ JS-движок нужен НЕ ДЛЯ КРАСОТЫ. Без него yt-dlp разбирает player JS
+# собственным интерпретатором на Python — замерено на проде: 53 секунды ЧИСТОГО
+# процессорного времени на один ролик («JS Challenge Providers: … node
+# (unavailable)» в логе). На машине с одним ядром это гарантированный таймаут.
+# ⚠️ Установка НЕ ФАТАЛЬНА: без node сервис работает, просто медленно.
+if ! command -v node >/dev/null 2>&1; then
+  apt_install nodejs || true
+fi
+
+# Второй путь — бинарник с nodejs.org: apt тут регулярно отваливается, а в
+# репозиториях версия бывает слишком старой.
+if ! command -v node >/dev/null 2>&1; then
+  NODE_ARCH="x64"
+  case "$(uname -m)" in
+    aarch64|arm64) NODE_ARCH="arm64" ;;
+  esac
+  NODE_VER="${NODE_VERSION:-v22.11.0}"
+  echo "  node ставим бинарником ${NODE_VER} (${NODE_ARCH})"
+  mkdir -p /opt/node
+  # ⚠️ tar.gz, а не tar.xz: xz-utils на минимальных образах бывает не установлен.
+  if curl -fsSL --max-time 180 "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${NODE_ARCH}.tar.gz" | tar -xz -C /opt/node --strip-components=1; then
+    ln -sf /opt/node/bin/node /usr/local/bin/node
+  else
+    echo "  ⚠️ nodejs не установился"
+  fi
+fi
 
 echo "── yt-dlp ${YTDLP_VERSION} ──────────────────────────────────────"
-curl -sL --max-time 120 \
-  "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
-  -o /usr/local/bin/yt-dlp
-chmod +x /usr/local/bin/yt-dlp
+# ⚠️ Не перекачиваем, если нужная версия уже стоит: скачивание с github — это
+# ещё десятки секунд на медленном канале, а переустановка делается часто (правки
+# в server.py). Принудительно перекачать — YTDLP_FORCE=1.
+if [ "$(/usr/local/bin/yt-dlp --version 2>/dev/null)" = "${YTDLP_VERSION}" ] && [ -z "${YTDLP_FORCE:-}" ]; then
+  echo "  уже установлен, пропускаем"
+else
+  # ⚠️⚠️ Качаем СБОРКУ yt-dlp_linux, а не обычный `yt-dlp`. Причина найдена
+  # замером на проде: YouTube отдаёт файл субтитров только клиенту с «браузерным»
+  # TLS-отпечатком, иначе — HTTP 429 Too Many Requests. yt-dlp умеет это через
+  # impersonation (библиотека curl_cffi), но в обычном бинарнике её НЕТ:
+  # «The extractor specified to use impersonation … but no impersonate target is
+  # available» — и добыча падает уже НА СКАЧИВАНИИ найденной дорожки.
+  # Сборка yt-dlp_linux собрана вместе с curl_cffi.
+  YTDLP_BIN="yt-dlp_linux"
+  case "$(uname -m)" in
+    aarch64|arm64) YTDLP_BIN="yt-dlp_linux_aarch64" ;;
+  esac
+  curl -sL --max-time 180     "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/${YTDLP_BIN}"     -o /usr/local/bin/yt-dlp
+  chmod +x /usr/local/bin/yt-dlp
+  # Битая закачка (github отдал HTML вместо бинарника) — падаем на обычную сборку,
+  # чтобы сервис хотя бы работал.
+  /usr/local/bin/yt-dlp --version >/dev/null 2>&1 || {
+    echo "  ⚠️ ${YTDLP_BIN} не запускается — ставим обычную сборку"
+    curl -sL --max-time 180       "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp"       -o /usr/local/bin/yt-dlp
+    chmod +x /usr/local/bin/yt-dlp
+  }
+fi
 /usr/local/bin/yt-dlp --version
+echo "JS-движок (нужен yt-dlp, иначе разбор плеера съедает минуту CPU):"
+node --version 2>/dev/null || echo "  ⚠️ node НЕ УСТАНОВЛЕН — расшифровки будут очень медленными"
 
 echo "── Сервис ───────────────────────────────────────────────────────"
 mkdir -p "$DIR"
@@ -73,6 +140,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import tempfile
 import urllib.parse
 import urllib.request
@@ -89,6 +157,17 @@ PORT = int(os.environ.get("TRANSCRIPT_PORT", "8791"))
 TOKEN = os.environ.get("TRANSCRIPT_TOKEN", "")
 YTDLP = os.environ.get("YTDLP_PATH", "/usr/local/bin/yt-dlp")
 TIMEOUT = int(os.environ.get("YTDLP_TIMEOUT", "180"))
+
+# ⚠️ Два обхода лимитов YouTube. Оба ОПЦИОНАЛЬНЫ — без них сервис работает как есть.
+#
+# COOKIES: путь к экспортированным cookies браузера (формат Netscape). Запросы от
+# «залогиненного» клиента YouTube лимитирует заметно мягче. Кладётся руками рядом
+# с сервисом, автоматически ничего не выгружаем.
+#
+# PROXY: датацентровые адреса получают HTTP 429 на файл субтитров даже с браузерным
+# отпечатком — поймано на проде. Резидентный прокси эту стену убирает.
+COOKIES = os.environ.get("YTDLP_COOKIES", "/opt/transcript-service/cookies.txt")
+PROXY = os.environ.get("YTDLP_PROXY", "")
 
 # Русский первым: клиенты русскоязычные, а автоперевод хуже оригинала.
 SUB_LANGS = "ru,ru-orig,ru-.*,en,en-orig,en-.*"
@@ -159,10 +238,39 @@ def _run_ytdlp(video_id: str, client: str, tmp: str):
         "--no-warnings",
         "--no-progress",
         "--no-playlist",
+        # ⚠️ Режем ретраи и сетевые ожидания. Без этого yt-dlp при недоступном
+        # YouTube молча висит до нашего таймаута: на проде все три клиента съедали
+        # по минуте каждый и отдавали «timeout» через три минуты — без единой
+        # строчки о причине. Лучше быстро упасть с ошибкой в журнале.
+        # ⚠️⚠️ Без этого флага yt-dlp падает на РОЛИКАХ БЕЗ ФОРМАТОВ ВИДЕО, хотя
+        # субтитры он уже нашёл. Поймано на проде: в логе «Downloading subtitles:
+        # ru-orig, ru», а следом «ERROR: Requested format is not available» — YouTube
+        # включил SABR-эксперимент, обычных форматов у ролика нет, и yt-dlp всё
+        # равно резолвит формат, хотя мы просили --skip-download.
+        "--ignore-no-formats-error",
+        # ⚠️ Без «браузерного» TLS-отпечатка YouTube отвечает 429 на сам файл
+        # субтитров (проверено на проде). Работает только со сборкой, где есть
+        # curl_cffi (yt-dlp_linux); в обычной — молча игнорируется.
+        "--impersonate", "chrome",
+        "--socket-timeout", "15",
+        "--retries", "2",
+        "--extractor-retries", "1",
+        "--fragment-retries", "2",
         "-o", str(Path(tmp) / "%(id)s.%(ext)s"),
     ]
+    # ⚠️⚠️ player_skip=js — САМОЕ ВАЖНОЕ здесь по скорости. Без него yt-dlp качает
+    # player JS (base.js, пара мегабайт) и ИНТЕРПРЕТИРУЕТ его, чтобы расшифровать
+    # сигнатуры медиа-URL. Замерено на проде: 52 секунды ЧИСТОГО процессорного
+    # времени на ролик. А нам эти сигнатуры не нужны вовсе — мы качаем только
+    # дорожку субтитров, она лежит по прямой ссылке из player response.
+    extractor_args = ["player_skip=js"]
     if client:
-        cmd += ["--extractor-args", f"youtube:player_client={client}"]
+        extractor_args.append(f"player_client={client}")
+    if COOKIES and Path(COOKIES).is_file():
+        cmd += ["--cookies", COOKIES]
+    if PROXY:
+        cmd += ["--proxy", PROXY]
+    cmd += ["--extractor-args", "youtube:" + ";".join(extractor_args)]
     cmd.append(f"https://www.youtube.com/watch?v={video_id}")
 
     # ⚠️ Бюджет времени делим на число попыток: клиентов несколько, а общий потолок
@@ -175,8 +283,31 @@ def _run_ytdlp(video_id: str, client: str, tmp: str):
     return sorted(Path(tmp).glob("*.vtt")), (done.stderr or "")
 
 
+# ⚠️⚠️ Одновременно запускаем НЕ БОЛЬШЕ одного-двух yt-dlp.
+#
+# Причина: сервер маленький (нередко одно ядро), а каждый запуск — отдельный
+# процесс Python, который на старте парсит страницу и грузит модули. Три-четыре
+# таких процесса на одном ядре душат друг друга, и ВСЕ упираются в таймаут —
+# хотя поодиночке каждый отработал бы за секунды. Человек, нажавший «разобрать»
+# несколько раз подряд, устраивал себе ровно это.
+#
+# Ждать очереди дольше половины общего бюджета бессмысленно: лучше честно отдать
+# «занято», чем сжечь весь таймаут в очереди и всё равно ничего не успеть.
+_YTDLP_SLOTS = threading.Semaphore(int(os.environ.get("YTDLP_CONCURRENCY", "2")))
+
+
 def fetch_subs(video_id: str):
     """Возвращает (language, vtt) или (None, причина)."""
+    if not _YTDLP_SLOTS.acquire(timeout=max(5, TIMEOUT // 2)):
+        print(f"[subs] {video_id}: очередь занята, отказ", flush=True)
+        return None, "timeout"
+    try:
+        return _fetch_subs_locked(video_id)
+    finally:
+        _YTDLP_SLOTS.release()
+
+
+def _fetch_subs_locked(video_id: str):
     last_err = ""
     for client in PLAYER_CLIENTS:
         with tempfile.TemporaryDirectory() as tmp:
@@ -478,6 +609,9 @@ Environment=TRANSCRIPT_HOST=${HOST}
 Environment=TRANSCRIPT_PORT=${PORT}
 Environment=TRANSCRIPT_TOKEN=${TOKEN}
 Environment=YTDLP_PATH=/usr/local/bin/yt-dlp
+# ⚠️ Прокси для yt-dlp: задаётся при установке (YTDLP_PROXY=... ssh ... bash -s).
+# Нужен, когда YouTube отвечает 429 на файл субтитров с адреса датацентра.
+Environment=YTDLP_PROXY=${YTDLP_PROXY:-}
 ExecStart=/usr/bin/python3 ${DIR}/server.py
 Restart=always
 RestartSec=3
@@ -497,7 +631,14 @@ systemctl enable transcript >/dev/null 2>&1
 # сервис, а работающий оставляет как есть — со старым кодом и старым окружением.
 # На этом уже спотыкались: юнит обновился, а процесс продолжал слушать 127.0.0.1.
 systemctl restart transcript
-sleep 1
+
+# ⚠️ Ждём с повторами, а не одну секунду: на слабой машине (одно ядро, да ещё под
+# нагрузкой) python не успевает открыть сокет, и установщик писал «нет ответа» на
+# исправном сервисе. Ложная тревога хуже её отсутствия — идёшь чинить рабочее.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  curl -s --max-time 2 "http://${HOST}:${PORT}/health" >/dev/null 2>&1 && break
+  sleep 1
+done
 
 if systemctl is-active --quiet transcript; then
   echo "сервис: работает на ${HOST}:${PORT}"
