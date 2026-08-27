@@ -236,11 +236,22 @@ export async function generatePlanVideos(opts: {
 
 // ── Опорные блоки (Фаза 3): портреты ЦА / лестница Ханта / воронка / шортсы ──
 import type { BlockKey, Funnel, HuntStep, Persona } from "./content-plan";
-import { DEFAULT_SHORTS_COUNT } from "./content-plan";
+import { DEFAULT_SHORTS_COUNT, REASONS_COUNT } from "./content-plan";
+import type { BenefitPair, FunnelStep, Objection } from "./content-plan";
 
 const BLOCK_INSTRUCTION: Record<BlockKey, string> = {
   audience: `Собери 3–4 портрета ЦА канала. Верни JSON {"audience":[{"name":"короткое имя сегмента","who":"кто это: возраст/роль, кто платит vs кто пользуется","huntStage":"стадия лестницы Ханта словами","pains":["боли ОТ ПЕРВОГО ЛИЦА: — боюсь…, — хочу…"],"turnOff":"что оттолкнёт этот сегмент (например, молодёжный кликбейт для премиум-ЦА)"}]}.`,
   hunt: `Разложи лестницу Ханта под нишу канала — 5 ступеней. Верни JSON {"hunt":[{"stage":"название ступени словами","state":"состояние клиента","thoughts":["внутренние диалоги дословно, от 1 лица"],"content":"какой контент на этой ступени работает","topics":["2–4 темы-зацепки"]}]}.`,
+  objections: `Собери возражения клиента — то, что мешает сказать «да». Верни JSON {"objections":[{"text":"как это звучит из уст клиента, дословно","answer":"чем снимаем: аргумент, факт, кейс","video":"каким роликом это закрыть — формат и тема"}]}. 8-12 штук.
+⚠️ Возражение — НЕ боль. Боль двигает к покупке («хочу переехать»), возражение мешает («а вдруг не достроят»). Пиши именно вторые, живым языком клиента, а не маркетинговым.`,
+  benefits: `Переведи характеристики продукта в человеческую выгоду. Верни JSON {"benefits":[{"feature":"характеристика как её пишут","benefit":"что это значит для человека в его жизни"}]}. 12-20 пар.
+⚠️ Эталон перевода: «двор без машин» → «ребёнка можно спокойно отпускать гулять одного». Не «улучшенная шумоизоляция», а «сосед сверлит, а ты спишь». Выгода — это то, за что платят, и это «В» из ВИСП.
+⚠️ Бери характеристики из материалов клиента, если они есть в контексте. Чего нет — не выдумывай.`,
+  reasons: `Собери банк причин купить — ${REASONS_COUNT} штук. Верни JSON {"reasons":["причина 1", "причина 2", ...]}.
+⚠️ Причина — это КОНКРЕТНАЯ человеческая ситуация или выгода, а не свойство: не «хорошая транспортная доступность», а «утром выезжаешь на двадцать минут позже, чем раньше». Повторов быть не должно, общих слов тоже.
+⚠️ Ровно тут количество и есть ценность: из сотни причин десяток окажется золотым, и заранее не угадать какой. Не срезай список до «крепких семи» — дай все ${REASONS_COUNT}.`,
+  funnel: `Разложи путь клиента от ролика до заявки. Верни JSON {"funnelSteps":[{"step":"где человек находится: «увидел шортс», «зашёл на канал», «написал в директ»","goal":"что должно произойти на этом шаге","content":"каким контентом ведём","action":"что говорим или предлагаем — CTA, лид-магнит"}]}. 5-7 шагов.
+⚠️ Это НЕ про то, сколько снимать охватного и продающего (это и есть сам контент-план). Это путь ЧЕЛОВЕКА: что он видит, что делает дальше, чем мы его подхватываем.`,
   shorts: `Собери лёгкую сетку из ${DEFAULT_SHORTS_COUNT} шортсов. Верни JSON {"shorts":[{"titles":["название//тема шортса"],"previewTexts":["текст на превью, 2–3 слова"],"opening":"первая фраза-крючок (заход)","reference":"какой ролик-донор искать","pain":"боль ЦА от первого лица"}]}. Шортсы — верх воронки и холодный охват: нарезки, реакции, тесты со своим заходом.`,
 };
 
@@ -256,6 +267,10 @@ export async function generateBlock(opts: {
   hunt?: HuntStep[];
   funnel?: Funnel;
   shorts?: GenVideo[];
+  objections?: Objection[];
+  benefits?: BenefitPair[];
+  reasons?: string[];
+  funnelSteps?: FunnelStep[];
 }> {
   const { userId, projectId, brief, block } = opts;
   const settings = await getSettings();
@@ -315,6 +330,56 @@ export async function generateBlock(opts: {
     o = JSON.parse(t.slice(s, e + 1)) as Record<string, unknown>;
   } catch {
     return {};
+  }
+
+  if (block === "objections") {
+    const raw = Array.isArray(o.objections) ? o.objections : [];
+    const objections: Objection[] = raw.slice(0, 14).flatMap((x) => {
+      if (!x || typeof x !== "object") return [];
+      const r = x as Record<string, unknown>;
+      const text = str(r.text);
+      if (!text) return [];
+      return [{ text, answer: str(r.answer) ?? "", video: str(r.video) ?? "" }];
+    });
+    return { objections };
+  }
+
+  if (block === "benefits") {
+    const raw = Array.isArray(o.benefits) ? o.benefits : [];
+    const benefits: BenefitPair[] = raw.slice(0, 24).flatMap((x) => {
+      if (!x || typeof x !== "object") return [];
+      const r = x as Record<string, unknown>;
+      const feature = str(r.feature);
+      const benefit = str(r.benefit);
+      if (!feature || !benefit) return [];
+      return [{ feature, benefit }];
+    });
+    return { benefits };
+  }
+
+  if (block === "reasons") {
+    // ⚠️ Потолок щедрый: тут ценность именно в количестве (см. REASONS_COUNT).
+    const reasons = strArr(o.reasons, REASONS_COUNT + 20);
+    return { reasons };
+  }
+
+  if (block === "funnel") {
+    const raw = Array.isArray(o.funnelSteps) ? o.funnelSteps : [];
+    const funnelSteps: FunnelStep[] = raw.slice(0, 8).flatMap((x) => {
+      if (!x || typeof x !== "object") return [];
+      const r = x as Record<string, unknown>;
+      const step = str(r.step);
+      if (!step) return [];
+      return [
+        {
+          step,
+          goal: str(r.goal) ?? "",
+          content: str(r.content) ?? "",
+          action: str(r.action) ?? "",
+        },
+      ];
+    });
+    return { funnelSteps };
   }
 
   if (block === "audience") {
@@ -577,6 +642,10 @@ export function toPlanView(
     createdAt: Date;
     audience?: Prisma.JsonValue | null;
     huntLadder?: Prisma.JsonValue | null;
+    objections?: Prisma.JsonValue | null;
+    benefits?: Prisma.JsonValue | null;
+    reasons?: Prisma.JsonValue | null;
+    funnelSteps?: Prisma.JsonValue | null;
     funnel?: Prisma.JsonValue | null;
   },
   videos: VideoRow[]
@@ -594,6 +663,10 @@ export function toPlanView(
     audience: (plan.audience as unknown as Persona[] | null) ?? null,
     huntLadder: (plan.huntLadder as unknown as HuntStep[] | null) ?? null,
     funnel: (plan.funnel as unknown as Funnel | null) ?? null,
+    objections: (plan.objections as unknown as Objection[] | null) ?? null,
+    benefits: (plan.benefits as unknown as BenefitPair[] | null) ?? null,
+    reasons: (plan.reasons as unknown as string[] | null) ?? null,
+    funnelSteps: (plan.funnelSteps as unknown as FunnelStep[] | null) ?? null,
   };
 }
 

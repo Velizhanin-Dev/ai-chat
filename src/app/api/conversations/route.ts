@@ -10,6 +10,7 @@ import { isAdmin } from "@/lib/admin";
 import { attachPendingConnection } from "@/lib/youtube";
 import { normalizePlatform, type Platform } from "@/lib/platform";
 import { track } from "@/lib/achievements-server";
+import { ensureProfileJob } from "@/lib/project-profile-server";
 
 // Список диалогов текущего пользователя — только метаданные (id/title/даты),
 // без сообщений. Сообщения тянутся лениво по клику (GET /api/conversations/[id]).
@@ -145,6 +146,10 @@ export async function POST(req: Request) {
     // создание бы не прошло валидацию выше. Fire-and-forget.
     track(user.id, "project_created");
     track(user.id, "brief_done");
+    // Профиль проекта собирается САМ, в фоне: человек прошёл бриф и идёт писать
+    // сценарии, а не заказывать «разбор проекта». Пока задача считается, ответы
+    // строятся по брифу — как раньше. Fire-and-forget: сбой не роняет создание.
+    void ensureProfileJob({ userId: user.id, projectId: conv.id, hasProfile: false });
     const conversation: ConversationMeta = {
       id: conv.id,
       title: conv.title,

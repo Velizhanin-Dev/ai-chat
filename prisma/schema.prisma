@@ -47,6 +47,18 @@ model Conversation {
   // Заполняется при создании проекта; источник правды для system-промпта в чате
   // (раньше бриф был привязан к User — теперь к конкретному проекту/диалогу).
   brief     Json?
+  // Расширенный профиль проекта: результат разового разбора брифа + канала +
+  // изученных источников (см. src/lib/project-profile.ts). Именно он уходит в
+  // промпт вместо сырых ответов анкеты — тип ProjectProfile.
+  //
+  // ⚠️ Зачем отдельно от brief: бриф это СЫРЬЁ (восемь коротких ответов, ~340
+  // символов), а профиль — выводы: позиционирование, сегменты с возражениями,
+  // лексика ниши, гипотезы хуков. Ответы «средние по интернету» получались
+  // именно потому, что модель каждый раз достраивала всё это заново на ходу.
+  profile   Json?
+  profileAt DateTime?
+  // Изученные страницы проекта (сайт клиента, лендинги объектов, статьи).
+  sources   ProjectSource[]
   // Площадка проекта: "youtube" | "instagram" (см. Platform в src/lib/platform.ts).
   // ⚠️ Проект привязан к ОДНОЙ площадке: от неё зависят разделы меню, состав
   // аналитики и формат превью (16:9 против 9:16). Сменить площадку у готового
@@ -201,6 +213,15 @@ model ContentPlan {
   audience       Json?
   huntLadder     Json?
   funnel         Json?
+  // Блоки под продающий контент (добавлены 2026-08-27): возражения клиента,
+  // перевод характеристик в выгоды, банк причин купить и путь клиента по шагам.
+  // ⚠️ funnelSteps — ОТДЕЛЬНОЕ поле от funnel: старая «воронка» отвечала на «сколько
+  // чего снимать» (дубль плана, её убрали), новая — на «как человек доходит до
+  // заявки». Ломать сохранённые данные ради переиспользования поля незачем.
+  objections     Json?
+  benefits       Json?
+  reasons        Json?
+  funnelSteps    Json?
   model          String             @default("")
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
@@ -245,6 +266,42 @@ model ContentPlanVideo {
   updatedAt    DateTime    @updatedAt
 
   @@index([planId, order])
+}
+
+// Изученная страница: сайт клиента, лендинг объекта, статья.
+//
+// ⚠️ Их МНОГО на проект, и это не «карточка продукта»: у риэлтора десяток ЖК, у
+// продюсера — несколько клиентов, у эксперта — сайт, курс и лид-магнит. Поэтому
+// список именованных источников, а не одно поле.
+model ProjectSource {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  url            String
+  /** Имя, по которому на источник ссылаются в чате: «ЖК Северный», «курс по вязанию». */
+  title          String
+  /** Что это: "site" | "product" | "article" | "competitor". */
+  kind           String       @default("site")
+  /** Разбор страницы моделью (тип SourceDigest): оффер, выгоды, возражения, цены. */
+  digest         Json?
+  /** Сырой текст страницы на момент разбора — чтобы перегенерировать без похода в сеть. */
+  text           String       @default("")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId, createdAt])
+}
+
+// Кэш страниц. Общий на всех проектов: содержимое публичное и от проекта не
+// зависит, а поход за страницей — внешний запрос на пару мегабайт.
+model PageSnapshot {
+  id          String   @id @default(cuid())
+  url         String   @unique
+  title       String   @default("")
+  description String   @default("")
+  text        String   @default("")
+  headings    Json?
+  fetchedAt   DateTime @default(now())
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────

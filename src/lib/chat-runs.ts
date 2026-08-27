@@ -31,6 +31,8 @@ export interface ChatRunSnapshot {
   error: string | null;
   searching: boolean;
   analyzingVideo: boolean;
+  /** Читаем страницу сайта, которую человек прислал ссылкой. */
+  studyingPage: boolean;
   startedAt: number;
 }
 
@@ -43,6 +45,7 @@ interface ChatRun {
   error: string | null;
   searching: boolean;
   analyzingVideo: boolean;
+  studyingPage: boolean;
   startedAt: number;
   finishedAt: number | null;
   /** Пользователь нажал «Остановить» — цикл генерации выйдет на ближайшем токене. */
@@ -95,6 +98,7 @@ export function snapshot(r: ChatRun): ChatRunSnapshot {
     error: r.error,
     searching: r.searching,
     analyzingVideo: r.analyzingVideo,
+    studyingPage: r.studyingPage,
     startedAt: r.startedAt,
   };
 }
@@ -146,6 +150,7 @@ export function startRun(opts: {
     push: (token: string) => void;
     setSearching: () => void;
     setAnalyzingVideo: () => void;
+    setStudyingPage: () => void;
     /** Нажали «Остановить» — цикл обязан выйти. */
     stopped: () => boolean;
   }) => Promise<void>;
@@ -162,6 +167,7 @@ export function startRun(opts: {
     error: null,
     searching: false,
     analyzingVideo: false,
+    studyingPage: false,
     startedAt: Date.now(),
     finishedAt: null,
     stopping: false,
@@ -191,6 +197,10 @@ export function startRun(opts: {
         },
         setAnalyzingVideo: () => {
           run.analyzingVideo = true;
+          notify(run);
+        },
+        setStudyingPage: () => {
+          run.studyingPage = true;
           notify(run);
         },
         stopped: () => run.stopping,
@@ -277,6 +287,7 @@ export function streamRun(run: ChatRun, from = 0): ReadableStream<Uint8Array> {
   let sent = Math.min(Math.max(from, 0), run.text.length);
   let sentSearching = false;
   let sentAnalyzing = false;
+  let sentStudying = false;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -302,6 +313,10 @@ export function streamRun(run: ChatRun, from = 0): ReadableStream<Uint8Array> {
         if (run.analyzingVideo && !sentAnalyzing) {
           sentAnalyzing = true;
           event({ analyzingVideo: true });
+        }
+        if (run.studyingPage && !sentStudying) {
+          sentStudying = true;
+          event({ studyingPage: true });
         }
         if (run.text.length > sent) {
           event({ token: run.text.slice(sent) });

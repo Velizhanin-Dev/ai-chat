@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/http";
 import { sanitizeBrief, isBriefComplete } from "@/lib/brief";
+import { ensureProfileJob } from "@/lib/project-profile-server";
 
 // Бриф конкретного проекта (диалога): чтение для страницы настроек проекта и
 // перезапись при «Исправить информацию». Всё с проверкой владения — чужой проект
@@ -43,5 +44,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     where: { id: params.id },
     data: { brief: brief as unknown as Prisma.InputJsonValue },
   });
+  // Бриф поменялся — профиль, собранный по старым ответам, устарел. Пересобираем
+  // в фоне (force: старый профиль есть, но он теперь про другой проект).
+  void ensureProfileJob({ userId: user.id, projectId: params.id, force: true });
   return NextResponse.json({ ok: true, brief });
 }

@@ -24,6 +24,8 @@ import {
 } from "./competitors";
 import { cachedTrackedFeed } from "./competitors-server";
 import type { HuntStep, Persona } from "./content-plan";
+import { buildSourcesBlock, MAX_SOURCES, type SourceDigest } from "./project-profile";
+import { rememberedPagesBlock } from "./chat-pages";
 
 // Потолки: контекст должен помещаться рядом с методикой и брифом, а не вытеснять
 // их. Цифры подобраны так, чтобы оба блока вместе укладывались в ~2–3k токенов.
@@ -316,11 +318,53 @@ export async function buildCompetitorsContextBlock(
 }
 
 /**
+ * Материалы клиента: страницы, которые он дал изучить («изучи сайт N»).
+ *
+ * ⚠️ Это единственная фактура о том, ЧТО человек продаёт, из первых рук: оффер,
+ * характеристики, цены, формулировки. Без неё продающий контент и нативные
+ * закрытия модель придумывает из воздуха.
+ */
+export async function buildSourcesContextBlock(
+  conversationId: string
+): Promise<string | null> {
+  const rows = await prisma.projectSource.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: "asc" },
+    take: MAX_SOURCES,
+    select: { title: true, kind: true, url: true, digest: true, text: true },
+  });
+  if (rows.length === 0) return null;
+
+  // Разобранные источники (с digest) — подробным блоком; просто изученные
+  // страницы — короткой выжимкой (см. rememberedPagesBlock: тащить их целиком в
+  // каждый запрос значит вытеснить методику).
+  const digested = buildSourcesBlock(
+    rows.map((r) => ({
+      title: r.title,
+      kind: r.kind,
+      url: r.url,
+      digest: (r.digest as unknown as SourceDigest | null) ?? null,
+    }))
+  );
+  const remembered = rememberedPagesBlock(
+    rows.map((r) => ({
+      title: r.title,
+      url: r.url,
+      text: r.text ?? "",
+      hasDigest: Boolean(r.digest),
+    }))
+  );
+
+  const block = [digested, remembered].filter(Boolean).join("\n\n");
+  return block || null;
+}
+
+/**
  * Оба блока разом. Best-effort: сбой любого — чат не роняем, просто отвечаем без
  * этой части контекста (как со снимком канала).
  */
 export async function resolveProjectContext(conversationId: string): Promise<string[]> {
-  const [plan, competitors] = await Promise.all([
+  const [plan, competitors, sources] = await Promise.all([
     buildPlanContextBlock(conversationId).catch((err) => {
       console.error("[chat] plan context error:", err);
       return null;
@@ -329,6 +373,12 @@ export async function resolveProjectContext(conversationId: string): Promise<str
       console.error("[chat] competitors context error:", err);
       return null;
     }),
+    buildSourcesContextBlock(conversationId).catch((err) => {
+      console.error("[chat] sources context error:", err);
+      return null;
+    }),
   ]);
-  return [plan, competitors].filter((b): b is string => Boolean(b));
+  // Материалы клиента идут ПЕРВЫМИ: это фактура о продукте, и она нужнее всего —
+  // план и конкуренты вторичны по отношению к тому, что человек продаёт.
+  return [sources, plan, competitors].filter((b): b is string => Boolean(b));
 }

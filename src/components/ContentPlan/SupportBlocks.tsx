@@ -6,8 +6,10 @@ import {
   Badge,
   Box,
   Button,
+  CopyButton,
   Group,
   List,
+  Paper,
   Progress,
   Stack,
   Text,
@@ -43,7 +45,15 @@ export default function SupportBlocks({
       ? Boolean(plan.audience?.length)
       : k === "hunt"
         ? Boolean(plan.huntLadder?.length)
-        : shorts.length > 0;
+        : k === "objections"
+          ? Boolean(plan.objections?.length)
+          : k === "benefits"
+            ? Boolean(plan.benefits?.length)
+            : k === "reasons"
+              ? Boolean(plan.reasons?.length)
+              : k === "funnel"
+                ? Boolean(plan.funnelSteps?.length)
+                : shorts.length > 0;
 
   return (
     <Accordion
@@ -172,6 +182,107 @@ export default function SupportBlocks({
                     у них те же статусы и порядок (переключатель «Видео / Shorts»).
                     Раньше сетка показывала их вне статусов — поставил «в работе»,
                     и карточка не двигалась никуда, будто потерялась. */}
+                {/* Возражения: то, что мешает сказать «да». Показываем тройкой
+                    «возражение → чем снимаем → каким роликом», потому что без
+                    последнего это просто список страхов, а не работа. */}
+                {key === "objections" && plan.objections?.length ? (
+                  <Stack gap="xs">
+                    {plan.objections.map((o, i) => (
+                      <Paper key={i} p="xs" radius="md" bg="var(--mantine-color-default)">
+                        <Text size="sm" fw={600}>
+                          «{o.text}»
+                        </Text>
+                        {o.answer && (
+                          <Text size="xs" mt={2}>
+                            Чем снимаем: {o.answer}
+                          </Text>
+                        )}
+                        {o.video && (
+                          <Text size="xs" c="dimmed" mt={2}>
+                            Ролик: {o.video}
+                          </Text>
+                        )}
+                      </Paper>
+                    ))}
+                  </Stack>
+                ) : null}
+
+                {/* Характеристики → выгоды: две колонки, чтобы перевод читался
+                    как перевод, а не как ещё один список свойств. */}
+                {key === "benefits" && plan.benefits?.length ? (
+                  <Stack gap={6}>
+                    {plan.benefits.map((b, i) => (
+                      <Group key={i} gap="xs" wrap="nowrap" align="flex-start">
+                        <Text size="xs" c="dimmed" style={{ flex: "0 0 40%" }}>
+                          {b.feature}
+                        </Text>
+                        <Text size="sm" style={{ flex: 1 }}>
+                          → {b.benefit}
+                        </Text>
+                      </Group>
+                    ))}
+                  </Stack>
+                ) : null}
+
+                {/* Причины: банк, из которого растут темы. Ценность в количестве,
+                    поэтому показываем весь список и даём скопировать целиком. */}
+                {key === "reasons" && plan.reasons?.length ? (
+                  <Stack gap={6}>
+                    <Group justify="space-between">
+                      <Text size="xs" c="dimmed">
+                        Причин собрано: {plan.reasons.length}
+                      </Text>
+                      <CopyButton value={plan.reasons.join("\n")} timeout={1500}>
+                        {({ copied, copy }) => (
+                          <Button size="compact-xs" variant="subtle" onClick={copy}>
+                            {copied ? "Скопировано" : "Скопировать все"}
+                          </Button>
+                        )}
+                      </CopyButton>
+                    </Group>
+                    <Stack gap={2}>
+                      {plan.reasons.map((r, i) => (
+                        <Text key={i} size="sm">
+                          {i + 1}. {r}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Stack>
+                ) : null}
+
+                {/* Воронка: путь клиента по шагам, а не «сколько чего снимать». */}
+                {key === "funnel" && plan.funnelSteps?.length ? (
+                  <Stack gap="xs">
+                    {plan.funnelSteps.map((f, i) => (
+                      <Paper key={i} p="xs" radius="md" bg="var(--mantine-color-default)">
+                        <Group gap="xs" wrap="nowrap">
+                          <Badge size="sm" variant="light" color="brand">
+                            {i + 1}
+                          </Badge>
+                          <Text size="sm" fw={600}>
+                            {f.step}
+                          </Text>
+                        </Group>
+                        {f.goal && (
+                          <Text size="xs" mt={2}>
+                            Задача: {f.goal}
+                          </Text>
+                        )}
+                        {f.content && (
+                          <Text size="xs" c="dimmed" mt={2}>
+                            Чем ведём: {f.content}
+                          </Text>
+                        )}
+                        {f.action && (
+                          <Text size="xs" c="dimmed" mt={2}>
+                            Что предлагаем: {f.action}
+                          </Text>
+                        )}
+                      </Paper>
+                    ))}
+                  </Stack>
+                ) : null}
+
                 {key === "shorts" && shorts.length > 0 ? (
                   <Text size="sm" c="dimmed">
                     Собрано шортсов: {shorts.length}. Они на доске — переключатель

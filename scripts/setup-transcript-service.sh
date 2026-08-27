@@ -136,12 +136,15 @@ OpenRouter). Прод стоит в РФ и в YouTube за субтитрами
 Запуск: TRANSCRIPT_TOKEN=<секрет> python3 server.py  (слушает 127.0.0.1:8791)
 """
 
+import ipaddress
 import json
 import os
+import socket
 import re
 import subprocess
 import threading
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -168,6 +171,23 @@ TIMEOUT = int(os.environ.get("YTDLP_TIMEOUT", "180"))
 # отпечатком — поймано на проде. Резидентный прокси эту стену убирает.
 COOKIES = os.environ.get("YTDLP_COOKIES", "/opt/transcript-service/cookies.txt")
 PROXY = os.environ.get("YTDLP_PROXY", "")
+
+# ── Произвольные страницы (эндпоинт /fetch) ─────────────────────────────────
+# Нужны, чтобы ассистент мог изучить сайт клиента, лендинг ЖК, статью — то, что
+# он сейчас не видит вовсе. Отдаём СЫРОЙ HTML: извлечение текста живёт в
+# приложении (там же, где парсеры YouTube), чтобы логика не разъезжалась.
+#
+# ⚠️⚠️ ЭТО ЭНДПОИНТ «СХОДИ ПО ЛЮБОМУ АДРЕСУ», то есть classic SSRF, если сделать
+# наивно. Обязательные рубежи (все ниже реализованы):
+#   • только http/https, никаких file://, gopher://, ftp://;
+#   • резолвим DNS САМИ и запрещаем приватные, loopback и link-local адреса —
+#     169.254.169.254 это метаданные облака, доступ к ним = утечка ключей;
+#   • редиректы НЕ следуем автоматически, каждый шаг проверяем заново (иначе
+#     «безобидный» домен редиректит на 127.0.0.1 и проверка обходится);
+#   • лимит размера и таймаут, чтобы нас не подвесили на бесконечном потоке.
+FETCH_MAX_BYTES = int(os.environ.get("FETCH_MAX_BYTES", str(2 * 1024 * 1024)))
+FETCH_TIMEOUT = int(os.environ.get("FETCH_TIMEOUT", "20"))
+FETCH_MAX_REDIRECTS = 4
 
 # Русский первым: клиенты русскоязычные, а автоперевод хуже оригинала.
 SUB_LANGS = "ru,ru-orig,ru-.*,en,en-orig,en-.*"
@@ -361,6 +381,13 @@ def _pick_best(files):
     return lang, best.read_text(encoding="utf-8", errors="replace")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Гасит автоматические редиректы: каждый переход проверяем сами (см. fetch_any)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     # Тише в логах: журнал systemd не должен пухнуть от каждого запроса.
     def log_message(self, *args):
@@ -452,6 +479,77 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.reply(200, {"html": data.decode("utf-8", errors="replace")})
+
+    def fetch_any(self, url: str, depth: int = 0):
+        """Скачивает произвольную страницу. Возвращает (html, финальный_url) или (None, причина)."""
+        if depth > FETCH_MAX_REDIRECTS:
+            return None, "too many redirects"
+
+        try:
+            target = urlparse(url)
+        except ValueError:
+            return None, "bad url"
+        if target.scheme not in ("http", "https") or not target.hostname:
+            return None, "bad scheme"
+
+        # ⚠️ Резолвим ИМЯ САМИ и проверяем КАЖДЫЙ адрес: домен может указывать на
+        # 127.0.0.1 или на внутреннюю сеть, и без этой проверки сервис становится
+        # дверью во внутренний периметр.
+        try:
+            infos = socket.getaddrinfo(target.hostname, None)
+        except OSError:
+            return None, "dns failed"
+        for info in infos:
+            try:
+                ip = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                return None, "bad address"
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return None, "private address"
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": BROWSER_UA,
+                "Accept-Language": "ru,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        try:
+            # ⚠️ Редиректы обрабатываем РУКАМИ (NoRedirect ниже): автоматический
+            # переход увёл бы нас на непроверенный адрес.
+            opener = urllib.request.build_opener(_NoRedirect)
+            with opener.open(req, timeout=FETCH_TIMEOUT) as up:
+                ctype = (up.headers.get("Content-Type") or "").lower()
+                if "html" not in ctype and "text" not in ctype and "xml" not in ctype:
+                    return None, "not a page"
+                return up.read(FETCH_MAX_BYTES).decode("utf-8", errors="replace"), url
+        except urllib.error.HTTPError as err:
+            if err.code in (301, 302, 303, 307, 308):
+                location = err.headers.get("Location") or ""
+                if not location:
+                    return None, f"http {err.code}"
+                return self.fetch_any(urllib.parse.urljoin(url, location), depth + 1)
+            return None, f"http {err.code}"
+        except Exception:
+            return None, "unreachable"
+
+    def serve_fetch(self, query):
+        """Отдаёт HTML произвольной страницы приложению (оно и разбирает текст)."""
+        raw = (query.get("url") or [""])[0]
+        if not raw or len(raw) > 2000:
+            self.reply(400, {"error": "bad url"})
+            return
+
+        html, info = self.fetch_any(raw)
+        if html is None:
+            # ⚠️ Причину возвращаем НАРУЖУ: «страницу открыть не удалось, вот
+            # почему» человеку полезнее, чем молчание (та же логика, что с
+            # расшифровками). Ошибкой HTTP это не считаем — для приложения это
+            # штатный ответ.
+            self.reply(200, {"html": "", "reason": info})
+            return
+        self.reply(200, {"html": html, "url": info})
 
     def serve_post(self, query, payload):
         """Пробрасывает POST на внутренний эндпоинт YouTube (продолжение выдачи).
@@ -557,6 +655,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/suggest":
             self.serve_suggest(parse_qs(url.query))
+            return
+        if path == "/fetch":
+            self.serve_fetch(parse_qs(url.query))
             return
 
         video_id = (parse_qs(url.query).get("v") or [""])[0]

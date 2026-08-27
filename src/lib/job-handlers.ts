@@ -10,6 +10,7 @@ import { THUMBNAIL_GENERATE_QUOTA_COST } from "@/lib/thumbnails";
 import { track } from "@/lib/achievements-server";
 import { runChannelDiagnose } from "@/lib/channel-diagnose-server";
 import { runVideoAnalyze } from "@/lib/video-analyze-server";
+import { generateProfile } from "@/lib/project-profile-server";
 import type { DiagnoseKind } from "@/lib/youtube-types";
 import {
   BLOCKS,
@@ -250,15 +251,39 @@ registerJobHandler("content_plan_block", async ({ userId, conversationId, payloa
       })),
     });
   } else {
-    const data =
-      block === "audience"
-        ? { audience: (gen.audience ?? []) as unknown as object }
-        : { huntLadder: (gen.hunt ?? []) as unknown as object };
-    const empty =
-      (block === "audience" && !gen.audience?.length) ||
-      (block === "hunt" && !gen.hunt?.length);
-    if (empty) throw new Error("Не удалось собрать блок");
-    await prisma.contentPlan.update({ where: { id: planId }, data });
+    // ⚠️ Таблица «блок → поле → что считать пустым» в ОДНОМ месте: раньше это была
+    // цепочка тернарников на два блока, и каждый новый требовал править её в двух
+    // строках сразу (легко забыть проверку на пустоту и записать пустой массив).
+    const saved: Record<string, { data: object; filled: boolean }> = {
+      audience: {
+        data: { audience: (gen.audience ?? []) as unknown as object },
+        filled: Boolean(gen.audience?.length),
+      },
+      hunt: {
+        data: { huntLadder: (gen.hunt ?? []) as unknown as object },
+        filled: Boolean(gen.hunt?.length),
+      },
+      objections: {
+        data: { objections: (gen.objections ?? []) as unknown as object },
+        filled: Boolean(gen.objections?.length),
+      },
+      benefits: {
+        data: { benefits: (gen.benefits ?? []) as unknown as object },
+        filled: Boolean(gen.benefits?.length),
+      },
+      reasons: {
+        data: { reasons: (gen.reasons ?? []) as unknown as object },
+        filled: Boolean(gen.reasons?.length),
+      },
+      funnel: {
+        data: { funnelSteps: (gen.funnelSteps ?? []) as unknown as object },
+        filled: Boolean(gen.funnelSteps?.length),
+      },
+    };
+
+    const entry = saved[block];
+    if (!entry || !entry.filled) throw new Error("Не удалось собрать блок");
+    await prisma.contentPlan.update({ where: { id: planId }, data: entry.data });
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -302,4 +327,20 @@ registerJobHandler("video_analyze", async ({ userId, conversationId, payload }) 
     videoId: String(payload.videoId ?? ""),
     manualCtr: payload.manualCtr == null ? null : Number(payload.manualCtr),
   });
+});
+
+// ── Профиль проекта (собирается САМ после брифа) ────────────────────────────
+//
+// ⚠️ Единственный обработчик, который квоту НЕ списывает: задачу ставит система,
+// а не человек (см. ensureProfileJob). Ручная пересборка из настроек идёт мимо
+// очереди, своим роутом, и там квота списывается как положено.
+
+registerJobHandler("project_profile", async ({ userId, conversationId }) => {
+  if (!conversationId) throw new Error("Задача без проекта");
+
+  const res = await generateProfile({ userId, projectId: conversationId });
+  // Бросаем, чтобы сработал штатный ретрай очереди: причина почти всегда
+  // временная (провайдер моргнул), а профиль нужен ровно один раз.
+  if (res.status !== "ok") throw new Error(res.message);
+  return { profile: res.profile };
 });

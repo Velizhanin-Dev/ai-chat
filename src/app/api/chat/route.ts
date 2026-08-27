@@ -1,11 +1,15 @@
 import { NextRequest } from "next/server";
 import { routeQuery, fullModeRoute } from "@/lib/router";
 import { extractVideoIds } from "@/lib/chat-video";
+import { extractWebUrls } from "@/lib/chat-links";
+import { buildPagesBlock } from "@/lib/chat-pages";
 import { buildVideoTranscriptBlock, transcriptPendingBlock } from "@/lib/youtube-transcript";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
 import { getChannelSnapshotCached } from "@/lib/youtube";
 import { resolveProjectContext } from "@/lib/chat-project-context";
+import { sanitizeProfile } from "@/lib/project-profile";
+import { ensureProfileJob } from "@/lib/project-profile-server";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
@@ -175,7 +179,7 @@ export async function POST(request: NextRequest) {
     }
     const conv = await prisma.conversation.findUnique({
       where: { id: conversationId },
-      select: { userId: true, brief: true },
+      select: { userId: true, brief: true, profile: true },
     });
     if (!conv || conv.userId !== sessionUser.id) {
       return new Response(JSON.stringify({ error: "Проект не найден" }), {
@@ -191,6 +195,18 @@ export async function POST(request: NextRequest) {
         JSON.stringify({ error: "Сначала пройдите бриф проекта", code: "BRIEF_REQUIRED" }),
         { status: 403, headers: { "Content-Type": "application/json" } }
       );
+    }
+    // Разобранный профиль проекта: он подставляется в промпт ВМЕСТО сырых ответов
+    // анкеты (см. project-profile.ts). Не собран — работаем по брифу, как раньше.
+    const profile = sanitizeProfile(conv.profile);
+    // Догоняем тех, у кого проект создан ДО появления профиля: ставим фоновую
+    // сборку прямо отсюда. Этот ответ уйдёт по брифу, следующий — уже по профилю.
+    // ⚠️ Отдельного экрана «соберите профиль» не делаем: человек не должен знать
+    // про внутреннюю кухню, и уж точно не должен нажимать кнопку, чтобы ассистент
+    // начал работать нормально. ensureProfileJob сам не даст ставить задачу чаще
+    // раза в сутки — иначе условие «профиля нет» срабатывало бы на КАЖДОМ сообщении.
+    if (!profile) {
+      void ensureProfileJob({ userId: sessionUser.id, projectId: conversationId, hasProfile: false });
     }
     const persistId = conversationId;
 
@@ -256,7 +272,8 @@ export async function POST(request: NextRequest) {
             userName,
             channel.channelBlock,
             channel.nudge,
-            projectBlocks
+            projectBlocks,
+            profile
           )
         : buildSystem(
             route,
@@ -269,13 +286,17 @@ export async function POST(request: NextRequest) {
             userName,
             channel.channelBlock,
             channel.nudge,
-            projectBlocks
+            projectBlocks,
+            profile
           );
 
     // Ссылки на ролики в текущем сообщении: расшифровку добываем МЫ, а не человек.
     // ⚠️ Смотрим только последнее сообщение, а не всю историю: иначе каждый ответ в
     // длинном диалоге заново тянул бы ролики, о которых говорили полчаса назад.
     const videoIds = extractVideoIds(lastUser);
+    // Ссылки на обычные сайты: лендинг клиента, объект, статья. Читаем их так же,
+    // как ролики, — по ходу разговора, а не через настройки проекта.
+    const webUrls = extractWebUrls(lastUser);
 
     // Веб-поиск: только на OpenRouter (плагин `web`), только если включён в админке,
     // и только на содержательных запросах — на «привет / спасибо» (category === "chat")
@@ -291,13 +312,27 @@ export async function POST(request: NextRequest) {
       userId: sessionUser.id,
       conversationId,
       question: lastUserContent,
-      generate: async ({ push, setSearching, setAnalyzingVideo, stopped }) => {
+      generate: async ({ push, setSearching, setAnalyzingVideo, setStudyingPage, stopped }) => {
         if (webSearch > 0) setSearching();
 
         // Ролик по ссылке: расшифровку тянет внешний сервис, это секунды, поэтому
         // сразу поднимаем флаг — иначе молчание до первого токена читается как
         // «завис».
         let systemForRun = systemBlocks;
+
+        // ── Сайты по ссылке ─────────────────────────────────────────────────
+        // ⚠️ Свой индикатор: чтение страницы — внешний запрос на секунды, и
+        // молчание до первого токена читается как «завис».
+        if (webUrls.length > 0) {
+          setStudyingPage();
+          const pages = await buildPagesBlock(conversationId, webUrls).catch(() => ({
+            block: "",
+            pages: [],
+          }));
+          if (pages.block) {
+            systemForRun = [...systemForRun, { type: "text" as const, text: pages.block }];
+          }
+        }
         if (videoIds.length > 0) {
           setAnalyzingVideo();
           // ⚠️ Ждём не дольше TRANSCRIPT_WAIT_MS: не успели — отвечаем без текста
@@ -311,7 +346,7 @@ export async function POST(request: NextRequest) {
           // модель отвечала по общему правилу «по ссылке я не смотрю», как будто
           // разбора роликов у нас нет вовсе. Ловили на проде.
           const videoBlock = block || transcriptPendingBlock(videoIds);
-          systemForRun = [...systemBlocks, { type: "text" as const, text: videoBlock }];
+          systemForRun = [...systemForRun, { type: "text" as const, text: videoBlock }];
         }
 
         // Стратегия провайдера: claude (Anthropic SDK, кэш/effort), glm или

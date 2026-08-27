@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Text } from "@mantine/core";
-import { IconFileTextSpark, IconWorldSearch } from "@tabler/icons-react";
+import { IconWorldWww, IconFileTextSpark, IconWorldSearch } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 
 // Индикатор «думает» до первого токена. TTFT у нас долгий (не из-за размера
@@ -40,18 +40,41 @@ const VIDEO_PHRASES = [
   "пишу ответ",
 ];
 
+// Своя цепочка на время чтения сайта по ссылке: страница тянется внешним
+// запросом, и человек только что сам её прислал — ждёт реакции именно на неё.
+const PAGE_PHRASES = [
+  "изучаю страницу",
+  "читаю, что там написано",
+  "выделяю оффер и выгоды",
+  "собираю мысли",
+  "пишу ответ",
+];
+
 const STEP_MS = 1900;
 
 export default function ThinkingIndicator() {
   const isSearching = useAppSelector((s) => s.chat.isSearching);
   const isAnalyzingVideo = useAppSelector((s) => s.chat.isAnalyzingVideo);
+  const isStudyingPage = useAppSelector((s) => s.chat.isStudyingPage);
   const [i, setI] = useState(0);
 
   // Разбор ролика важнее показать, чем поиск: он дольше и человек только что сам
   // прислал ссылку — ждёт реакции именно на неё.
-  const mode = isAnalyzingVideo ? "video" : isSearching ? "search" : "think";
+  const mode = isAnalyzingVideo
+    ? "video"
+    : isStudyingPage
+      ? "page"
+      : isSearching
+        ? "search"
+        : "think";
   const phrases =
-    mode === "video" ? VIDEO_PHRASES : mode === "search" ? SEARCH_PHRASES : PHRASES;
+    mode === "video"
+      ? VIDEO_PHRASES
+      : mode === "page"
+        ? PAGE_PHRASES
+        : mode === "search"
+          ? SEARCH_PHRASES
+          : PHRASES;
 
   // Цепочка setTimeout по индексу: шагаем вперёд и останавливаемся на последней
   // фразе (без интервала, который бы крутился вхолостую после остановки).
@@ -65,8 +88,8 @@ export default function ThinkingIndicator() {
   // шагнула вперёд. Возвращаемся в начало, чтобы «ищу в интернете» реально
   // показалось, а не проскочило мимо на третьей фразе.
   useEffect(() => {
-    if (isSearching || isAnalyzingVideo) setI(0);
-  }, [isSearching, isAnalyzingVideo]);
+    if (isSearching || isAnalyzingVideo || isStudyingPage) setI(0);
+  }, [isSearching, isAnalyzingVideo, isStudyingPage]);
 
   return (
     <Text
@@ -76,13 +99,18 @@ export default function ThinkingIndicator() {
       aria-label={
         mode === "video"
           ? "Разбираю видео"
-          : mode === "search"
-            ? "Ищу в интернете"
-            : "Готовлю ответ"
+          : mode === "page"
+            ? "Изучаю страницу"
+            : mode === "search"
+              ? "Ищу в интернете"
+              : "Готовлю ответ"
       }
     >
       {mode === "video" && (
         <IconFileTextSpark size={15} stroke={1.6} className="thinking-globe" aria-hidden />
+      )}
+      {mode === "page" && (
+        <IconWorldWww size={15} stroke={1.6} className="thinking-globe" aria-hidden />
       )}
       {mode === "search" && (
         <IconWorldSearch

@@ -12,6 +12,7 @@ export const JOB_KINDS = [
   "content_plan_block",
   "channel_diagnose",
   "video_analyze",
+  "project_profile",
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
@@ -63,6 +64,12 @@ export const JOB_LABELS: Record<JobKind, { title: string; hint: string }> = {
   video_analyze: {
     title: "Разбираю ролик",
     hint: "Можно закрыть страницу — разбор сохранится.",
+  },
+  // Собирается САМА после брифа, человек её не заказывает — подписи нужны только
+  // на случай, если задача всплывёт в общем списке активных.
+  project_profile: {
+    title: "Разбираю проект",
+    hint: "Собираю профиль по брифу, каналу и материалам. Идёт в фоне, можно работать дальше.",
   },
 };
 

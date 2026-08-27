@@ -54,6 +54,7 @@ import {
 } from "@/lib/content-plan";
 import LinkVideoModal from "./LinkVideoModal";
 import SupportBlocks from "./SupportBlocks";
+import TopicEvidencePanel from "./TopicEvidence";
 import VideoCard from "./VideoCard";
 import VideoDrawer from "./VideoDrawer";
 
@@ -373,6 +374,15 @@ export default function ContentPlanBoard() {
                   />
                 ))}
               </Box>
+
+              {/* Проверка тем реальной выдачей: план перестаёт быть списком идей и
+                  становится набором решений с доказательством (см. topic-evidence.ts). */}
+              <TopicEvidencePanel
+                topics={(plan.videos ?? [])
+                  .filter((v) => v.kind !== "short")
+                  .map((v) => v.titles?.[0] ?? "")
+                  .filter(Boolean)}
+              />
 
               {/* Опорные блоки: портреты ЦА, лестница Ханта, воронка, шортсы */}
               <SupportBlocks

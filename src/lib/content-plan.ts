@@ -145,12 +145,53 @@ export interface Funnel {
   note: string;
 }
 
+// Возражение клиента и то, чем его снимают.
+//
+// ⚠️ Возражение ≠ боль. Боль — «хочу переехать, но страшно», возражение — «а вдруг
+// застройщик не достроит». Боль двигает к покупке, возражение мешает, и снимаются
+// они РАЗНЫМ контентом. В портретах ЦА у нас были только боли, поэтому продающие
+// ролики выходили беззубыми.
+export interface Objection {
+  /** Как это звучит из уст клиента. */
+  text: string;
+  /** Чем снимаем: аргумент, факт, кейс. */
+  answer: string;
+  /** Каким роликом это закрыть (формат/тема). */
+  video: string;
+}
+
+// Характеристика → человеческая выгода.
+//
+// ⚠️ Главный приём продающего контента: «двор без машин» — это характеристика, а
+// «ребёнка можно спокойно отпускать гулять одного» — то, за что платят. Выгода —
+// это «В» в ВИСП, то есть методика прямо про это.
+export interface BenefitPair {
+  feature: string;
+  benefit: string;
+}
+
+// Шаг воронки: от ролика до заявки.
+//
+// ⚠️ Это НЕ «сколько снимать охватного и продающего» — то была прежняя воронка, и
+// её убрали как дубль контент-плана. Здесь путь КЛИЕНТА: что он видит, что делает
+// дальше и чем мы его ведём.
+export interface FunnelStep {
+  /** Где человек находится: «увидел рилс», «зашёл на канал», «написал в директ». */
+  step: string;
+  /** Что должно произойти на этом шаге. */
+  goal: string;
+  /** Каким контентом ведём. */
+  content: string;
+  /** Что говорим/предлагаем (CTA, лид-магнит). */
+  action: string;
+}
+
 // Какие опорные блоки умеем генерировать.
 // ⚠️ «Воронка» убрана из списка (решение владельца): сколько снимать охватного /
 // экспертного / продающего — это и есть сам контент-план, блок дублировал его.
 // Поле funnel в модели плана и тип Funnel оставлены — у старых планов блок уже
 // собран, ломать сохранённые данные незачем; просто больше не предлагаем собрать.
-export const BLOCKS = ["audience", "hunt", "shorts"] as const;
+export const BLOCKS = ["audience", "hunt", "objections", "benefits", "reasons", "funnel", "shorts"] as const;
 export type BlockKey = (typeof BLOCKS)[number];
 export const BLOCK_META: Record<BlockKey, { label: string; hint: string; cost: number }> = {
   audience: {
@@ -163,12 +204,42 @@ export const BLOCK_META: Record<BlockKey, { label: string; hint: string; cost: n
     hint: "5 ступеней осознанности под твою нишу с темами-зацепками",
     cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
   },
+  objections: {
+    label: "Возражения и ответы",
+    hint: "Что мешает сказать «да» и каким роликом это снять",
+    cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
+  },
+  benefits: {
+    label: "Характеристики → выгоды",
+    hint: "Перевод сухих свойств в то, за что платят",
+    cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
+  },
+  reasons: {
+    label: "Причины купить",
+    hint: "Большой банк причин — из них растут темы роликов",
+    cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
+  },
+  funnel: {
+    label: "Воронка до заявки",
+    hint: "Путь клиента по шагам: от ролика до обращения",
+    cost: CONTENT_PLAN_BLOCK_QUOTA_COST,
+  },
   shorts: {
     label: "Сетка шортсов",
     hint: "Лёгкая сетка коротких: хук + референс",
     cost: CONTENT_PLAN_SHORTS_QUOTA_COST,
   },
 };
+
+/**
+ * Сколько причин просим в банке.
+ *
+ * ⚠️ Сотня — это НЕ нарушение лимита вывода из OUTPUT_DISCIPLINE: тот ограничивает
+ * тяжёлые артефакты в ОТВЕТЕ ЧАТА (сценарии, планы), а здесь отдельный блок, где
+ * ценность именно в количестве — из ста причин десяток окажется золотым, и заранее
+ * не угадать какой.
+ */
+export const REASONS_COUNT = 100;
 
 export interface ContentPlanMeta {
   id: string;
@@ -186,6 +257,10 @@ export interface ContentPlanView extends ContentPlanMeta {
   audience: Persona[] | null;
   huntLadder: HuntStep[] | null;
   funnel: Funnel | null;
+  objections: Objection[] | null;
+  benefits: BenefitPair[] | null;
+  reasons: string[] | null;
+  funnelSteps: FunnelStep[] | null;
 }
 
 // Заголовок карточки — первый вариант названия (или заглушка).

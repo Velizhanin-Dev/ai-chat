@@ -20,6 +20,7 @@ import {
   setLoading,
   setSearching,
   setAnalyzingVideo,
+  setStudyingPage,
   setStreamingContent,
   appendStreamingContent,
   finalizeStreaming,
@@ -301,6 +302,7 @@ export default function ChatInput({
               stopped?: boolean;
               searching?: boolean;
               analyzingVideo?: boolean;
+              studyingPage?: boolean;
             };
             try {
               parsed = JSON.parse(data);
@@ -316,6 +318,8 @@ export default function ChatInput({
             if (parsed.stopped) stoppedByUser = true;
             if (parsed.searching) dispatch(setSearching(true));
             if (parsed.analyzingVideo) dispatch(setAnalyzingVideo(true));
+            // Человек прислал ссылку на сайт — читаем страницу, это секунды.
+            if (parsed.studyingPage) dispatch(setStudyingPage(true));
             if (parsed.token) {
               fullContent += parsed.token;
               typewriter.push(parsed.token);
@@ -368,7 +372,13 @@ export default function ChatInput({
         const res = await fetch(`/api/chat/active?conversationId=${encodeURIComponent(activeId)}`);
         if (!res.ok || !alive) return;
         const data = (await res.json()) as {
-          run?: { id: string; text: string; searching: boolean; analyzingVideo: boolean } | null;
+          run?: {
+            id: string;
+            text: string;
+            searching: boolean;
+            analyzingVideo: boolean;
+            studyingPage: boolean;
+          } | null;
         };
         const run = data.run;
         if (!run || !alive) return;
@@ -382,6 +392,7 @@ export default function ChatInput({
         dispatch(setStreamingContent(run.text));
         if (run.searching) dispatch(setSearching(true));
         if (run.analyzingVideo) dispatch(setAnalyzingVideo(true));
+        if (run.studyingPage) dispatch(setStudyingPage(true));
 
         const controller = new AbortController();
         abortRef.current = controller;

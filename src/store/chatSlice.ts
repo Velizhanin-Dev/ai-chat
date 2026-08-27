@@ -34,6 +34,8 @@ interface ChatState {
   isSearching: boolean;
   /** Сервер тянет расшифровку ролика по ссылке из сообщения (SSE `analyzingVideo`). */
   isAnalyzingVideo: boolean;
+  /** Читаем страницу сайта по присланной ссылке (свой индикатор в чате). */
+  isStudyingPage: boolean;
   streamingContent: string;
   error: string | null;
   // Идёт ленивая подгрузка сообщений открытого диалога с сервера.
@@ -64,6 +66,7 @@ const initialState: ChatState = {
   isLoading: false,
   isSearching: false,
   isAnalyzingVideo: false,
+  isStudyingPage: false,
   streamingContent: "",
   error: null,
   messagesLoading: false,
@@ -137,6 +140,7 @@ const chatSlice = createSlice({
       if (!action.payload) {
         state.isSearching = false;
         state.isAnalyzingVideo = false;
+        state.isStudyingPage = false;
       }
     },
     // Идёт веб-поиск перед генерацией (сервер прислал `searching` в SSE).
@@ -144,6 +148,9 @@ const chatSlice = createSlice({
       state.isSearching = action.payload;
     },
     // Сервер разбирает ролик по ссылке (SSE `analyzingVideo`) — тянет расшифровку.
+    setStudyingPage(state, action: PayloadAction<boolean>) {
+      state.isStudyingPage = action.payload;
+    },
     setAnalyzingVideo(state, action: PayloadAction<boolean>) {
       state.isAnalyzingVideo = action.payload;
     },
@@ -220,6 +227,7 @@ export const {
   setLoading,
   setSearching,
   setAnalyzingVideo,
+  setStudyingPage,
   prefillInput,
   prefillConsumed,
   setMessagesLoading,
