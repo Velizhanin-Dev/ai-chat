@@ -57,19 +57,23 @@ export default function SupportPage() {
     };
   }, [load]);
 
-  const send = async (text: string) => {
+  const send = async (text: string, files: File[]) => {
     setSending(true);
     setError(null);
     // Оптимистично показываем своё сообщение — ждать сервер незачем.
+    // ⚠️ Вложения в оптимистичной строке пустые: их адреса появятся только после
+    // записи на сервер. Показывать локальные objectURL смысла нет — сообщение
+    // через долю секунды заменится настоящим.
     const optimistic: SupportMessageRow = {
       id: `tmp-${Date.now()}`,
       role: "user",
       content: text,
+      attachments: [],
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
     try {
-      const saved = await apiSendSupportMessage(text);
+      const saved = await apiSendSupportMessage(text, files);
       setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? saved : m)));
     } catch (e) {
       // Не отправилось — убираем черновик из ленты, причину показываем алертом.

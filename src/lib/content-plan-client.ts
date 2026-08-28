@@ -223,6 +223,8 @@ export async function apiAddVideo(
     views?: number;
     /** Ролик-донор из «Референсов»: карточка заводится с source:"competitor". */
     reference?: string;
+    /** "dump" — положить сразу в свалку идей (иначе «Идея»). */
+    status?: "dump";
   } = {}
 ): Promise<Result<{ video: VideoView }>> {
   try {

@@ -11,7 +11,8 @@ import { getSettings } from "./settings";
 import { routeQuery, type RouteDecision } from "./router";
 import { sanitizeBrief, withBriefTerms, briefSearchTerms, type Brief } from "./brief";
 import { fetchPage, pagePromptBlock } from "./web-fetch";
-import { getChannelSnapshotCached } from "./youtube";
+import { getChannelSnapshotCached, getValidAccessToken, fetchChannelInfo, fetchRecentVideos } from "./youtube";
+import { getTranscript, condenseTranscript } from "./youtube-transcript";
 import { buildChannelBlock } from "./llm/system";
 import {
   sanitizeDigest,
@@ -170,12 +171,76 @@ const PROFILE_PROMPT = `Собери ПРОФИЛЬ ПРОЕКТА — рабо�
   "hookAngles": ["на чём строить заходы именно у этого проекта"],
   "formats": ["форматы и подача под тип харизмы спикера"],
   "tone": "тон и запреты: чего в кадре быть не должно",
-  "unknowns": ["чего мы про проект НЕ знаем и что стоит спросить у клиента"]
+  "unknowns": ["чего мы про проект НЕ знаем и что стоит спросить у клиента"],
+  "speakerVoice": {
+    "summary": "как он звучит: темп, регистр, манера — 2-3 фразы",
+    "phrases": ["ДОСЛОВНЫЕ обороты из его речи, скопированные из расшифровки"],
+    "address": "на ты или на вы, как называет зрителя",
+    "humor": "чем шутит и шутит ли вообще",
+    "avoid": ["обороты, которых у него не бывает"]
+  }
 }
 
 ⚠️ Это не эссе, а рабочая карта: каждый пункт должен быть применимым. «Хочет больше клиентов» — мусор, «боится, что после ремонта вылезут скрытые доплаты» — работает.
 ⚠️ Опирайся на то, что дано: бриф, данные канала, материалы клиента. Чего в данных нет — выноси в unknowns, а НЕ додумывай. Пустой unknowns — почти всегда признак, что ты что-то выдумал.
-⚠️ segments — 3-4 штуки, не больше: это рабочие сегменты, а не перепись населения.`;
+⚠️ segments — 3-4 штуки, не больше: это рабочие сегменты, а не перепись населения.
+⚠️ speakerVoice заполняй ТОЛЬКО по расшифровкам его роликов, если они даны выше. Фразы — дословные цитаты из речи, скопированные буквой в букву, а не пересказ и не то, как «мог бы» говорить человек этой профессии. Расшифровок нет — верни speakerVoice: null. Выдуманный голос хуже, чем никакого: по нему будут писать сценарии, которые человек не сможет произнести.`;
+
+// Сколько роликов разбираем ради голоса спикера.
+//
+// ⚠️ Три, а не десять: расшифровка идёт через внешний сервис и занимает десятки
+// секунд на ролик (см. youtube-transcript.ts), а манера речи по трём роликам уже
+// видна — она не меняется от видео к видео. Профиль собирается фоновой задачей,
+// но и её нельзя растягивать на десять минут.
+const VOICE_VIDEO_COUNT = 3;
+/** Кусок расшифровки на ролик: манера видна и по первым минутам. */
+const VOICE_EXCERPT = 2500;
+/**
+ * Общий бюджет времени на сбор расшифровок.
+ *
+ * ⚠️⚠️ Обязателен, и вот почему: добыча одной расшифровки может тянуться до трёх
+ * минут (обход бот-проверки YouTube, перебор клиентов плеера — см.
+ * youtube-transcript.ts), а очередь считает задачу зависшей через JOB_STALE_MS =
+ * 5 минут и отдаёт её другому воркеру. Без потолка сборка профиля на канале без
+ * субтитров уходила бы на второй круг и делала работу дважды. Успели собрать
+ * меньше роликов — не беда: манера речи видна и по одному.
+ */
+const VOICE_BUDGET_MS = 90_000;
+
+/**
+ * Расшифровки последних роликов канала — сырьё для «голоса спикера».
+ *
+ * Best-effort целиком: нет канала, нет субтитров, сервис не ответил — возвращаем
+ * пустую строку, и профиль собирается без голоса. Это не ошибка: у половины
+ * каналов автосубтитров может не быть.
+ */
+async function resolveVoiceSource(projectId: string): Promise<{ text: string; count: number }> {
+  try {
+    const integ = await prisma.youTubeIntegration.findUnique({
+      where: { conversationId: projectId },
+    });
+    if (!integ) return { text: "", count: 0 };
+
+    const token = await getValidAccessToken(integ);
+    const info = await fetchChannelInfo(token);
+    if (!info?.uploadsPlaylistId) return { text: "", count: 0 };
+
+    const page = await fetchRecentVideos(token, info.uploadsPlaylistId, VOICE_VIDEO_COUNT);
+    const parts: string[] = [];
+    const deadline = Date.now() + VOICE_BUDGET_MS;
+    for (const v of page.videos.slice(0, VOICE_VIDEO_COUNT)) {
+      if (Date.now() > deadline) break;
+      const res = await getTranscript(v.id);
+      if (res.status !== "ok") continue;
+      parts.push(`### ${v.title}
+${condenseTranscript(res.transcript, VOICE_EXCERPT)}`);
+    }
+    return { text: parts.join("\n\n"), count: parts.length };
+  } catch (err) {
+    console.error("[profile] расшифровки для голоса спикера:", err);
+    return { text: "", count: 0 };
+  }
+}
 
 export type ProfileOutcome =
   | { status: "ok"; profile: ProjectProfile }
@@ -198,7 +263,7 @@ export async function generateProfile(opts: {
   });
   const brief = conv?.brief ? sanitizeBrief(conv.brief) : null;
 
-  const [channelBlock, sources] = await Promise.all([
+  const [channelBlock, sources, voice] = await Promise.all([
     resolveChannelBlock(opts.projectId),
     prisma.projectSource
       .findMany({
@@ -208,10 +273,24 @@ export async function generateProfile(opts: {
         select: { title: true, kind: true, url: true, digest: true },
       })
       .catch(() => []),
+    // Расшифровки последних роликов — сырьё для «голоса спикера». Идут параллельно
+    // со снимком канала: обе операции внешние и медленные.
+    resolveVoiceSource(opts.projectId),
   ]);
 
   const system: string[] = [];
   if (channelBlock) system.push(channelBlock);
+  if (voice.text) {
+    system.push(
+      [
+        "# КАК ЭТОТ ЧЕЛОВЕК ГОВОРИТ В КАДРЕ — РАСШИФРОВКИ ЕГО РОЛИКОВ",
+        `Ниже речь спикера с ${voice.count} его последних роликов, снятая с субтитров. Это его настоящая манера: обороты, темп, обращение к зрителю, слова-паразиты.`,
+        "Из этого собери speakerVoice. Фразы бери ДОСЛОВНО — они пойдут в сценарии как опора, чтобы человек читал текст вслух и не спотыкался.",
+        "",
+        voice.text,
+      ].join("\n")
+    );
+  }
 
   const withDigest = sources.filter((s) => s.digest);
   if (withDigest.length) {

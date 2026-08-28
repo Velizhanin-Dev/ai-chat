@@ -62,6 +62,13 @@ export default function CompetitorsList() {
   const [channels, setChannels] = useState<CompetitorChannel[] | null>(null);
   const [feed, setFeed] = useState<TrackedFeedResult | null>(null);
   const [days, setDays] = useState(30);
+  // Порог кратности «просмотры / подписчики». 0 = показывать всё.
+  //
+  // ⚠️ Считается и применяется НА КЛИЕНТЕ, как в поиске референсов: лента уже
+  // загружена, крутить порог можно бесплатно и мгновенно. Дефолт 0, а не ×3 как
+  // в поиске: там выдача чужая и её надо просеивать, а тут каналы человек выбрал
+  // сам — прятать от него их свежие ролики по умолчанию неправильно.
+  const [minRatio, setMinRatio] = useState(0);
   const [loading, setLoading] = useState(false);
   const [addInput, setAddInput] = useState("");
   const [adding, setAdding] = useState(false);
@@ -162,13 +169,21 @@ export default function CompetitorsList() {
   const byChannel = useMemo(() => {
     const map = new Map<string, CompetitorVideo[]>();
     for (const v of feed?.videos ?? []) {
+      if (minRatio > 0 && v.ratio < minRatio) continue;
       const list = map.get(v.channelId);
       if (list) list.push(v);
       else map.set(v.channelId, [v]);
     }
     map.forEach((list) => list.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1)));
     return map;
-  }, [feed]);
+  }, [feed, minRatio]);
+
+  // Сколько роликов пережило порог — иначе при жёстком фильтре экран выглядит
+  // пустым и непонятно, это фильтр или лента не загрузилась.
+  const shownCount = useMemo(
+    () => Array.from(byChannel.values()).reduce((n, list) => n + list.length, 0),
+    [byChannel]
+  );
 
   const stats = useMemo(() => {
     const map = new Map<string, TrackedChannelRow>();
@@ -270,6 +285,23 @@ export default function CompetitorsList() {
             ]}
             disabled={loading}
           />
+          {/* Порог кратности — тот же инструмент, что в поиске референсов: у
+              активного канала за месяц выходит два десятка роликов, и вручную
+              выискивать среди них выстрелившие бессмысленно. */}
+          <SegmentedControl
+            size="xs"
+            radius="md"
+            color="brand"
+            value={String(minRatio)}
+            onChange={(v) => setMinRatio(Number(v))}
+            data={[
+              { value: "0", label: "Все" },
+              { value: "3", label: "×3" },
+              { value: "5", label: "×5" },
+              { value: "10", label: "×10" },
+            ]}
+            disabled={loading}
+          />
           <Button
             variant="default"
             size="xs"
@@ -281,7 +313,9 @@ export default function CompetitorsList() {
           </Button>
           {feed && (
             <Text size="xs" c="dimmed">
-              новых роликов за период: {feed.videos.length}
+              {minRatio > 0
+                ? `подходят ${shownCount} из ${feed.videos.length} за период`
+                : `новых роликов за период: ${feed.videos.length}`}
             </Text>
           )}
         </Group>
@@ -363,7 +397,9 @@ export default function CompetitorsList() {
                 <Skeleton h={120} radius="md" />
               ) : videos.length === 0 ? (
                 <Text size="sm" c="dimmed">
-                  За выбранный период роликов не выходило.
+                  {minRatio > 0
+                    ? `Роликов с кратностью от ×${minRatio} за период нет.`
+                    : "За выбранный период роликов не выходило."}
                 </Text>
               ) : (
                 <SimpleGrid cols={{ base: 1, xs: 2, md: 3, xl: 4 }} spacing="md">

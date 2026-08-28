@@ -50,6 +50,7 @@ import RequestsRing from "@/components/Chat/RequestsRing";
 import SettingsModal from "@/components/Settings/SettingsModal";
 import TopNav from "@/components/Shell/TopNav";
 import TelegramSupportButton from "@/components/Support/TelegramSupportButton";
+import JobsAnchor from "@/components/Shell/JobsAnchor";
 import {
   ProjectHeaderProvider,
   ProjectHeaderTitle,
@@ -404,53 +405,37 @@ export default function AppShellLayout({
             {/* Техподдержка — отдельная страница /support, только залогиненным
                 (у гостя нет треда). Бейдж — непрочитанные ответы поддержки. */}
             {user && (
-              <>
-              <UnstyledButton
-                onClick={handleSupport}
-                w="100%"
-                p="xs"
-                mb="sm"
-                style={{
-                  borderRadius: 8,
-                  background: supportActive
-                    ? "var(--mantine-color-brand-light)"
-                    : "transparent",
-                }}
-              >
-                <Group gap="xs" wrap="nowrap">
-                  <IconHelpCircle
-                    size={18}
-                    style={{
-                      flexShrink: 0,
-                      color: supportActive
-                        ? "var(--mantine-color-brand-filled)"
-                        : "var(--mantine-color-dimmed)",
-                    }}
-                  />
-                  <Text
-                    size="sm"
-                    style={{ flex: 1, minWidth: 0 }}
-                    truncate
-                    fw={supportActive ? 500 : 400}
-                    c={supportActive ? undefined : "dimmed"}
-                  >
-                    Нужна помощь? Напишите нам
-                  </Text>
-                  {supportUnread > 0 && (
-                    <Badge size="sm" circle color="brand" style={{ flexShrink: 0 }}>
-                      {supportUnread}
-                    </Badge>
-                  )}
-                </Group>
-              </UnstyledButton>
-
-              {/* Вторая дверь в ту же поддержку: многим быстрее написать в
-                  телеграм, чем открывать раздел. Тред общий — ответ придёт и
-                  сюда, и в личку бота. */}
-              <Box mt={6} mb="sm">
-                <TelegramSupportButton size="xs" fullWidth variant="subtle" />
-              </Box>
-              </>
+              <Stack gap={6} mb="sm">
+                {/* ⚠️ Две двери в ОДНУ поддержку, поэтому они выглядят как пара:
+                    одинаковый размер, радиус и ширина. Раньше это были кнопки
+                    разной породы (UnstyledButton-строка и Button), стоявшие друг
+                    под другом, — читалось как два несвязанных пункта меню.
+                    Приоритет у поддержки НА САЙТЕ: она заливная и брендовая, а
+                    телеграм — нейтральный variant="default". Тред общий, ответ
+                    придёт в оба места. */}
+                <Button
+                  onClick={handleSupport}
+                  fullWidth
+                  size="sm"
+                  radius="md"
+                  color="brand"
+                  variant={supportActive ? "filled" : "light"}
+                  justify="space-between"
+                  leftSection={<IconHelpCircle size={18} />}
+                  rightSection={
+                    supportUnread > 0 ? (
+                      <Badge size="sm" circle color={supportActive ? "gray" : "brand"}>
+                        {supportUnread}
+                      </Badge>
+                    ) : (
+                      <span />
+                    )
+                  }
+                >
+                  Нужна помощь?
+                </Button>
+                <TelegramSupportButton size="sm" fullWidth variant="default" />
+              </Stack>
             )}
 
             <Group justify="space-between" px={4} mb="sm">
@@ -574,6 +559,10 @@ export default function AppShellLayout({
             </Box>
           </Box>
         </AppShell.Main>
+
+        {/* Крутилка фоновых задач — правый нижний угол. Сама прячется, когда
+            работы нет; подробности по нажатию (см. JobsAnchor). */}
+        <JobsAnchor />
       </AppShell>
     </>
   );

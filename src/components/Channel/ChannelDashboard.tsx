@@ -4,6 +4,7 @@ import { ytImage } from "@/lib/image-proxy";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useChatAccess } from "@/hooks/useChatAccess";
 import { useParams, useRouter } from "next/navigation";
 import {
   Accordion,
@@ -59,6 +60,7 @@ import {
   IconCircleCheck,
   IconAlertTriangle,
   IconChartRadar,
+  IconFileText,
   IconTextCaption,
   IconCalendar,
 } from "@tabler/icons-react";
@@ -149,6 +151,8 @@ export default function ChannelDashboard() {
   const params = useParams();
   const projectId = typeof params.projectId === "string" ? params.projectId : "";
   const settingsHref = projectId ? `/${projectId}/settings` : "/app";
+  // Тариф: от него зависит, есть ли кнопка отчёта для клиента (см. PlanLimits.reports).
+  const access = useChatAccess();
 
   const [phase, setPhase] = useState<Phase>({ s: "loading" });
   const [refreshing, setRefreshing] = useState(false);
@@ -245,6 +249,24 @@ export default function ChannelDashboard() {
               >
                 Слабый CTR — переписать превью
               </Button>
+              {/* Отчёт для клиента продюсера. ⚠️ Показывается только на тарифах, где
+                  включён (PlanLimits.reports, рубильник в админке): это инструмент
+                  агентства, автору-одиночке он не нужен. Гейт продублирован на
+                  сервере — самой страницей отчёта. */}
+              {access.reportsEnabled && (
+                <Button
+                  component={Link}
+                  href={`/${projectId}/report`}
+                  variant="light"
+                  color="gray"
+                  size="sm"
+                  radius="md"
+                  leftSection={<IconFileText size={16} />}
+                  visibleFrom="md"
+                >
+                  Отчёт для клиента
+                </Button>
+              )}
               <Tooltip label="Разобрать канал по параметрам продвижения" withArrow>
                 <ActionIcon
                   variant="filled"
@@ -959,18 +981,46 @@ function FixQueue({
                   onClick={() => onOpen(p.video)}
                 >
                   <Group gap={8} wrap="nowrap" align="flex-start">
+                    {/* Превью слева: ролик человек узнаёт по обложке быстрее, чем
+                        по названию, — а разговор тут как раз про упаковку.
+                        ⚠️ Цветную метку квадранта не убираем, а кладём НА превью:
+                        она несёт диагноз («кликнули и ушли» / «слабая упаковка»),
+                        и без неё строка перестаёт объяснять, почему ролик в
+                        очереди. Картинка идёт через ytImage — прямой i.ytimg.com
+                        в России не открывается без VPN. */}
                     <Box
-                      w={8}
-                      h={8}
-                      mt={6}
                       style={{
-                        borderRadius: 2,
+                        position: "relative",
+                        width: 64,
                         flexShrink: 0,
-                        background: `var(--mantine-color-${meta.color}-6)`,
+                        borderRadius: 6,
+                        overflow: "hidden",
+                        aspectRatio: "16 / 9",
+                        background: "var(--mantine-color-default-hover)",
                       }}
-                    />
+                    >
+                      {p.video.thumbnail && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={ytImage(p.video.thumbnail) ?? undefined}
+                          alt=""
+                          loading="lazy"
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
+                      )}
+                      <Box
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          bottom: 0,
+                          width: "100%",
+                          height: 3,
+                          background: `var(--mantine-color-${meta.color}-6)`,
+                        }}
+                      />
+                    </Box>
                     <Box style={{ minWidth: 0, flex: 1 }}>
-                      <Text size="sm" lineClamp={1}>
+                      <Text size="sm" lineClamp={2}>
                         {p.video.title}
                       </Text>
                       <Text size="xs" c="dimmed">

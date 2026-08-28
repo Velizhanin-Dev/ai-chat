@@ -101,6 +101,14 @@ export default function VideoCard({
               Shorts
             </Badge>
           )}
+          {/* Карточка приехала из другого месяца (см. carried). Подпись
+              обязательна: без неё непонятно, почему в августовском плане висит
+              ролик, которого там не заводили. */}
+          {v.planLabel && (
+            <Badge size="xs" variant="outline" color="gray" radius="sm">
+              {v.planLabel}
+            </Badge>
+          )}
         </Group>
         <Group gap={4} wrap="nowrap">
           {v.visp && (

@@ -276,6 +276,80 @@ section[id] {
 .md-body blockquote.md-quote p {
   font-size: inherit;
 }
+/* Блок «Источники» под ответом: сноски, вынесенные из тела (см. chat-sources.ts).
+   Стоит НАД полосой действий и отбит от текста только отступом — своей линии не
+   даём, иначе под ответом получается лесенка из двух разделителей. */
+.msg-sources {
+  margin-top: 10px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.msg-sources-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mantine-color-dimmed);
+  font-weight: 600;
+}
+.msg-sources-list {
+  margin: 4px 0 0;
+  padding-left: 1.4em;
+}
+.msg-sources-list li {
+  margin: 0;
+}
+.msg-sources-list a {
+  color: var(--mantine-color-dimmed);
+  text-decoration: none;
+  word-break: break-word;
+}
+.msg-sources-list a:hover {
+  color: var(--mantine-color-brand-6, #ec582e);
+  text-decoration: underline;
+}
+
+/* Копирование своего сообщения. Тот же приём, что у цитат: иконка в углу, на
+   hover/focus проявляется, на тач-экранах видна всегда (там hover нет).
+   ⚠️ Кнопка НЕ увеличивает баббл: она абсолютная, а место под неё даёт
+   padding-right у .msg-user — иначе последнее слово уезжало бы под иконку. */
+.msg-user {
+  padding-right: 2.1rem !important;
+}
+.msg-user-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.msg-user:hover .msg-user-copy,
+.msg-user-copy:focus-visible {
+  opacity: 1;
+}
+.msg-user-copy:hover {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-brand-6, #ec582e);
+}
+@media (hover: none) {
+  .msg-user-copy {
+    opacity: 0.55;
+  }
+}
+
 /* Кнопка «копировать» в правом верхнем углу цитаты — проявляется на hover/focus,
    на тач-устройствах видна всегда (там hover нет). */
 .md-quote-copy {
@@ -1462,13 +1536,20 @@ section[id] {
 /* ── Контент-план (канбан) ─────────────────────────────────────────────── */
 .cp-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Четыре колонки: свалка + три рабочих. На среднем экране четыре узких столбца
+     нечитаемы, поэтому там 2×2, а на телефоне — одна колонка. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   /* stretch, а НЕ start: колонки тянутся на высоту самой длинной. Иначе короткая
      колонка кончается высоко, и карточка, которую тащат снизу (из длинного
      первого столбца или из «Отменённых»), падает в пустоту рядом с ней — со
      стороны это выглядит как «второй столбик не работает». */
   align-items: stretch;
+}
+@media (max-width: 88em) {
+  .cp-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (max-width: 62em) {
   .cp-board {
@@ -2421,4 +2502,78 @@ section[id] {
 .ytc-thumb-v {
   aspect-ratio: 9 / 16;
   max-width: 260px;
+}
+
+/* ── Отчёт по каналу для клиента (печать в PDF) ─────────────────────────────
+   ⚠️ PDF делает САМ БРАУЗЕР через диалог печати: в стандартных шрифтах PDF нет
+   кириллицы, и серверный генератор пришлось бы кормить встроенным шрифтом, а
+   headless-браузер в образе — несоразмерная плата за одну кнопку. */
+@media print {
+  /* Управление (назад, период, кнопка печати) в документ не попадает. */
+  .report-controls,
+  .mantine-AppShell-navbar,
+  .mantine-AppShell-header {
+    display: none !important;
+  }
+  /* Белый фон и чёрный текст независимо от темы: печатать тёмную тему — это
+     залитый краской лист и нечитаемый результат. */
+  :root,
+  body,
+  .report {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .report {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  /* Блок отчёта не должен разрываться между страницами посередине. */
+  .report h2,
+  .report h4 {
+    break-after: avoid;
+  }
+  .report table,
+  .report img {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 16mm;
+  }
+}
+
+/* ── Якорь фоновых задач: только крутилка ───────────────────────────────────
+   ⚠️ Наружу торчит один кружок 34px — ни подписи, ни счётчика. Подробности в
+   поповере по нажатию (см. JobsAnchor.tsx).
+   ⚠️ z-index ниже модалок Mantine (200+): якорь не должен перекрывать
+   подтверждение удаления или окно тарифов. */
+.jobs-anchor {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 190;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  box-shadow: var(--mantine-shadow-md);
+}
+/* ⚠️ На телефоне поднимаем над композером чата: в правом нижнем углу стоит
+   кнопка отправки, и крутилка на том же месте перекрыла бы её.
+   72px — надёжный отступ, а не догадка: кнопка выровнена по НИЖНЕМУ краю
+   композера (Group align="flex-end"), поэтому её положение не меняется, даже
+   когда поле ввода вырастает до шести строк. */
+@media (max-width: 48em) {
+  .jobs-anchor {
+    right: 10px;
+    bottom: 72px;
+  }
+}
+@media print {
+  .jobs-anchor {
+    display: none !important;
+  }
 }

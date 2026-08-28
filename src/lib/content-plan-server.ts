@@ -168,8 +168,11 @@ export async function generatePlanVideos(opts: {
   brief: Brief | null;
   count: number;
   periodLabel: string;
+  /** Записи из «свалки идей» — сырые мысли и ссылки, накиданные человеком. */
+  dump?: string[];
 }): Promise<GenVideo[]> {
   const { userId, projectId, brief, count, periodLabel } = opts;
+  const dump = (opts.dump ?? []).filter(Boolean).slice(0, 40);
   const settings = await getSettings();
   const provider = settings.provider;
 
@@ -207,6 +210,27 @@ export async function generatePlanVideos(opts: {
     "",
     channelBlock
   );
+  // ⚠️ Свалка идёт ОТДЕЛЬНЫМ блоком в самый хвост промпта, вплотную к заданию:
+  // это единственная часть контекста, которую человек написал СВОИМИ руками
+  // именно под этот план, и модель должна весить её выше всего остального.
+  if (dump.length > 0) {
+    systemBlocks.push({
+      type: "text",
+      text: [
+        "# ЧТО КЛИЕНТ САМ НАКИДАЛ В СВАЛКУ ИДЕЙ",
+        "Это его сырые записи: мысли, темы, ссылки на чужие ролики, которые его зацепили. Он ждёт, что план будет собран ВОКРУГ них.",
+        "",
+        ...dump.map((d) => `- ${d}`),
+        "",
+        "Как с этим работать:",
+        "- Каждую запись доведи до полноценной темы по методике — с названием, болью, скелетом. Записанное в свалке — это ещё не название ролика.",
+        "- Ссылка на чужой ролик = «хочу такое же про себя», а НЕ «скопируй заголовок» (Антипаттерн №15).",
+        "- Не притягивай за уши: запись, которая не ложится в нишу и в аудиторию, лучше пропустить, чем сделать из неё слабый ролик.",
+        "- Остаток плана добери своими темами до нужного количества.",
+      ].join("\n"),
+    });
+  }
+
   systemBlocks.push({ type: "text", text: JSON_FORMAT_BLOCK });
 
   const genPrompt = `Собери контент-план на «${periodLabel}»: ровно ${count} роликов (лонгов) по моей методике. Ниша/аудитория/продукт — из брифа проекта (если чего-то нет — работай от ниши).${
@@ -648,10 +672,13 @@ export function toPlanView(
     funnelSteps?: Prisma.JsonValue | null;
     funnel?: Prisma.JsonValue | null;
   },
-  videos: VideoRow[]
+  videos: VideoRow[],
+  /** Карточки из других планов проекта, идущие в общие колонки (см. carried). */
+  carried: (VideoRow & { planLabel?: string })[] = []
 ): ContentPlanView {
   const views = videos.map(toVideoView);
   return {
+    carried: carried.map((v) => ({ ...toVideoView(v), planLabel: v.planLabel ?? null })),
     id: plan.id,
     period: plan.period,
     label: plan.label,

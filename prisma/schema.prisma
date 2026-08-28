@@ -596,6 +596,11 @@ model SupportMessage {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   role      String
   content   String
+  // Прикреплённые картинки: массив {path, mime} — путь ОТНОСИТЕЛЬНО UPLOAD_DIR.
+  // Сами файлы на диске (как превью), в БД только ссылка: скриншот на 3 МБ в
+  // дампе базы никому не нужен. Наружу отдаются роутом с проверкой владения —
+  // статикой светить чужие скриншоты нельзя.
+  attachments Json?
   readAt    DateTime?
   createdAt DateTime  @default(now())
 

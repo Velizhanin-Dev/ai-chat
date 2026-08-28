@@ -16,9 +16,11 @@ import { IconUser, IconRobot, IconArrowDown } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
 import { splitConnectCta } from "@/lib/chat-markers";
+import { stripCitationLinks } from "@/lib/chat-sources";
 import { apiYouTubeStatus } from "@/lib/youtube-client";
 import Markdown from "./Markdown";
 import MessageFooter from "./MessageFooter";
+import CopyMessageButton from "./CopyMessageButton";
 import ThinkingIndicator from "./ThinkingIndicator";
 import ConnectYouTubeCta from "./ConnectYouTubeCta";
 import ChatWelcome from "./ChatWelcome";
@@ -181,6 +183,9 @@ export default function ChatWindow() {
           // Маркер подключения YouTube вырезаем из текста; кнопку показываем под
           // ответом, только если канал реально не подключён.
           const parsed = isUser ? null : splitConnectCta(msg.content);
+          // Сноски-ссылки вырезаем из тела и показываем списком внизу ответа
+          // (см. chat-sources.ts). Осмысленные ссылки в предложениях остаются.
+          const body = parsed ? stripCitationLinks(parsed.text) : "";
           return (
             <Box
               key={msg.id}
@@ -214,27 +219,33 @@ export default function ChatWindow() {
                 // Мобайл: во всю ширину (аватар скрыт) — текст не жмётся.
                 // Десктоп — прежние 78%.
                 maw={{ base: "100%", sm: "78%" }}
-                className={isUser ? "bubble-user" : "bubble-assistant"}
-                style={{ width: "fit-content" }}
+                className={isUser ? "bubble-user msg-user" : "bubble-assistant"}
+                style={{ width: "fit-content", position: "relative" }}
               >
                 {isUser ? (
-                  <Text
-                    size="sm"
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                      color: "inherit",
-                    }}
-                  >
-                    {msg.content}
-                  </Text>
+                  <>
+                    <Text
+                      size="sm"
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        color: "inherit",
+                      }}
+                    >
+                      {msg.content}
+                    </Text>
+                    {/* Свой запрос тоже нужно уметь забрать: длинную вводную с
+                        деталями проекта человек переиспользует в следующем чате,
+                        а выделять её мышкой в скроллящейся ленте неудобно. */}
+                    <CopyMessageButton content={msg.content} />
+                  </>
                 ) : (
                   <>
-                    <Markdown content={parsed!.text} />
+                    <Markdown content={body} />
                     {parsed!.cta && showCta && activeId && (
                       <ConnectYouTubeCta projectId={activeId} />
                     )}
-                    <MessageFooter content={parsed!.text} createdAt={msg.createdAt} />
+                    <MessageFooter content={body} createdAt={msg.createdAt} />
                   </>
                 )}
               </Paper>

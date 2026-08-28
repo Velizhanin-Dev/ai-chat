@@ -23,6 +23,9 @@ export interface ChatAccess {
   // Сколько проектов на Instagram даёт тариф. ⚠️ Считается ОТДЕЛЬНО от projectsLimit:
   // 0 — площадка на тарифе не продаётся (карточка выбора закрыта), -1 — без лимита.
   instagramLimit: number;
+  // Включён ли на тарифе отчёт по каналу для клиента (см. PlanLimits.reports).
+  // Рубильник, а не счётчик: true — кнопка отчёта есть.
+  reportsEnabled: boolean;
 }
 
 export function useChatAccess(): ChatAccess {
@@ -35,6 +38,7 @@ export function useChatAccess(): ChatAccess {
   const [limit, setLimit] = useState<number | null>(null);
   const [projectsLimit, setProjectsLimit] = useState<number | null>(null);
   const [instagramLimit, setInstagramLimit] = useState(0);
+  const [reportsEnabled, setReportsEnabled] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -52,6 +56,7 @@ export function useChatAccess(): ChatAccess {
         setLimit(p ? p.limits.requests : null);
         setProjectsLimit(p ? p.limits.projects : null);
         setInstagramLimit(p ? p.limits.instagram : 0);
+        setReportsEnabled(Boolean(p && p.limits.reports > 0));
         setReady(true);
       })
       .catch(() => active && setReady(true));
@@ -70,6 +75,7 @@ export function useChatAccess(): ChatAccess {
       projectsLimit: isAdmin ? -1 : null,
       // Админу площадки не режем — иначе он не сможет проверить Instagram-проект.
       instagramLimit: isAdmin ? -1 : 0,
+      reportsEnabled: isAdmin,
     };
   }
 
@@ -77,5 +83,12 @@ export function useChatAccess(): ChatAccess {
   const quotaExceeded = limit != null && limit >= 0 && requestsUsed >= limit;
   const reason: ChatAccessReason = expired ? "expired" : quotaExceeded ? "quota" : "ok";
 
-  return { ready, locked: reason !== "ok", reason, projectsLimit, instagramLimit };
+  return {
+    ready,
+    locked: reason !== "ok",
+    reason,
+    projectsLimit,
+    instagramLimit,
+    reportsEnabled,
+  };
 }

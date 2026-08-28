@@ -141,12 +141,25 @@ registerJobHandler("content_plan_generate", async ({ userId, conversationId, pay
   });
   const brief = briefFromJson(conv?.brief);
 
+  // Свалка идей — по ВСЕМУ проекту, а не по одному плану: человек кидает туда
+  // мысли между месяцами, и при сборке нового плана они и должны сработать.
+  const dumpRows = await prisma.contentPlanVideo.findMany({
+    where: { status: "dump", plan: { conversationId } },
+    orderBy: { createdAt: "asc" },
+    select: { titles: true, reference: true, pain: true },
+    take: 40,
+  });
+  const dump = dumpRows
+    .map((d) => [d.titles[0] ?? "", d.reference ?? "", d.pain ?? ""].filter(Boolean).join(" — "))
+    .filter(Boolean);
+
   const gen = await generatePlanVideos({
     userId,
     projectId: conversationId,
     brief,
     count: PLAN_VIDEO_COUNT,
     periodLabel: label,
+    dump,
   });
   if (gen.length === 0) throw new Error("Не удалось собрать план, попробуйте ещё раз");
 

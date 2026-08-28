@@ -19,7 +19,30 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     include: { videos: { orderBy: { order: "asc" } } },
   });
   if (!plan) return apiError("План не найден", 404);
-  return NextResponse.json({ plan: toPlanView(plan, plan.videos) });
+
+  // ⚠️ Колонки «В работе» и «Опубликовано» — СКВОЗНЫЕ по всем планам проекта.
+  // Ролик заводят в плане одного месяца, а снимают и публикуют в следующем: при
+  // переключении месяца такие карточки исчезали с доски, и люди считали, что
+  // потеряли работу. Своими (plan.videos) они при этом НЕ становятся — счётчики
+  // и опорные блоки по-прежнему считаются по своему плану.
+  const carriedRows = await prisma.contentPlanVideo.findMany({
+    where: {
+      planId: { not: id },
+      // Свалка тоже сквозная: это входящий ящик ПРОЕКТА, а не месяца. Идея,
+      // записанная в июле, должна быть под рукой, когда в августе садишься
+      // собирать новый план, — иначе смысл свалки теряется.
+      status: { in: ["dump", "in_progress", "published"] },
+      plan: { conversationId: owned },
+    },
+    orderBy: [{ status: "asc" }, { order: "asc" }],
+    include: { plan: { select: { label: true } } },
+    // Потолок на случай многолетнего проекта: доска не должна превращаться в
+    // архив на пятьсот карточек.
+    take: 60,
+  });
+  const carried = carriedRows.map((v) => ({ ...v, planLabel: v.plan.label }));
+
+  return NextResponse.json({ plan: toPlanView(plan, plan.videos, carried) });
 }
 
 // DELETE /api/content-plan/[id] — удалить план (каскадом — ролики).
@@ -53,6 +76,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const reference =
     typeof body?.reference === "string" ? body.reference.trim().slice(0, 500) : "";
   const fromCompetitor = !imported && reference.length > 0;
+  // Карточка «в свалку»: сырая запись без методики, её ещё предстоит превратить
+  // в тему. Значение принимаем только это одно — статусами карточка ходит по
+  // доске, а не задаётся произвольно при создании.
+  const toDump = body?.status === "dump";
 
   const max = await prisma.contentPlanVideo.aggregate({
     where: { planId: id },
@@ -65,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       planId: id,
       order,
       kind,
-      status: imported ? "published" : "idea",
+      status: imported ? "published" : toDump ? "dump" : "idea",
       source: imported ? "imported" : fromCompetitor ? "competitor" : "manual",
       reference: reference || null,
       titles: title ? [title] : [],

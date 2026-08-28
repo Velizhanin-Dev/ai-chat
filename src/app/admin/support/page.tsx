@@ -122,19 +122,21 @@ export default function AdminSupportPage() {
     );
   };
 
-  const reply = async (text: string) => {
+  const reply = async (text: string, files: File[]) => {
     if (!activeUser) return;
     setSending(true);
     setError(null);
+    // Вложения в оптимистичной строке пустые — их адреса выдаёт сервер.
     const optimistic: SupportMessageRow = {
       id: `tmp-${Date.now()}`,
       role: "admin",
       content: text,
+      attachments: [],
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
     try {
-      const saved = await apiAdminSupportReply(activeUser, text);
+      const saved = await apiAdminSupportReply(activeUser, text, files);
       setMessages((prev) => prev.map((m) => (m.id === optimistic.id ? saved : m)));
       void loadThreads(false); // подтянуть новый «последний ответ» в списке
     } catch (e) {

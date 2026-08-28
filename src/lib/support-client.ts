@@ -24,14 +24,28 @@ export async function apiSupportMessages(
   return data.messages;
 }
 
+// ⚠️ Есть файлы — шлём multipart, нет — прежний JSON. Content-Type для multipart
+// НЕ ставим руками: браузер сам допишет boundary, а заданный вручную заголовок
+// его затрёт, и сервер не разберёт тело.
+function supportBody(content: string, files: File[]): { body: BodyInit; headers?: HeadersInit } {
+  if (files.length === 0) {
+    return {
+      body: JSON.stringify({ content }),
+      headers: { "Content-Type": "application/json" },
+    };
+  }
+  const form = new FormData();
+  form.set("content", content);
+  for (const f of files) form.append("files", f);
+  return { body: form };
+}
+
 export async function apiSendSupportMessage(
-  content: string
+  content: string,
+  files: File[] = []
 ): Promise<SupportMessageRow> {
-  const res = await fetch("/api/support", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
+  const { body, headers } = supportBody(content, files);
+  const res = await fetch("/api/support", { method: "POST", body, headers });
   if (!res.ok) await fail(res);
   const data = (await res.json()) as { message: SupportMessageRow };
   return data.message;
@@ -92,12 +106,14 @@ export async function apiAdminSupportThread(
 
 export async function apiAdminSupportReply(
   userId: string,
-  content: string
+  content: string,
+  files: File[] = []
 ): Promise<SupportMessageRow> {
+  const { body, headers } = supportBody(content, files);
   const res = await fetch(`/api/admin/support/${encodeURIComponent(userId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body,
+    headers,
   });
   if (!res.ok) await fail(res);
   const data = (await res.json()) as { message: SupportMessageRow };

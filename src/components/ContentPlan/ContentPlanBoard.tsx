@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   Accordion,
+  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -16,6 +17,7 @@ import {
   Skeleton,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Tooltip,
 } from "@mantine/core";
@@ -52,6 +54,7 @@ import {
   type VideoStatus,
   type VideoView,
 } from "@/lib/content-plan";
+import { videoIdFromUrl } from "@/lib/competitors";
 import LinkVideoModal from "./LinkVideoModal";
 import SupportBlocks from "./SupportBlocks";
 import TopicEvidencePanel from "./TopicEvidence";
@@ -159,6 +162,24 @@ export default function ContentPlanBoard() {
     }
   };
 
+  // Свалка идей: одно поле, куда кидают мысль или ссылку.
+  //
+  // ⚠️ Ссылку на ролик РАСПОЗНАЁМ и кладём в поле «референс», а не в название:
+  // иначе на карточке висел бы нечитаемый https://… вместо смысла, и главное —
+  // потерялась бы возможность потом переработать этого донора по методике
+  // (кнопка в карточке ищет референс, а не текст).
+  const quickAdd = async (text: string) => {
+    if (!activeId) return;
+    const isLink = /^https?:\/\//i.test(text) || videoIdFromUrl(text) !== null;
+    const res = await apiAddVideo(activeId, {
+      status: "dump",
+      ...(isLink ? { reference: text } : { title: text }),
+    });
+    if (res.ok) {
+      setPlan((prev) => (prev ? { ...prev, videos: [...prev.videos, res.data.video] } : prev));
+    }
+  };
+
   // Импорт уже опубликованного ролика канала → карточка сразу «опубликовано».
   const importVideo = async (v: LinkVideo) => {
     if (!activeId) return;
@@ -174,12 +195,34 @@ export default function ContentPlanBoard() {
     }
   };
 
+  // ⚠️⚠️ Все правки карточек идут по ОБОИМ спискам — videos и carried. Карточка из
+  // другого месяца лежит в carried, и если её там не обновить, любое действие над
+  // ней (перенос, правка, удаление) не отражалось бы на экране до перезагрузки —
+  // ровно тот симптом «колонка не работает», который уже ловили с DnD.
   const onVideoChange = (video: VideoView) =>
     setPlan((prev) =>
-      prev ? { ...prev, videos: prev.videos.map((v) => (v.id === video.id ? video : v)) } : prev
+      prev
+        ? {
+            ...prev,
+            videos: prev.videos.map((v) => (v.id === video.id ? video : v)),
+            carried: prev.carried.map((v) =>
+              // planLabel живёт только в carried — при подмене его надо сохранить,
+              // иначе карточка «потеряет» подпись, из какого она месяца.
+              v.id === video.id ? { ...video, planLabel: v.planLabel } : v
+            ),
+          }
+        : prev
     );
   const onVideoDelete = (id: string) =>
-    setPlan((prev) => (prev ? { ...prev, videos: prev.videos.filter((v) => v.id !== id) } : prev));
+    setPlan((prev) =>
+      prev
+        ? {
+            ...prev,
+            videos: prev.videos.filter((v) => v.id !== id),
+            carried: prev.carried.filter((v) => v.id !== id),
+          }
+        : prev
+    );
 
   // DnD: бросили карточку в колонку → и переезд, и место в списке одним запросом.
   //
@@ -188,56 +231,74 @@ export default function ContentPlanBoard() {
   // порядок внутри одной оставался тем, в котором их создали.
   const moveVideo = async (id: string, status: VideoStatus, index?: number) => {
     setDragId(null);
-    const current = plan?.videos.find((v) => v.id === id);
-    if (!current || !plan) return;
+    if (!plan) return;
+    // ⚠️ Ищем среди ОБОИХ списков: карточка может быть из другого месяца (carried).
+    const all = [...plan.videos, ...plan.carried];
+    const current = all.find((v) => v.id === id);
+    if (!current) return;
 
     // Итоговый список колонки: убираем карточку с её прежнего места (если она уже
-    // тут) и вставляем на нужную позицию.
-    const column = plan.videos
-      .filter((v) => (v.kind === "short") === (current.kind === "short") && v.status === status && v.id !== id)
+    // тут) и вставляем на нужную позицию. Свалка не делится по типу — там в одной
+    // куче и будущие лонги, и будущие шортсы.
+    const sameLane = (v: VideoView) =>
+      status === "dump" ? true : (v.kind === "short") === (current.kind === "short");
+    const column = all
+      .filter((v) => sameLane(v) && v.status === status && v.id !== id)
       .sort((a, b) => a.order - b.order);
     const at = index == null ? column.length : Math.max(0, Math.min(index, column.length));
     const ids = [...column.slice(0, at).map((v) => v.id), id, ...column.slice(at).map((v) => v.id)];
 
     // Уже стоит ровно там же — не гоняем запрос.
-    const before = plan.videos
-      .filter((v) => (v.kind === "short") === (current.kind === "short") && v.status === status)
+    const before = all
+      .filter((v) => sameLane(v) && v.status === status)
       .sort((a, b) => a.order - b.order)
       .map((v) => v.id);
     if (before.length === ids.length && before.every((x, i) => x === ids[i])) return;
 
-    const snapshot = plan.videos;
+    const snapshot = { videos: plan.videos, carried: plan.carried };
+    const apply = (list: VideoView[]) =>
+      list.map((v) => {
+        const pos = ids.indexOf(v.id);
+        return pos === -1 ? v : { ...v, status, order: pos };
+      });
     // Оптимистично: статус и порядок сразу, чтобы карточка не «прыгала» обратно.
     setPlan((prev) =>
-      prev
-        ? {
-            ...prev,
-            videos: prev.videos.map((v) => {
-              const pos = ids.indexOf(v.id);
-              return pos === -1 ? v : { ...v, status, order: pos };
-            }),
-          }
-        : prev
+      prev ? { ...prev, videos: apply(prev.videos), carried: apply(prev.carried) } : prev
     );
 
     const res = await apiReorderVideos(plan.id, status, ids);
-    if (res.ok) setPlan((prev) => (prev ? { ...prev, videos: res.data.videos } : prev));
-    else {
-      setPlan((prev) => (prev ? { ...prev, videos: snapshot } : prev));
+    if (res.ok) {
+      // ⚠️ Ответ сервера подставляем ТОЛЬКО в свои карточки: он перечисляет
+      // ролики этого плана, и подмена им carried стёрла бы чужие. Для карточек
+      // других месяцев достаточно оптимистичного обновления выше — сервер их
+      // порядок уже записал.
+      setPlan((prev) => (prev ? { ...prev, videos: res.data.videos } : prev));
+    } else {
+      setPlan((prev) => (prev ? { ...prev, ...snapshot } : prev));
       setError("Не удалось перенести ролик");
     }
   };
 
-  // Канбан — только лонги; шортсы живут отдельной сеткой в опорных блоках
-  // (у них своя природа: верх воронки, нарезки/реакции, лёгкие поля).
+  // Раскладка карточек по колонкам. Сюда же подмешиваются карточки из ДРУГИХ
+  // планов проекта (plan.carried): свалка и работа в процессе не заканчиваются
+  // вместе с месяцем — см. комментарий к carried в content-plan.ts.
   const byStatus = useMemo(() => {
     const map: Record<VideoStatus, VideoView[]> = {
+      dump: [],
       idea: [],
       in_progress: [],
       published: [],
       cancelled: [],
     };
-    for (const v of plan?.videos ?? []) {
+    // ⚠️ Свалка живёт ВНЕ деления на видео и шортсы: в неё кидают мысль, ещё не
+    // зная, во что она вырастет. Поэтому она одинакова на обеих вкладках, а не
+    // прячет половину записей за переключателем.
+    const all = [...(plan?.videos ?? []), ...(plan?.carried ?? [])];
+    for (const v of all) {
+      if (v.status === "dump") {
+        map.dump.push(v);
+        continue;
+      }
       const isShort = v.kind === "short";
       if (isShort === (boardKind === "short")) map[v.status].push(v);
     }
@@ -251,7 +312,7 @@ export default function ContentPlanBoard() {
   }, [plan, boardKind]);
 
   const shorts = useMemo(
-    () => (plan?.videos ?? []).filter((v) => v.kind === "short"),
+    () => (plan?.videos ?? []).filter((v) => v.kind === "short" && v.status !== "dump"),
     [plan]
   );
 
@@ -259,7 +320,9 @@ export default function ContentPlanBoard() {
   // видел, что шортсы вообще есть, даже когда открыт другой тип.
   const counts = useMemo(
     () => ({
-      video: (plan?.videos ?? []).filter((v) => v.kind !== "short").length,
+      // ⚠️ Свалку в счётчик НЕ берём: там сырые записи, а цифра отвечает на
+      // вопрос «сколько роликов в плане».
+      video: (plan?.videos ?? []).filter((v) => v.kind !== "short" && v.status !== "dump").length,
       short: shorts.length,
     }),
     [plan, shorts]
@@ -356,6 +419,24 @@ export default function ContentPlanBoard() {
                     { value: "short", label: `Shorts (${counts.short})` },
                   ]}
                 />
+                {/* ⚠️ Сборка сетки шортсов переехала СЮДА из опорных блоков внизу.
+                    Причина: карточки шортсов давно живут на доске со своими
+                    статусами, а кнопка их создания оставалась в другом конце
+                    страницы — человек её просто не находил. Показываем только на
+                    вкладке шортсов и только пока их нет: дальше карточки
+                    добавляются обычным «+ Ролик». */}
+                {boardKind === "short" && counts.short === 0 && (
+                  <Button
+                    size="compact-sm"
+                    variant="light"
+                    color="brand"
+                    leftSection={<IconSparkles size={15} />}
+                    loading={blockBusy === "shorts"}
+                    onClick={() => void generateBlock("shorts")}
+                  >
+                    Собрать сетку шортсов · {BLOCK_META.shorts.cost}
+                  </Button>
+                )}
               </Group>
 
               <Box className="cp-board">
@@ -366,6 +447,7 @@ export default function ContentPlanBoard() {
                     videos={byStatus[status]}
                     onOpen={setDrawer}
                     onAdd={status === "idea" ? addVideo : undefined}
+                    onQuickAdd={status === "dump" ? quickAdd : undefined}
                     dragId={dragId}
                     onDragStart={setDragId}
                     onDragEnd={() => setDragId(null)}
@@ -379,18 +461,15 @@ export default function ContentPlanBoard() {
                   становится набором решений с доказательством (см. topic-evidence.ts). */}
               <TopicEvidencePanel
                 topics={(plan.videos ?? [])
-                  .filter((v) => v.kind !== "short")
+                  .filter((v) => v.kind !== "short" && v.status !== "dump")
                   .map((v) => v.titles?.[0] ?? "")
                   .filter(Boolean)}
               />
 
-              {/* Опорные блоки: портреты ЦА, лестница Ханта, воронка, шортсы */}
-              <SupportBlocks
-                plan={plan}
-                shorts={shorts}
-                busy={blockBusy}
-                onGenerate={generateBlock}
-              />
+              {/* Опорные блоки: портреты ЦА, лестница Ханта, возражения, выгоды,
+                  причины, воронка. ⚠️ Шортсов тут больше НЕТ — их сборка стоит на
+                  самой доске, рядом с переключателем типа. */}
+              <SupportBlocks plan={plan} busy={blockBusy} onGenerate={generateBlock} />
 
               {byStatus.cancelled.length > 0 && (
                 <Accordion variant="separated" radius="md">
@@ -429,6 +508,7 @@ export default function ContentPlanBoard() {
       <VideoDrawer
         v={drawer}
         projectId={projectId}
+        planId={activeId ?? ""}
         opened={drawer !== null}
         onClose={() => setDrawer(null)}
         onChange={(video) => {
@@ -436,6 +516,14 @@ export default function ContentPlanBoard() {
           setDrawer(video);
         }}
         onDelete={onVideoDelete}
+        onAdapted={(video, replacedId) =>
+          // Сырая запись свалки уходит, на её место встаёт готовая карточка.
+          setPlan((prev) =>
+            prev
+              ? { ...prev, videos: [...prev.videos.filter((x) => x.id !== replacedId), video] }
+              : prev
+          )
+        }
       />
 
       {/* Импорт уже опубликованного ролика канала в план */}
@@ -454,6 +542,7 @@ function Column({
   videos,
   onOpen,
   onAdd,
+  onQuickAdd,
   dragId,
   onDragStart,
   onDragEnd,
@@ -464,6 +553,8 @@ function Column({
   videos: VideoView[];
   onOpen: (v: VideoView) => void;
   onAdd?: () => void;
+  /** Быстрый ввод в свалку: текст или ссылка на ролик. */
+  onQuickAdd?: (text: string) => Promise<void>;
   dragId: string | null;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
@@ -473,6 +564,8 @@ function Column({
 }) {
   const m = STATUS_META[status];
   const [over, setOver] = useState(false);
+  const [quick, setQuick] = useState("");
+  const [quickBusy, setQuickBusy] = useState(false);
   // Куда встанет карточка, если отпустить сейчас: индекс между карточками.
   // null — курсор не над колонкой.
   const [at, setAt] = useState<number | null>(null);
@@ -529,15 +622,62 @@ function Column({
           </Button>
         )}
       </Box>
-      {/* Тело колонки тянется до низа (см. .cp-col-body) — сбросить можно в любое
-          место столбца, а не только туда, куда достаёт список карточек. */}
+      {/* Быстрый ввод — только у свалки. ⚠️ Одно поле без единой настройки: смысл
+          свалки в том, чтобы записать мысль за две секунды и не думать. Как только
+          тут появятся формат, тип и статус, ею перестанут пользоваться. */}
+      {onQuickAdd && (
+        <Group gap={6} wrap="nowrap" mb={8}>
+          <TextInput
+            size="xs"
+            radius="md"
+            placeholder="Мысль или ссылка на ролик"
+            value={quick}
+            onChange={(e) => setQuick(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || !quick.trim() || quickBusy) return;
+              e.preventDefault();
+              setQuickBusy(true);
+              void onQuickAdd(quick.trim()).finally(() => {
+                setQuick("");
+                setQuickBusy(false);
+              });
+            }}
+            style={{ flex: 1 }}
+            disabled={quickBusy}
+          />
+          <ActionIcon
+            size="md"
+            radius="md"
+            variant="light"
+            color="brand"
+            aria-label="Кинуть в свалку"
+            loading={quickBusy}
+            disabled={!quick.trim()}
+            onClick={() => {
+              setQuickBusy(true);
+              void onQuickAdd(quick.trim()).finally(() => {
+                setQuick("");
+                setQuickBusy(false);
+              });
+            }}
+          >
+            <IconPlus size={15} />
+          </ActionIcon>
+        </Group>
+      )}
       {/* Тело колонки тянется до низа (см. .cp-col-body) — сбросить можно в любое
           место столбца, а не только туда, куда достаёт список карточек. */}
       <Box className="cp-col-body">
         {videos.length === 0 ? (
           <Box className="cp-col-empty">
             <Text size="xs" c="dimmed">
-              {over ? "Отпусти — переедет сюда" : dragging ? "Можно бросить сюда" : "Пусто"}
+              {over
+                ? "Отпусти — переедет сюда"
+                : dragging
+                  ? "Можно бросить сюда"
+                  : status === "dump"
+                    ? "Кидай сюда всё, что зацепило: мысль, тему, ссылку на чужой ролик. При сборке плана я это учту."
+                    : "Пусто"}
             </Text>
           </Box>
         ) : (

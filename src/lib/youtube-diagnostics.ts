@@ -36,6 +36,15 @@ const YT_EPOCH = "2005-02-14";
 const SHORT_MAX_SEC = 180;
 // Сколько роликов берём в разбор и по скольким тянем кривую удержания.
 const TOP_VIDEOS = 10;
+/**
+ * Какой контент считаем актуальным для разбора «что чинить» — полгода.
+ *
+ * ⚠️ Полгода, а не год: за год у активного канала меняются и упаковка, и подача,
+ * и совет по ролику годичной давности человек уже не применит. И не квартал —
+ * иначе у канала, выпускающего раз в месяц, в выборке останется три ролика, и
+ * любая случайность станет «трендом».
+ */
+const RECENT_CONTENT_DAYS = 180;
 const RETENTION_PROBES = 5;
 
 function ymd(d: Date): string {
@@ -391,9 +400,39 @@ export async function collectDiagnostics(
     const sec = snippets[id]?.durationSec ?? 0;
     return sec > 0 && sec <= SHORT_MAX_SEC;
   };
-  const filtered = topRows
-    .filter((r) => (kind === "shorts" ? isShort(r.id) : kind === "long" ? !isShort(r.id) : true))
-    .slice(0, TOP_VIDEOS);
+  // ⚠️ Отсекаем СТАРЫЙ контент: срез Analytics отдаёт все ролики, набравшие
+  // просмотры за окно, включая пятилетней давности — они продолжают собирать
+  // хвост. В разборе «что чинить» такой ролик бесполезен и вреден: чинить его
+  // никто не пойдёт, а удержание и первые секунды он занижает за весь канал.
+  // Смотрим только на то, что снято недавно, — по нему и делаются выводы.
+  //
+  // ⚠️ Отсечка по ДАТЕ ПУБЛИКАЦИИ, а не по периоду отчёта: это разные вещи.
+  // Период говорит, за какое окно считать просмотры; здесь — какой контент
+  // вообще считать актуальным.
+  const freshFloor = new Date(Date.now() - RECENT_CONTENT_DAYS * 864e5)
+    .toISOString()
+    .slice(0, 10);
+  const byKind = topRows.filter((r) =>
+    kind === "shorts" ? isShort(r.id) : kind === "long" ? !isShort(r.id) : true
+  );
+  const fresh = byKind.filter((r) => {
+    const at = snippets[r.id]?.publishedAt ?? "";
+    return !at || at.slice(0, 10) >= freshFloor;
+  });
+  // ⚠️ Фолбэк на полный список обязателен: у канала, который полгода ничего не
+  // выпускал, свежих роликов нет вовсе — и пустой разбор был бы хуже старого.
+  const dropped = byKind.length - fresh.length;
+  if (fresh.length > 0 && dropped > 0) {
+    notes.push(
+      `В разбор взят контент за последние ${Math.round(RECENT_CONTENT_DAYS / 30)} мес.: ${dropped} более старых роликов пропущено, хотя просмотры за период у них есть.`
+    );
+  }
+  if (fresh.length === 0 && byKind.length > 0) {
+    notes.push(
+      `За последние ${Math.round(RECENT_CONTENT_DAYS / 30)} мес. новых роликов не выходило — разбор идёт по тому, что есть.`
+    );
+  }
+  const filtered = (fresh.length > 0 ? fresh : byKind).slice(0, TOP_VIDEOS);
 
   // Кривые удержания — только по нескольким верхним роликам (по запросу на ролик).
   // У шортсов две отметки: 3 секунды (скроллит или залипает) и 30 (шортс теперь

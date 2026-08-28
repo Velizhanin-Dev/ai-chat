@@ -17,10 +17,8 @@ import {
 import { IconSparkles } from "@tabler/icons-react";
 import {
   BLOCK_META,
-  FORMAT_META,
   type BlockKey,
   type ContentPlanView,
-  type VideoView,
 } from "@/lib/content-plan";
 
 // Опорные блоки плана (Фаза 3): портреты ЦА, лестница Ханта, воронка, сетка
@@ -29,16 +27,21 @@ import {
 
 export default function SupportBlocks({
   plan,
-  shorts,
   busy,
   onGenerate,
 }: {
   plan: ContentPlanView;
-  shorts: VideoView[];
   busy: BlockKey | null;
   onGenerate: (block: BlockKey) => void;
 }) {
   const [open, setOpen] = useState<string[]>([]);
+
+  // ⚠️ Шортсы из списка опорных блоков УБРАНЫ (решение владельца): их карточки
+  // живут на доске со своими статусами, а кнопка сборки стоит рядом с
+  // переключателем «Видео / Shorts». Держать в самом низу страницы пункт, который
+  // только сообщает «собрано N, они на доске», — лишний шум. Ключ "shorts" при
+  // этом остался в BLOCKS и в API: им пользуется кнопка на доске.
+  const shown = (Object.keys(BLOCK_META) as BlockKey[]).filter((k) => k !== "shorts");
 
   const filled = (k: BlockKey): boolean =>
     k === "audience"
@@ -51,9 +54,7 @@ export default function SupportBlocks({
             ? Boolean(plan.benefits?.length)
             : k === "reasons"
               ? Boolean(plan.reasons?.length)
-              : k === "funnel"
-                ? Boolean(plan.funnelSteps?.length)
-                : shorts.length > 0;
+              : Boolean(plan.funnelSteps?.length);
 
   return (
     <Accordion
@@ -64,7 +65,7 @@ export default function SupportBlocks({
       onChange={setOpen}
       classNames={{ item: "an-acc-item" }}
     >
-      {(Object.keys(BLOCK_META) as BlockKey[]).map((key) => {
+      {shown.map((key) => {
         const meta = BLOCK_META[key];
         const has = filled(key);
         return (
@@ -283,12 +284,6 @@ export default function SupportBlocks({
                   </Stack>
                 ) : null}
 
-                {key === "shorts" && shorts.length > 0 ? (
-                  <Text size="sm" c="dimmed">
-                    Собрано шортсов: {shorts.length}. Они на доске — переключатель
-                    «Shorts» над колонками.
-                  </Text>
-                ) : null}
               </Stack>
             </Accordion.Panel>
           </Accordion.Item>

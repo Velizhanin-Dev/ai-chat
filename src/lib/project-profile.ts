@@ -27,6 +27,30 @@ export interface AudienceSegment {
   triggers: string[];
 }
 
+/**
+ * Как человек РЕАЛЬНО говорит в кадре — снято с расшифровок его же роликов.
+ *
+ * ⚠️⚠️ Самая ценная часть профиля и единственная, которую нельзя вывести из
+ * анкеты. Бриф говорит, ЧТО человек продаёт; голос говорит, КАК он звучит: «ну
+ * смотрите» вместо «итак, друзья», ты вместо вы, длинные заходы или сразу к делу.
+ * Без этого сценарий приходится переписывать под себя целиком — и именно на это
+ * жалуются, когда говорят «текст неживой, я так не говорю».
+ */
+export interface SpeakerVoice {
+  /** Как звучит в двух-трёх фразах: темп, регистр, манера. */
+  summary: string;
+  /** ДОСЛОВНЫЕ обороты из его роликов — вставлять в сценарии как есть. */
+  phrases: string[];
+  /** На «ты» или на «вы», как называет зрителя. */
+  address: string;
+  /** Чем шутит и шутит ли вообще. */
+  humor: string;
+  /** Обороты, которых у него НЕ бывает: их в сценарий писать нельзя. */
+  avoid: string[];
+  /** Сколько роликов разобрали — честность цифры важнее её величины. */
+  basedOn: number;
+}
+
 export interface ProjectProfile {
   /** Позиционирование одной фразой: кто это и чем отличается от соседа по нише. */
   positioning: string;
@@ -52,6 +76,8 @@ export interface ProjectProfile {
    * M274»). Явный список незнания — приглашение спросить, а не додумать.
    */
   unknowns: string[];
+  /** Голос спикера с расшифровок. null — канал не подключён или субтитров нет. */
+  speakerVoice?: SpeakerVoice | null;
 }
 
 /** Разбор одной изученной страницы. */
@@ -138,12 +164,30 @@ export function sanitizeProfile(raw: unknown): ProjectProfile | null {
     formats: cleanList(o.formats, 6),
     tone: clean(o.tone, 400),
     unknowns: cleanList(o.unknowns, 8),
+    speakerVoice: sanitizeVoice(o.speakerVoice),
   };
 
   // Пустой профиль не нужен: лучше его отсутствие, чем блок-заглушка в промпте.
   const filled =
     profile.positioning || profile.segments.length > 0 || profile.differentiators.length > 0;
   return filled ? profile : null;
+}
+
+export function sanitizeVoice(raw: unknown): SpeakerVoice | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const voice: SpeakerVoice = {
+    summary: clean(o.summary, 500),
+    // 20 фраз — потолок: это не словарь, а набор опорных оборотов.
+    phrases: cleanList(o.phrases, 20, 200),
+    address: clean(o.address, 120),
+    humor: clean(o.humor, 200),
+    avoid: cleanList(o.avoid, 8, 120),
+    basedOn: typeof o.basedOn === "number" && o.basedOn > 0 ? Math.round(o.basedOn) : 0,
+  };
+  // Без опорных фраз и описания блок бесполезен: общими словами «говорит живо»
+  // модель и так владеет, ценность именно в дословных оборотах.
+  return voice.summary || voice.phrases.length ? voice : null;
 }
 
 export function sanitizeDigest(raw: unknown): SourceDigest | null {
@@ -202,6 +246,28 @@ export function buildProfileBlock(p: ProjectProfile | null | undefined): string 
     for (const h of p.hookAngles) lines.push(`- ${h}`);
   }
   if (p.formats.length) lines.push("", `Форматы под спикера: ${p.formats.join(" · ")}`);
+
+  // ⚠️ Голос идёт ПОСЛЕ всего остального и с прямым указанием копировать обороты:
+  // это единственный блок профиля, где важна не мысль, а буквальные слова.
+  const v = p.speakerVoice;
+  if (v) {
+    lines.push("", "## КАК ЭТОТ ЧЕЛОВЕК ГОВОРИТ В КАДРЕ (снято с расшифровок его роликов)");
+    if (v.summary) lines.push(v.summary);
+    if (v.address) lines.push(`Обращение к зрителю: ${v.address}`);
+    if (v.humor) lines.push(`Юмор: ${v.humor}`);
+    if (v.phrases.length) {
+      lines.push(
+        "Его дословные обороты — вставляй их в реплики КАК ЕСТЬ, не приглаживая:",
+        ...v.phrases.map((x) => `- «${x}»`)
+      );
+    }
+    if (v.avoid.length) {
+      lines.push(`Так он НЕ говорит, в сценарий не писать: ${v.avoid.join(" · ")}`);
+    }
+    lines.push(
+      "Реплики в кадр пиши ЕГО голосом, а не нейтральным литературным: человек должен прочитать сценарий вслух и не спотыкаться."
+    );
+  }
   if (p.tone) lines.push("", `Тон и запреты: ${p.tone}`);
 
   if (p.unknowns.length) {

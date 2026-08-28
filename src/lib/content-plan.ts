@@ -36,7 +36,13 @@ export const HUNT_LADDER_HINT = [
 ];
 
 // ── Статусы (канбан) ────────────────────────────────────────────────────────
-export const STATUSES = ["idea", "in_progress", "published", "cancelled"] as const;
+// ⚠️ "dump" («свалка») — вход на доску, а не этап работы: сюда кидают всё, что
+// зацепило, — мысль в одну строку, чужой ролик, тему из комментариев. Оттуда
+// материал уходит либо в «Идею» руками, либо в генерацию плана (её промпт
+// читает свалку, см. generatePlanVideos). Держать это в «Идеях» нельзя: там
+// карточки уже с методикой — название, боль, скелет, — а свалка нужна ровно для
+// того, чтобы записать не думая и не потерять.
+export const STATUSES = ["dump", "idea", "in_progress", "published", "cancelled"] as const;
 export type VideoStatus = (typeof STATUSES)[number];
 export function isStatus(v: string): v is VideoStatus {
   return (STATUSES as readonly string[]).includes(v);
@@ -48,13 +54,14 @@ export interface StatusMeta {
   color: string; // Mantine-цвет
 }
 export const STATUS_META: Record<VideoStatus, StatusMeta> = {
+  dump: { key: "dump", label: "Свалка идей", color: "yellow" },
   idea: { key: "idea", label: "Идея", color: "gray" },
   in_progress: { key: "in_progress", label: "В работе", color: "brand" },
   published: { key: "published", label: "Опубликовано", color: "teal" },
   cancelled: { key: "cancelled", label: "Отменено", color: "red" },
 };
 // Колонки канбана (отменённые — вне досок, показываем свёрнуто отдельно).
-export const BOARD_COLUMNS: VideoStatus[] = ["idea", "in_progress", "published"];
+export const BOARD_COLUMNS: VideoStatus[] = ["dump", "idea", "in_progress", "published"];
 
 // ── Форматы ролика ──────────────────────────────────────────────────────────
 export type VideoFormat = "reach" | "expert" | "selling";
@@ -113,6 +120,12 @@ export interface VideoView {
   youtubeVideoId: string | null;
   thumbnail: string | null;
   views: number | null;
+  /**
+   * Из какого плана карточка — заполняется ТОЛЬКО у «перенесённых» (см.
+   * ContentPlanView.carried). У своих карточек null: подпись «из плана Июль»
+   * на карточке июльского плана была бы шумом.
+   */
+  planLabel?: string | null;
 }
 
 // ── Опорные блоки (Фаза 3) ──────────────────────────────────────────────────
@@ -253,6 +266,18 @@ export interface ContentPlanMeta {
 
 export interface ContentPlanView extends ContentPlanMeta {
   videos: VideoView[];
+  /**
+   * Карточки из ДРУГИХ планов проекта, которые сейчас «в работе» или уже
+   * «опубликованы».
+   *
+   * ⚠️ Зачем отдельным полем, а не подмешиванием в videos: работа над роликом не
+   * заканчивается вместе с месяцем — тему завели в июле, снимают в августе. При
+   * переключении месяца такие карточки пропадали с глаз, и человек считал, что
+   * они потерялись. Теперь колонки «В работе» и «Опубликовано» показывают их
+   * всегда, а `videos` остаётся ровно тем, что относится к ЭТОМУ плану: на нём
+   * держатся счётчики, проверка тем и сборка опорных блоков.
+   */
+  carried: VideoView[];
   // Опорные блоки (Фаза 3) — null, пока не сгенерированы.
   audience: Persona[] | null;
   huntLadder: HuntStep[] | null;

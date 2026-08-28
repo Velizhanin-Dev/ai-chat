@@ -20,6 +20,11 @@ export interface PlanLimits {
   // появления поля, его в JSON нет, и трактовка «0 = ноль устройств» заперла бы
   // вход всем разом. Без лимита можно задать и явным -1.
   devices: number;
+  // Отчёт по каналу для клиента продюсера (PDF). ⚠️ Это не счётчик, а рубильник:
+  // 1 = кнопка отчёта есть, 0 или отсутствие ключа = функции на тарифе нет.
+  // Отчёт — инструмент агентства, а не автора-одиночки: продюсер показывает его
+  // своему клиенту, поэтому и включается он только на «продюсерских» тарифах.
+  reports: number;
 }
 
 export interface PublicPlan {
@@ -42,7 +47,7 @@ export interface PlansView {
   currentPlan: PublicPlan | null;
 }
 
-const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0, instagram: 0, devices: 0 };
+const EMPTY_LIMITS: PlanLimits = { requests: 0, projects: 0, instagram: 0, devices: 0, reports: 0 };
 
 // Дефолты = текущие захардкоженные тарифы (start/blogger/studio). Используются для
 // первичного посева таблицы (idempotent) — дальше правятся из админки.
@@ -64,7 +69,7 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 4000,
     period: "в месяц",
     features: ["3 контент-плана", "30 сценариев", "90 шортсов", "Все 100+ форматов и длинные видео"],
-    limits: { requests: -1, projects: 5, instagram: 2, devices: 3 },
+    limits: { requests: -1, projects: 5, instagram: 2, devices: 3, reports: 0 },
     order: 1,
     highlighted: true,
     active: true,
@@ -75,7 +80,8 @@ export const DEFAULT_PLANS: PublicPlan[] = [
     priceRub: 10000,
     period: "в месяц",
     features: ["Контент-планы без лимита", "Сценарии без лимита", "Шортсы без лимита", "Приоритетная поддержка"],
-    limits: { requests: -1, projects: -1, instagram: -1, devices: 10 },
+    // Отчёт для клиента — на максимальном: им пользуются продюсеры и агентства.
+    limits: { requests: -1, projects: -1, instagram: -1, devices: 10, reports: 1 },
     order: 2,
     highlighted: false,
     active: true,
@@ -92,6 +98,7 @@ function normalizeLimits(v: unknown): PlanLimits {
     projects: num(o.projects),
     instagram: num(o.instagram),
     devices: num(o.devices),
+    reports: num(o.reports),
   };
 }
 

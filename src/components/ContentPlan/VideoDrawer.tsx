@@ -30,10 +30,12 @@ import {
   IconLink,
   IconMessageCircle,
   IconRefresh,
+  IconSparkles,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
 import {
+  CONTENT_PLAN_ADAPT_QUOTA_COST,
   CONTENT_PLAN_EDIT_QUOTA_COST,
   FORMAT_META,
   HUNT_LADDER_HINT,
@@ -50,6 +52,7 @@ import {
 import { apiVideoInsight } from "@/lib/competitors-client";
 import { insightPromptBlock, videoIdFromUrl } from "@/lib/competitors";
 import {
+  apiAdaptCompetitorVideo,
   apiDeleteVideo,
   apiLinkVideo,
   apiRegenerateVideo,
@@ -89,20 +92,31 @@ function referenceUrl(ref: string | null): string | null {
   return m ? m[0] : null;
 }
 
+/** id ролика из строки референса — по нему и переработка, и разбор донора. */
+function refIdOf(ref: string | null): string | null {
+  const url = referenceUrl(ref);
+  return url ? videoIdFromUrl(url) : null;
+}
+
 export default function VideoDrawer({
   v,
   opened,
   onClose,
   onChange,
   onDelete,
+  onAdapted,
   projectId,
+  planId,
 }: {
   v: VideoView | null;
   opened: boolean;
   onClose: () => void;
   onChange: (video: VideoView) => void;
   onDelete: (id: string) => void;
+  /** Запись из свалки переработана: новая карточка + id заменённой записи. */
+  onAdapted: (video: VideoView, replacedId: string) => void;
   projectId: string;
+  planId: string;
 }) {
   const dispatch = useAppDispatch();
   const router = useRouter();
@@ -113,6 +127,8 @@ export default function VideoDrawer({
   const [saved, setSaved] = useState(false); // индикатор «сохранено»
   // Тянем данные ролика-референса перед переходом в чат (кнопка ждёт).
   const [loadingRef, setLoadingRef] = useState(false);
+  const [adapting, setAdapting] = useState(false);
+  const [adaptError, setAdaptError] = useState<string | null>(null);
   // Слепок последнего сохранённого состояния — чтобы автосейв не срабатывал на
   // подстановку данных с сервера (иначе получаем эхо-запросы).
   const savedSnapshot = useRef<string>("");
@@ -234,6 +250,31 @@ export default function VideoDrawer({
     }
   };
 
+  // Переработать донора из свалки в полноценную карточку (та же механика, что у
+  // кнопки в «Референсах»): сервер тянет разбор ролика и расшифровку, модель
+  // собирает карточку под нишу клиента.
+  const adapt = async () => {
+    const videoId = refIdOf(d.reference);
+    if (!videoId || adapting) return;
+    setAdapting(true);
+    const res = await apiAdaptCompetitorVideo(planId, videoId, d.kind);
+    setAdapting(false);
+    if (!res.ok) {
+      setAdaptError(res.error);
+      return;
+    }
+    dispatch(bumpRequestsUsed(CONTENT_PLAN_ADAPT_QUOTA_COST));
+    // Сырая запись из свалки заменяется готовой карточкой: держать обе — плодить
+    // дубли, ссылка на донора при этом переезжает в новую карточку.
+    //
+    // ⚠️ Удаляем на СЕРВЕРЕ, а не только в состоянии страницы: иначе запись
+    // вернётся на доску при первой же перезагрузке. Удаление после успешной
+    // переработки — если она не удалась, запись должна остаться на месте.
+    await apiDeleteVideo(d.id);
+    onAdapted(res.data.video, d.id);
+    onClose();
+  };
+
   // «Сгенерировать сценарий» — уводим в чат проекта с полным брифом ролика.
   const toScript = async () => {
     const fmt = formatMeta(d.format)?.label ?? "";
@@ -277,19 +318,31 @@ export default function VideoDrawer({
     // её модель не может, и раньше «разбор референса» сводился к гаданию по
     // названию. Теперь в промпт уходит описание автора (часто с тайм-кодами =
     // структурой) и реакция зрителей. ~3 units квоты YouTube, кэш на сервере 6 ч.
+    // ⚠️⚠️ Всё, что дописываем ниже, идёт в `filled`, а НЕ в `parts`. Раньше
+    // разбор референса пушился в `parts`, строка нессылочного референса — в
+    // `filled`, а в чат уходил `parts`: то есть референс-не-ссылка терялся
+    // ЦЕЛИКОМ, а в промпт заодно уезжали пустые строки от невыбранных полей.
+    // Это и был баг «ссылка на референс не прикрепляется».
     const refId = d.reference ? videoIdFromUrl(d.reference) : null;
-    if (refId) {
-      setLoadingRef(true);
-      const res = await apiVideoInsight(projectId, refId);
-      setLoadingRef(false);
-      // Не достали (ролик удалён, кончилась квота) — переход не срываем: отдаём
-      // хотя бы строку с названием, как было раньше.
-      parts.push(res.ok ? `\n${insightPromptBlock(res.data.insight)}` : `Референс: ${d.reference}`);
-    } else if (d.reference) {
-      filled.push(`Референс: ${d.reference}`);
+    if (d.reference) {
+      // ⚠️ Ссылку даём ВСЕГДА и отдельной строкой: в insightPromptBlock её нет
+      // (там только название, метрики, описание и комментарии), а человек в
+      // ответе ждёт, что ассистент сошлётся на конкретный ролик-донор.
+      const url = referenceUrl(d.reference);
+      filled.push(`\nРеференс (видео-донор): ${referenceTitle(d.reference)}`);
+      if (url) filled.push(`Ссылка на референс: ${url}`);
+
+      if (refId) {
+        setLoadingRef(true);
+        const res = await apiVideoInsight(projectId, refId);
+        setLoadingRef(false);
+        // Не достали (ролик удалён, кончилась квота) — переход не срываем:
+        // остаётся строка с названием и ссылкой, как минимум.
+        if (res.ok) filled.push(`\n${insightPromptBlock(res.data.insight)}`);
+      }
     }
 
-    dispatch(prefillInput(parts.join("\n")));
+    dispatch(prefillInput(filled.join("\n")));
     router.push(`/${projectId}/chat`);
   };
 
@@ -328,6 +381,35 @@ export default function VideoDrawer({
       }
     >
       <Stack gap="lg">
+        {/* Свалка + ссылка на чужой ролик = можно сразу переработать по методике:
+            сервер разберёт донора, вытащит расшифровку и заполнит ВСЕ поля
+            карточки. ⚠️ Показываем только в свалке: у карточки, над которой уже
+            работают, поля заполнены руками, и затирать их кнопкой нельзя. */}
+        {d.status === "dump" && refIdOf(d.reference) && (
+          <Box>
+            <Button
+              fullWidth
+              color="brand"
+              variant="light"
+              leftSection={<IconSparkles size={16} />}
+              loading={adapting}
+              onClick={() => void adapt()}
+            >
+              Разобрать по методике · {CONTENT_PLAN_ADAPT_QUOTA_COST}
+            </Button>
+            <Text size="xs" c="dimmed" mt={4}>
+              Соберу из этого ролика свою карточку: названия по ВИСП, боль, скелет,
+              опенинг. Разберу его цифры и расшифровку — чужой заголовок копировать
+              не буду. Запись из свалки при этом заменится готовой карточкой.
+            </Text>
+            {adaptError && (
+              <Text size="xs" c="red" mt={4}>
+                {adaptError}
+              </Text>
+            )}
+          </Box>
+        )}
+
         {/* Статус */}
         <Box>
           <Text className="cp-label">Статус</Text>

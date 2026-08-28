@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { apiError, readJson } from "@/lib/http";
 import { getSettings } from "@/lib/settings";
-import { routeQuery } from "@/lib/router";
+import type { RouteDecision } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem } from "@/lib/llm/system";
-import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
+import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
 import { sanitizeSpec, type ThumbnailIdeas } from "@/lib/thumbnails";
 import {
   requireProjectAccess,
@@ -89,21 +89,42 @@ export async function POST(req: Request) {
     const routeHint =
       "придумай название ролика и текст на превью по ВИСП, подбери доп-элемент, эмоцию спикера и палитру под нишу";
 
-    const tRoute0 = Date.now();
-    const route = await routeQuery([{ role: "user", content: `${routeHint}. ${topic}` }], provider, {
-      userId: access.user.id,
-      conversationId: access.conversationId,
-    });
-    const routeMs = Date.now() - tRoute0;
-    // Тот же тюнинг, что у ИИ-разбора видео: нужен слой ВИСП/превью (закрытый TG),
-    // а книга со сценариями и форматы шортсов только раздувают промпт и латентность.
-    route.category = "chat";
-    route.book = false;
-    route.formats = false;
-    route.contentPlan = false;
+    // ⚠️⚠️ Роутер знаний тут НЕ зовём вовсе. Он решает, какие слои базы поднимать
+    // BM25-ретривом, — а ретрив для этой задачи выключен целиком (см. ниже). То
+    // есть вызов классификатора был лишним походом к модели ПЕРЕД основным: чистая
+    // прибавка к ожиданию без единого следствия для ответа.
+    const route: RouteDecision = {
+      category: "chat",
+      book: false,
+      formats: false,
+      contentPlan: false,
+      // ⚠️⚠️ Слой ВИСП/превью (закрытый TG) и YouTube-разборы ОТКЛЮЧЕНЫ. Раньше
+      // они давали до 60 000 символов ретрива, но конкретные правила упаковки —
+      // пять слов, тест «и чё?», слабые слова, запрет тавтологии — уже написаны
+      // словами в самом задании ниже. Ретрив добавлял к ним пересказ той же
+      // методики и десятки секунд ожидания.
+      tgClosed: false,
+      tgOpen: false,
+      youtube: false,
+      charisma: false,
+      searchQuery: "",
+    };
 
     const userName = access.user.name?.trim().slice(0, 100) ?? "";
-    const systemBlocks = buildSystem(route, withBriefTerms(route.searchQuery || routeHint, brief), "", brief, userName);
+    // lite: без образцов речи и полной базы антипаттернов — на выходе JSON, а
+    // жёсткие правила остаются финальной самопроверкой (см. buildSystem).
+    const systemBlocks = buildSystem(
+      route,
+      "",
+      "",
+      brief,
+      userName,
+      null,
+      "off",
+      [],
+      null,
+      true
+    );
     systemBlocks.push({
       type: "text",
       text: `# ФОРМАТ ЭТОЙ ЗАДАЧИ (важно)\nЭто не чат, а заготовка упаковки для превью. Верни ТОЛЬКО валидный JSON по схеме из сообщения пользователя — без markdown-обёртки, без преамбул и без текста вокруг. Содержимое строк — живым моим языком и по моей методике. Не пиши ничего, кроме JSON.`,
@@ -136,7 +157,7 @@ ${spec.niche ? `\nНиша: ${spec.niche}` : ""}${spec.audience ? `\nЦА: ${spe
       system: systemBlocks,
       messages: [{ role: "user", content: genPrompt }],
       route,
-      routeMs,
+      routeMs: 0,
       model: settings.openrouterModel,
       orParams: settings.openrouterParams,
       orProvider: settings.openrouterProvider,

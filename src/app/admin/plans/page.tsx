@@ -108,7 +108,7 @@ export default function AdminPlansPage() {
           priceRub: draft.priceRub,
           period: draft.period,
           features: [],
-          limits: { requests: 0, projects: 0, instagram: 0, devices: 0 },
+          limits: { requests: 0, projects: 0, instagram: 0, devices: 0, reports: 0 },
           active: false, // заводим скрытым: сперва настроить лимиты, потом показать
         }),
       });
@@ -336,6 +336,16 @@ export default function AdminPlansPage() {
                 }
               />
             </SimpleGrid>
+
+            {/* ⚠️ Не число, а рубильник: отчёт по каналу для клиента — функция
+                продюсерских тарифов, а не счётчик чего-либо. */}
+            <Switch
+              checked={p.limits.reports > 0}
+              onChange={(e) => updateLimit(p.id, "reports", e.currentTarget.checked ? 1 : 0)}
+              color="brand"
+              label="PDF-отчёт по каналу для клиента"
+              description="Кнопка «Отчёт для клиента» в разделе «Канал». Нужна продюсерам и агентствам, автору-одиночке — нет."
+            />
 
             <Group justify="flex-end" gap="sm">
               {savedId === p.id && savingId !== p.id && (

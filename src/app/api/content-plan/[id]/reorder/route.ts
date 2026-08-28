@@ -32,9 +32,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : [];
   if (ids.length === 0) return apiError("Пустой список карточек");
 
-  // Чужие карточки в список попасть не должны — сверяем принадлежность плану.
+  // Чужие карточки в список попасть не должны — сверяем принадлежность.
+  //
+  // ⚠️ Проверяем принадлежность ПРОЕКТУ, а не конкретному плану: колонки
+  // «Свалка», «В работе» и «Опубликовано» сквозные по всем месяцам (см. carried
+  // в content-plan.ts), и в одном списке законно едут карточки соседних планов.
+  // Раньше тут стояло planId — и перетаскивание такой карточки отбивалось
+  // ошибкой «Карточка не найдена». На безопасность это не влияет: проект уже
+  // проверен на владение выше (planConversation).
   const own = await prisma.contentPlanVideo.findMany({
-    where: { planId: id, id: { in: ids } },
+    where: { id: { in: ids }, plan: { conversationId: owned } },
     select: { id: true },
   });
   if (own.length !== ids.length) return apiError("Карточка не найдена", 404);

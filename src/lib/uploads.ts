@@ -37,12 +37,15 @@ export function absoluteUploadPath(relPath: string): string {
 // Записывает буфер и возвращает путь ОТНОСИТЕЛЬНО UPLOAD_DIR (его и кладём в БД).
 export async function saveUpload(
   data: Buffer,
-  opts: { mime: string; dir: string }
+  opts: { mime: string; dir: string; root?: string }
 ): Promise<string> {
   const ext = IMAGE_MIME_EXT[opts.mime] ?? "bin";
-  // dir приходит из наших же id (conversationId) — на всякий случай санитайзим.
+  // dir приходит из наших же id (conversationId, userId) — на всякий случай
+  // санитайзим. root по умолчанию "thumbnails" — так было до появления вложений
+  // поддержки, и старые пути в БД остаются валидными.
   const safeDir = opts.dir.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
-  const relPath = path.posix.join("thumbnails", safeDir, `${randomUUID()}.${ext}`);
+  const safeRoot = (opts.root ?? "thumbnails").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32);
+  const relPath = path.posix.join(safeRoot, safeDir, `${randomUUID()}.${ext}`);
   const abs = absoluteUploadPath(relPath);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, data);

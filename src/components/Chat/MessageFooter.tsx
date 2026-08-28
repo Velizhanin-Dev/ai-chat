@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { IconCopy, IconCheck, IconFileText, IconDownload } from "@tabler/icons-react";
+import { IconCopy, IconCheck, IconFileText, IconDownload, IconLink } from "@tabler/icons-react";
 import {
   extractScenario,
   looksLikeScenario,
   scenarioFileName,
 } from "@/lib/scenario-extract";
+import { extractSources } from "@/lib/chat-sources";
 
 // «Борода» под ответом ассистента: дата слева, кнопка «Копировать» справа.
 //
@@ -50,9 +51,22 @@ export default function MessageFooter({
   // (и только у них) есть отдельные кнопки: чистый текст и файл.
   const isScenario = looksLikeScenario(content);
 
+  // Ссылки собираем в сноски внизу ответа: модель с включённым веб-поиском
+  // ставит их после каждого второго предложения, причём одну и ту же по пять раз
+  // (см. chat-sources.ts). Из тела «сносочные» ссылки уже вырезаны родителем.
+  const sources = extractSources(content);
+
+  // ⚠️ В буфер уходит текст ВМЕСТЕ со списком источников: на экране они вынесены
+  // вниз отдельным блоком, и без них скопированный ответ терял бы все ссылки.
+  const copyText = (): string => {
+    if (sources.length === 0) return content;
+    const list = sources.map((s) => `- ${s.label}: ${s.url}`).join("\n");
+    return `${content}\n\nИсточники:\n${list}`;
+  };
+
   const copyRaw = async () => {
     try {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(copyText());
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -90,7 +104,24 @@ export default function MessageFooter({
   const stamp = formatStamp(createdAt);
 
   return (
-    <div className="msg-foot">
+    <>
+      {sources.length > 0 && (
+        <div className="msg-sources">
+          <span className="msg-sources-title">
+            <IconLink size={13} /> Источники
+          </span>
+          <ol className="msg-sources-list">
+            {sources.map((s) => (
+              <li key={s.url}>
+                <a href={s.url} target="_blank" rel="noopener noreferrer nofollow">
+                  {s.label}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      <div className="msg-foot">
       <span className="msg-foot-time">{stamp}</span>
       <span className="msg-foot-actions">
         {isScenario && (
@@ -128,6 +159,7 @@ export default function MessageFooter({
           <span>{copied ? "Скопировано" : "Копировать"}</span>
         </button>
       </span>
-    </div>
+      </div>
+    </>
   );
 }

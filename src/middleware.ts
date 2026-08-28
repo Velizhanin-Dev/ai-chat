@@ -70,5 +70,8 @@ export const config = {
     "/:projectId/thumbnails/:path*",
     "/:projectId/settings",
     "/:projectId/settings/:path*",
+    // Отчёт для клиента: гейт по тарифу — на самой странице, но гостя лучше
+    // отправить на вход, а не показывать ему 404.
+    "/:projectId/report",
   ],
 };

@@ -5,11 +5,50 @@
 // Кто написал: клиент или поддержка.
 export type SupportRole = "user" | "admin";
 
+/** Одна прикреплённая картинка в том виде, в котором её видит клиент. */
+export interface SupportAttachment {
+  /** Адрес отдачи: /api/support/attachments/<messageId>/<index>. */
+  url: string;
+  mime: string;
+}
+
 export interface SupportMessageRow {
   id: string;
   role: SupportRole;
   content: string;
+  attachments: SupportAttachment[];
   createdAt: string; // ISO
+}
+
+/** То, что лежит в SupportMessage.attachments (наружу пути не отдаём). */
+export interface StoredAttachment {
+  path: string;
+  mime: string;
+}
+
+// Сколько картинок к одному сообщению и какого размера.
+//
+// ⚠️ Четыре — не «пусть будет»: скриншот проблемы это обычно один-два кадра, а
+// десяток картинок в бабблах превращает переписку в ленту, где не найти текст.
+export const SUPPORT_MAX_FILES = 4;
+export const SUPPORT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+
+export function attachmentUrl(messageId: string, index: number): string {
+  return `/api/support/attachments/${messageId}/${index}`;
+}
+
+/** Разбор колонки attachments: чужой формат и мусор молча отбрасываем. */
+export function parseStoredAttachments(raw: unknown): StoredAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .flatMap((x): StoredAttachment[] => {
+      if (!x || typeof x !== "object") return [];
+      const o = x as Record<string, unknown>;
+      const path = typeof o.path === "string" ? o.path : "";
+      const mime = typeof o.mime === "string" ? o.mime : "";
+      return path && mime ? [{ path, mime }] : [];
+    })
+    .slice(0, SUPPORT_MAX_FILES);
 }
 
 // Строка списка переписок в админке: юзер + хвост диалога.
