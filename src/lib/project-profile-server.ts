@@ -7,7 +7,7 @@ import { prisma } from "./prisma";
 import { enqueueJob } from "./jobs-server";
 import { getStrategy } from "./llm";
 import { buildSystem } from "./llm/system";
-import { getSettings } from "./settings";
+import { getSettings, structuredModelOf } from "./settings";
 import { routeQuery, type RouteDecision } from "./router";
 import { sanitizeBrief, withBriefTerms, briefSearchTerms, type Brief } from "./brief";
 import { fetchPage, pagePromptBlock } from "./web-fetch";
@@ -89,9 +89,9 @@ async function runJsonTask(opts: {
     messages: [{ role: "user", content: opts.prompt }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId: opts.userId, conversationId: opts.projectId },
   })) {
     full += token;

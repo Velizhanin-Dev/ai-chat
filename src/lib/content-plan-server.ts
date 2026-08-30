@@ -4,7 +4,7 @@ import { getStrategy } from "./llm";
 import { buildSystem, buildChannelBlock } from "./llm/system";
 import { getChannelSnapshotCached } from "./youtube";
 import { getPublicSnapshot } from "./youtube-public";
-import { getSettings } from "./settings";
+import { getSettings, structuredModelOf } from "./settings";
 import { routeQuery } from "./router";
 import type { RouteDecision } from "./router";
 import {
@@ -252,9 +252,9 @@ export async function generatePlanVideos(opts: {
     messages: [{ role: "user", content: genPrompt }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId, conversationId: projectId },
   })) {
     full += token;
@@ -335,9 +335,9 @@ export async function generateBlock(opts: {
     messages: [{ role: "user", content: BLOCK_INSTRUCTION[block] }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId, conversationId: projectId },
   })) {
     full += token;
@@ -571,9 +571,9 @@ export async function regenerateVideoPart(opts: {
     messages: [{ role: "user", content: genPrompt }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId, conversationId: projectId },
   })) {
     full += token;
@@ -799,9 +799,9 @@ export async function adaptCompetitorVideo(opts: {
     messages: [{ role: "user", content: genPrompt }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId, conversationId: projectId },
   })) {
     full += token;

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { resolveChannel, fetchChannelUploads } from "@/lib/youtube-search";
 import { apiError, readJson } from "@/lib/http";
-import { getSettings, isLaunchLocked } from "@/lib/settings";
+import { getSettings, isLaunchLocked, structuredModelOf } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { BRIEF_LIMITS, type BriefAutofill } from "@/lib/brief";
 import { getStrategy } from "@/lib/llm";
@@ -142,9 +142,9 @@ ${facts.videoLines}
     messages: [{ role: "user", content: prompt }],
     route,
     routeMs: 0,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId, conversationId: null },
   })) {
     full += token;

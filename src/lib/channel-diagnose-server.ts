@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { getSettings } from "@/lib/settings";
+import { getSettings, structuredModelOf } from "@/lib/settings";
 import { sanitizeBrief, isBriefComplete, type Brief } from "@/lib/brief";
 import { routeQuery } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
@@ -284,9 +284,9 @@ ${jsonSchemaBlock(keys)}
     messages: [{ role: "user", content: genPrompt }],
     route,
     routeMs,
-    model: settings.openrouterModel,
+    model: structuredModelOf(settings).model,
     orParams: settings.openrouterParams,
-    orProvider: settings.openrouterProvider,
+    orProvider: structuredModelOf(settings).orProvider,
     meta: { userId: userId, conversationId: owned },
   })) {
     full += token;
@@ -308,7 +308,7 @@ ${jsonSchemaBlock(keys)}
       result: result as unknown as object,
       overallScore: result.overall,
       manualCtr,
-      model: provider === "openrouter" ? settings.openrouterModel : provider,
+      model: provider === "openrouter" ? structuredModelOf(settings).model : provider,
     },
   });
 

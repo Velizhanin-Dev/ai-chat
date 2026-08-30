@@ -37,6 +37,19 @@ export interface AppSettings {
   // одному провайдеру (кэш греется), но с фолбэком на других при его сбое/недоступности
   // (иначе 404 "No endpoints found" / 429). "" = авто-балансировка (без пина).
   openrouterProvider: string;
+  /**
+   * Модель для СТРУКТУРНЫХ задач (JSON на выходе: контент-план, опорные блоки,
+   * профиль проекта, разборы, автозаполнение брифа, заготовка превью).
+   *
+   * ⚠️ Зачем отдельно от чата: чату важны стрим, TTFT и живой русский; структурным
+   * задачам — только валидный JSON, стрим там никто не видит. Это разные
+   * требования, и лучшая модель для одного не обязана быть лучшей для другого
+   * (замер 2026-08-31: luna быстрее V4 Pro в 5-6 раз по TTFT, но для тяжёлого
+   * JSON может быть выгоднее модель постарше). Пусто = как у чата.
+   */
+  openrouterStructuredModel: string;
+  /** Пин провайдера для структурной модели (у другой модели другие провайдеры). */
+  openrouterStructuredProvider: string;
   // Модель генерации превью (раздел «Генератор превью»). Всегда OpenRouter —
   // независимо от provider выше (чат может работать на Claude/GLM). Дефолт задаёт
   // IMAGE_DEFAULT_MODEL в src/lib/llm/image.ts (Nano Banana Pro), "" = дефолт.
@@ -78,6 +91,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   routing: "smart",
   openrouterParams: {},
   openrouterProvider: "",
+  openrouterStructuredModel: "",
+  openrouterStructuredProvider: "",
   imageModel: "",
   trialHours: 1,
   trialResetAt: null,
@@ -92,6 +107,8 @@ const KEY_PROVIDER = "provider";
 const KEY_OR_MODEL = "openrouter_model";
 const KEY_OR_PARAMS = "openrouter_params";
 const KEY_OR_PROVIDER = "openrouter_provider";
+const KEY_OR_STRUCT_MODEL = "openrouter_structured_model";
+const KEY_OR_STRUCT_PROVIDER = "openrouter_structured_provider";
 const KEY_ROUTING = "routing";
 const KEY_IMAGE_MODEL = "image_model";
 const KEY_WEB_SEARCH = "web_search";
@@ -139,6 +156,14 @@ function normalize(map: Map<string, unknown>): AppSettings {
     openrouterModel: typeof orModel === "string" ? orModel : "",
     openrouterParams: normalizeOpenRouterParams(orParams),
     openrouterProvider: typeof orProvider === "string" ? orProvider : "",
+    openrouterStructuredModel:
+      typeof map.get(KEY_OR_STRUCT_MODEL) === "string"
+        ? (map.get(KEY_OR_STRUCT_MODEL) as string)
+        : "",
+    openrouterStructuredProvider:
+      typeof map.get(KEY_OR_STRUCT_PROVIDER) === "string"
+        ? (map.get(KEY_OR_STRUCT_PROVIDER) as string)
+        : "",
     imageModel: typeof imageModel === "string" ? imageModel : "",
     webSearch: normalizeWebSearch(map.get(KEY_WEB_SEARCH)),
     trialHours: normalizeTrialHours(map.get(KEY_TRIAL_HOURS)),
@@ -199,6 +224,10 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       ? normalizeOpenRouterParams(input.openrouterParams)
       : cur.openrouterParams,
     openrouterProvider: input.openrouterProvider ?? cur.openrouterProvider,
+    openrouterStructuredModel:
+      input.openrouterStructuredModel ?? cur.openrouterStructuredModel,
+    openrouterStructuredProvider:
+      input.openrouterStructuredProvider ?? cur.openrouterStructuredProvider,
     imageModel: input.imageModel ?? cur.imageModel,
     routing: input.routing ?? cur.routing,
     webSearch: input.webSearch
@@ -224,6 +253,16 @@ export async function saveSettings(input: Partial<AppSettings>): Promise<AppSett
       where: { key: KEY_OR_MODEL },
       create: { key: KEY_OR_MODEL, value: next.openrouterModel },
       update: { value: next.openrouterModel },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_OR_STRUCT_MODEL },
+      create: { key: KEY_OR_STRUCT_MODEL, value: next.openrouterStructuredModel },
+      update: { value: next.openrouterStructuredModel },
+    }),
+    prisma.appSetting.upsert({
+      where: { key: KEY_OR_STRUCT_PROVIDER },
+      create: { key: KEY_OR_STRUCT_PROVIDER, value: next.openrouterStructuredProvider },
+      update: { value: next.openrouterStructuredProvider },
     }),
     prisma.appSetting.upsert({
       where: { key: KEY_TRIAL_HOURS },
@@ -290,4 +329,20 @@ export function isLaunchLocked(s: AppSettings): boolean {
 export type PublicConfig = AppSettings;
 export function toPublicConfig(s: AppSettings): PublicConfig {
   return s;
+}
+
+// ── Выбор модели под тип задачи ─────────────────────────────────────────────
+//
+// Структурные задачи (JSON): контент-план, опорные блоки, профиль, разборы,
+// автозаполнение, заготовка превью. Пустая структурная модель = модель чата —
+// поведение до разделения, ничего не ломается.
+//
+// ⚠️ Пин провайдера идёт ПАРОЙ с моделью: у другой модели другой список
+// провайдеров, и чатовый пин к структурной модели неприменим (получили бы
+// вечный фолбэк мимо кэша).
+export function structuredModelOf(s: AppSettings): { model: string; orProvider: string } {
+  if (s.openrouterStructuredModel) {
+    return { model: s.openrouterStructuredModel, orProvider: s.openrouterStructuredProvider };
+  }
+  return { model: s.openrouterModel, orProvider: s.openrouterProvider };
 }

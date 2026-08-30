@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { apiError, readJson } from "@/lib/http";
-import { getSettings } from "@/lib/settings";
+import { getSettings, structuredModelOf } from "@/lib/settings";
 import type { RouteDecision } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem } from "@/lib/llm/system";
@@ -158,9 +158,9 @@ ${spec.niche ? `\nНиша: ${spec.niche}` : ""}${spec.audience ? `\nЦА: ${spe
       messages: [{ role: "user", content: genPrompt }],
       route,
       routeMs: 0,
-      model: settings.openrouterModel,
+      model: structuredModelOf(settings).model,
       orParams: settings.openrouterParams,
-      orProvider: settings.openrouterProvider,
+      orProvider: structuredModelOf(settings).orProvider,
       meta: { userId: access.user.id, conversationId: access.conversationId },
     })) {
       full += token;

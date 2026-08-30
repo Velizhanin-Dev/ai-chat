@@ -52,6 +52,16 @@ export async function PATCH(req: Request) {
       .replace(/[^a-z0-9/_-]/g, "")
       .slice(0, 60);
   }
+  if (typeof input.openrouterStructuredModel === "string") {
+    patch.openrouterStructuredModel = input.openrouterStructuredModel.trim().slice(0, 120);
+  }
+  if (typeof input.openrouterStructuredProvider === "string") {
+    patch.openrouterStructuredProvider = input.openrouterStructuredProvider
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9/_-]/g, "")
+      .slice(0, 60);
+  }
   if (typeof input.imageModel === "string") {
     patch.imageModel = input.imageModel.trim().slice(0, 120);
   }

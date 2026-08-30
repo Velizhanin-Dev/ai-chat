@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { registerJobHandler, enqueueJob, FatalJobError } from "@/lib/jobs-server";
-import { getSettings } from "@/lib/settings";
+import { getSettings, structuredModelOf } from "@/lib/settings";
 import { generateImage } from "@/lib/llm/image";
 import { readUpload, saveUpload, IMAGE_MIME_EXT } from "@/lib/uploads";
 import { buildThumbnailPrompt, normalizeRefRole, type ThumbnailSpec } from "@/lib/thumbnails";
@@ -170,7 +170,7 @@ registerJobHandler("content_plan_generate", async ({ userId, conversationId, pay
       period,
       label,
       niche: brief?.niche ?? null,
-      model: settings.provider === "openrouter" ? settings.openrouterModel : settings.provider,
+      model: settings.provider === "openrouter" ? structuredModelOf(settings).model : settings.provider,
       videos: {
         create: gen.map((v, i) => ({
           order: i,

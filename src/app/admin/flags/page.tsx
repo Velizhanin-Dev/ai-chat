@@ -154,6 +154,10 @@ export default function AdminFlagsPage() {
   const [orProviders, setOrProviders] = useState<OrProvider[]>([]);
   const [orProvidersLoading, setOrProvidersLoading] = useState(false);
 
+  // Провайдеры СТРУКТУРНОЙ модели (свой пин: у другой модели другие провайдеры).
+  const [orStructProviders, setOrStructProviders] = useState<OrProvider[]>([]);
+  const [orStructProvidersLoading, setOrStructProvidersLoading] = useState(false);
+
   // Каталог image-моделей (для генератора превью) — отдельный список, грузим
   // один раз при открытии страницы: он нужен независимо от движка чата.
   const [imgModels, setImgModels] = useState<OrModel[]>([]);
@@ -245,6 +249,36 @@ export default function AdminFlagsPage() {
       cancelled = true;
     };
   }, [orModel]);
+
+  // Провайдеры структурной модели — тем же образом. Пустая структурная модель =
+  // «как у чата», свой пин не нужен.
+  const orStructModel =
+    settings?.provider === "openrouter" ? settings.openrouterStructuredModel : "";
+  useEffect(() => {
+    if (!orStructModel) {
+      setOrStructProviders([]);
+      return;
+    }
+    let cancelled = false;
+    setOrStructProvidersLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/openrouter/providers?model=${encodeURIComponent(orStructModel)}`,
+          { cache: "no-store" }
+        );
+        const data = (await res.json()) as { providers?: OrProvider[] };
+        if (!cancelled) setOrStructProviders(res.ok && data.providers ? data.providers : []);
+      } catch {
+        if (!cancelled) setOrStructProviders([]);
+      } finally {
+        if (!cancelled) setOrStructProvidersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [orStructModel]);
 
   const patch = (p: Partial<AppSettings>) => {
     setSettings((s) => (s ? { ...s, ...p } : s));
@@ -534,6 +568,70 @@ export default function AdminFlagsPage() {
                   })()}
                   maw={480}
                 />
+
+                {/* ── Модель для структурных задач ──
+                    Чату важны стрим, TTFT и живой русский; структурным задачам
+                    (контент-план, опорные блоки, профиль, разборы, автозаполнение,
+                    заготовка превью) — только валидный JSON, стрима там никто не
+                    видит. Требования разные — модели можно развести. */}
+                <Select
+                  label="Модель для структурных задач"
+                  description="Контент-план, опорные блоки, профиль проекта, разборы, автозаполнение брифа, заготовка превью. Пусто — та же модель, что в чате."
+                  placeholder={orModelsLoading ? "Загружаю каталог…" : "Как у чата"}
+                  searchable
+                  clearable
+                  nothingFoundMessage="Ничего не найдено"
+                  disabled={orModelsLoading}
+                  value={settings.openrouterStructuredModel || null}
+                  onChange={(v) =>
+                    // Смена модели обнуляет её пин: у другой модели другие провайдеры,
+                    // старый slug дал бы вечный фолбэк мимо кэша.
+                    patch({ openrouterStructuredModel: v ?? "", openrouterStructuredProvider: "" })
+                  }
+                  data={(() => {
+                    const opts = orModels.map((m) => ({ value: m.id, label: m.name }));
+                    if (
+                      settings.openrouterStructuredModel &&
+                      !opts.some((o) => o.value === settings.openrouterStructuredModel)
+                    ) {
+                      opts.unshift({
+                        value: settings.openrouterStructuredModel,
+                        label: settings.openrouterStructuredModel,
+                      });
+                    }
+                    return opts;
+                  })()}
+                />
+                {settings.openrouterStructuredModel && (
+                  <Select
+                    label="Провайдер структурной модели (пин для кэша)"
+                    description="Свой пин: у этой модели свой список провайдеров, чатовый пин к ней неприменим."
+                    placeholder={orStructProvidersLoading ? "Загружаю…" : "Авто (балансировка)"}
+                    clearable
+                    searchable
+                    value={settings.openrouterStructuredProvider || null}
+                    onChange={(v) => patch({ openrouterStructuredProvider: v ?? "" })}
+                    data={(() => {
+                      const opts = orStructProviders.map((pr) => ({
+                        value: pr.slug,
+                        label: `${pr.name} — вход ${perM(pr.prompt)}${
+                          pr.cacheRead != null ? `, кэш ${perM(pr.cacheRead)}` : ", без кэша"
+                        }${pr.implicitCache ? " ✓" : ""}`,
+                      }));
+                      if (
+                        settings.openrouterStructuredProvider &&
+                        !opts.some((o) => o.value === settings.openrouterStructuredProvider)
+                      ) {
+                        opts.unshift({
+                          value: settings.openrouterStructuredProvider,
+                          label: settings.openrouterStructuredProvider,
+                        });
+                      }
+                      return opts;
+                    })()}
+                    maw={480}
+                  />
+                )}
 
                 <div>
                   <Text fw={500} size="sm" mb={4}>
