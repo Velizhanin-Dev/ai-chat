@@ -25,6 +25,7 @@ import {
   IconPinFilled,
   IconSparkles,
   IconTrash,
+  IconBrandYoutube,
 } from "@tabler/icons-react";
 import {
   MAX_REFERENCES,
@@ -44,6 +45,7 @@ import {
 import { apiGetProjectBrief } from "@/lib/chat-client";
 import ThumbnailWizard from "./ThumbnailWizard";
 import ThumbnailEditor from "./ThumbnailEditor";
+import ChannelThumbsModal from "./ChannelThumbsModal";
 import { forgetJob } from "@/lib/jobs-client";
 import { JOB_LABELS } from "@/lib/jobs";
 
@@ -120,6 +122,8 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
   const openGroup = groups.find((g) => g.rootId === openGroupId) ?? null;
 
   const addItem = useCallback((row: ThumbnailRow) => setItems((prev) => [row, ...prev]), []);
+  // Модалка «превью с канала» — импорт обложек вышедших роликов в стиль-референсы.
+  const [channelThumbsOpen, setChannelThumbsOpen] = useState(false);
 
   // Подхват незавершённой генерации. Человек мог обновить страницу, уйти на
   // другую вкладку раздела или вообще открыть проект с телефона — картинку в
@@ -379,6 +383,18 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
               >
                 Стиль
               </Button>
+              {/* Обложки уже вышедших роликов — готовые стиль-референсы: новое
+                  превью продолжает вид канала, а не начинает дизайн с нуля. */}
+              <Button
+                size="xs"
+                variant="light"
+                color="gray"
+                leftSection={<IconBrandYoutube size={14} />}
+                disabled={references.length >= MAX_REFERENCES}
+                onClick={() => setChannelThumbsOpen(true)}
+              >
+                С канала
+              </Button>
             </Group>
           </Group>
 
@@ -480,6 +496,14 @@ export default function ThumbnailStudio({ projectId }: { projectId: string }) {
         references={references}
         onCreated={addItem}
         onDelete={(id) => void remove(id)}
+      />
+
+      <ChannelThumbsModal
+        projectId={projectId}
+        opened={channelThumbsOpen}
+        onClose={() => setChannelThumbsOpen(false)}
+        onAdded={addItem}
+        room={MAX_REFERENCES - references.length}
       />
     </ScrollArea>
   );

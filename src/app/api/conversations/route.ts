@@ -8,6 +8,7 @@ import { getPlans } from "@/lib/plans";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
 import { isAdmin } from "@/lib/admin";
 import { attachPendingConnection } from "@/lib/youtube";
+import { linkChannel as linkPublicChannel } from "@/lib/youtube-public";
 import { normalizePlatform, type Platform } from "@/lib/platform";
 import { track } from "@/lib/achievements-server";
 import { ensureProfileJob } from "@/lib/project-profile-server";
@@ -142,6 +143,18 @@ export async function POST(req: Request) {
     // черновик подключения прицепился бы к чужому по смыслу проекту). Best-effort:
     // не вышло — проект живёт, канал подключат в настройках проекта.
     if (body.attachChannel === true) await attachPendingConnection(user.id, conv.id);
+    // Канал, выбранный на шаге брифа ПО ССЫЛКЕ (бренд-аккаунт, без OAuth) —
+    // привязываем как ChannelLink. Best-effort: не вышло — проект живёт, канал
+    // привяжут в настройках. channelId валидируем сами: он уходит в resolveChannel.
+    const linkChannel =
+      typeof body.linkChannel === "string" && /^UC[\w-]{20,}$/.test(body.linkChannel.trim())
+        ? body.linkChannel.trim()
+        : "";
+    if (linkChannel && body.attachChannel !== true) {
+      await linkPublicChannel(conv.id, linkChannel).catch((err) =>
+        console.error("[conversations] привязка канала по ссылке:", err)
+      );
+    }
     // Геймификация (docs/achievements.md): проект создан, а бриф пройден — иначе
     // создание бы не прошло валидацию выше. Fire-and-forget.
     track(user.id, "project_created");

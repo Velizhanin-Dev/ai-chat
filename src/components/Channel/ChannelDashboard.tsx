@@ -2493,7 +2493,9 @@ type AnalyzeState =
   | { s: "ready"; data: VideoAnalysis }
   | { s: "error"; msg: string };
 
-function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: string }) {
+// Экспортирован: тот же разбор нужен публичному дашборду (канал по ссылке) —
+// серверная сторона уже умеет работать без OAuth (см. video-analyze-server.ts).
+export function AnalysisPanel({ projectId, videoId }: { projectId: string; videoId: string }) {
   const dispatch = useAppDispatch();
   const [st, setSt] = useState<AnalyzeState>({ s: "idle" });
   // CTR превью: API его не отдаёт, поэтому берём цифрой из Studio, если юзер ввёл.
@@ -2826,6 +2828,13 @@ function NotConnected({ settingsHref }: { settingsHref: string }) {
       <Text c="dimmed">
         Свяжите свой YouTube-канал в настройках — и здесь появятся статистика,
         динамика просмотров и последние видео с их метриками.
+      </Text>
+      {/* ⚠️ Про запасной путь говорим прямо здесь: человек с каналом на
+          бренд-аккаунте упирается в Google-подключение и уходит ни с чем, хотя
+          публичные цифры мы ему дать можем. */}
+      <Text c="dimmed" size="sm">
+        Канал на аккаунте компании и Google не пускает? Там же можно привязать его
+        по ссылке — тогда я буду видеть ролики, просмотры и подписчиков.
       </Text>
       <Button
         component={Link}

@@ -47,6 +47,34 @@ export async function apiUploadReference(
   return data.item;
 }
 
+/**
+ * Превью уже вышедшего ролика канала → стиль-референс. Сервер сам качает
+ * картинку (через зарубежный прокси — прод в РФ) и сохраняет как референс.
+ * Бесплатно: ни квоты тарифа, ни units YouTube.
+ */
+export async function apiRefFromChannel(
+  projectId: string,
+  videoId: string,
+  label = ""
+): Promise<{ ok: true; data: { item: ThumbnailRow } } | { ok: false; error: string }> {
+  try {
+    const res = await fetch("/api/thumbnails/from-channel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, videoId, label }),
+    });
+    const data = (await res.json().catch(() => null)) as
+      | { item?: ThumbnailRow; error?: string }
+      | null;
+    if (!res.ok || !data?.item) {
+      return { ok: false, error: data?.error || "Не удалось взять превью" };
+    }
+    return { ok: true, data: { item: data.item } };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
 export async function apiDeleteThumbnail(projectId: string, id: string): Promise<void> {
   const res = await fetch(
     `/api/thumbnails/${encodeURIComponent(id)}?projectId=${encodeURIComponent(projectId)}`,

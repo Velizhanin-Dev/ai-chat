@@ -12,6 +12,7 @@ import { routeQuery, type RouteDecision } from "./router";
 import { sanitizeBrief, withBriefTerms, briefSearchTerms, type Brief } from "./brief";
 import { fetchPage, pagePromptBlock } from "./web-fetch";
 import { getChannelSnapshotCached, getValidAccessToken, fetchChannelInfo, fetchRecentVideos } from "./youtube";
+import { getPublicSnapshot, getPublicStats } from "./youtube-public";
 import { getTranscript, condenseTranscript } from "./youtube-transcript";
 import { buildChannelBlock } from "./llm/system";
 import {
@@ -216,19 +217,29 @@ const VOICE_BUDGET_MS = 90_000;
  */
 async function resolveVoiceSource(projectId: string): Promise<{ text: string; count: number }> {
   try {
+    // Список последних роликов: под OAuth — токеном канала, для канала по ссылке
+    // — публичным списком. ⚠️ Сами расшифровки ПУБЛИЧНЫ (yt-dlp токена не требует
+    // вообще), так что голос спикера собирается и у бренд-аккаунтов — а именно на
+    // них жалоба «текст неживой» и била больнее всего.
     const integ = await prisma.youTubeIntegration.findUnique({
       where: { conversationId: projectId },
     });
-    if (!integ) return { text: "", count: 0 };
+    let videoRefs: { id: string; title: string }[];
+    if (integ) {
+      const token = await getValidAccessToken(integ);
+      const info = await fetchChannelInfo(token);
+      if (!info?.uploadsPlaylistId) return { text: "", count: 0 };
+      const page = await fetchRecentVideos(token, info.uploadsPlaylistId, VOICE_VIDEO_COUNT);
+      videoRefs = page.videos.map((v) => ({ id: v.id, title: v.title }));
+    } else {
+      const pub = await getPublicStats(projectId);
+      if (!pub) return { text: "", count: 0 };
+      videoRefs = pub.videos.slice(0, VOICE_VIDEO_COUNT).map((v) => ({ id: v.id, title: v.title }));
+    }
 
-    const token = await getValidAccessToken(integ);
-    const info = await fetchChannelInfo(token);
-    if (!info?.uploadsPlaylistId) return { text: "", count: 0 };
-
-    const page = await fetchRecentVideos(token, info.uploadsPlaylistId, VOICE_VIDEO_COUNT);
     const parts: string[] = [];
     const deadline = Date.now() + VOICE_BUDGET_MS;
-    for (const v of page.videos.slice(0, VOICE_VIDEO_COUNT)) {
+    for (const v of videoRefs.slice(0, VOICE_VIDEO_COUNT)) {
       if (Date.now() > deadline) break;
       const res = await getTranscript(v.id);
       if (res.status !== "ok") continue;
@@ -419,7 +430,12 @@ async function resolveChannelBlock(projectId: string): Promise<string | null> {
     const integ = await prisma.youTubeIntegration.findUnique({
       where: { conversationId: projectId },
     });
-    if (!integ) return null;
+    if (!integ) {
+      // Канал по ссылке — публичные цифры тоже фактура: профиль соберётся по
+      // реальным роликам человека, а не по одной анкете.
+      const pub = await getPublicSnapshot(projectId);
+      return pub ? buildChannelBlock(pub, null, true) : null;
+    }
     const snap = await getChannelSnapshotCached(projectId, integ);
     return snap ? buildChannelBlock(snap) : null;
   } catch {

@@ -59,22 +59,34 @@ export async function apiYouTubePendingDisconnect(): Promise<Result<null>> {
 
 // Автозаполнение брифа по подключённому каналу. Без projectId — по черновому
 // подключению (шаг брифа); с projectId — по каналу существующего проекта.
-export async function apiBriefAutofill(projectId?: string): Promise<Result<BriefAutofill>> {
+/** Канал, найденный по ссылке при автозаполнении (для последующей привязки). */
+export interface AutofillLinkChannel {
+  channelId: string;
+  title: string;
+  thumbnail: string | null;
+}
+
+export async function apiBriefAutofill(
+  projectId?: string,
+  /** Ссылка на канал — путь БЕЗ OAuth (бренд-аккаунт). */
+  channelUrl?: string
+): Promise<Result<BriefAutofill & { linkChannel?: AutofillLinkChannel }>> {
   try {
     const res = await fetch("/api/brief/autofill", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(projectId ? { projectId } : {}),
+      body: JSON.stringify(projectId ? { projectId } : channelUrl ? { channelUrl } : {}),
     });
     const data = (await res.json().catch(() => ({}))) as {
       autofill?: BriefAutofill;
+      linkChannel?: AutofillLinkChannel;
       error?: string;
       code?: string;
     };
     if (!res.ok || !data.autofill) {
       return { ok: false, error: data.error || "Не удалось разобрать канал", code: data.code };
     }
-    return { ok: true, data: data.autofill };
+    return { ok: true, data: { ...data.autofill, linkChannel: data.linkChannel } };
   } catch {
     return { ok: false, error: "Нет связи с сервером" };
   }
@@ -473,4 +485,54 @@ const shortDateFmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "
 export function formatShortDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : shortDateFmt.format(d);
+}
+
+// ── Канал по ссылке (без OAuth) ─────────────────────────────────────────────
+//
+// Запасной путь для тех, у кого канал на бренд-аккаунте: публичные цифры вместо
+// пустого экрана. Полной аналитики тут нет — см. src/lib/youtube-public.ts.
+
+export interface LinkedChannel {
+  channelId: string;
+  title: string;
+  thumbnail: string | null;
+  customUrl: string | null;
+  subscribers: number;
+  hiddenSubs: boolean;
+  videoCount: number;
+  views: number;
+}
+
+async function linkReq<T>(url: string, init?: RequestInit): Promise<Result<T>> {
+  try {
+    const res = await fetch(url, { cache: "no-store", ...init });
+    const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+    if (!res.ok) {
+      return { ok: false, error: data?.error || "Не удалось выполнить запрос" };
+    }
+    return { ok: true, data: data as T };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
+  }
+}
+
+export async function apiChannelLinkStatus(
+  projectId: string
+): Promise<Result<{ linked: boolean; channel: LinkedChannel | null }>> {
+  return linkReq(`/api/integrations/youtube/link?${q(projectId)}`);
+}
+
+export async function apiLinkChannel(
+  projectId: string,
+  url: string
+): Promise<Result<{ channel: LinkedChannel }>> {
+  return linkReq(`/api/integrations/youtube/link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, url }),
+  });
+}
+
+export async function apiUnlinkChannel(projectId: string): Promise<Result<{ linked: boolean }>> {
+  return linkReq(`/api/integrations/youtube/link?${q(projectId)}`, { method: "DELETE" });
 }

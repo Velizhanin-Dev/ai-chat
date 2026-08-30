@@ -26,6 +26,20 @@ export interface TopicEvidence {
 /** Сколько тем проверяем за раз: каждая — отдельная страница выдачи. */
 export const MAX_TOPICS = 8;
 
+export interface TopicCheckResult {
+  evidence: TopicEvidence[];
+  /**
+   * Сколько тем проверить НЕ УДАЛОСЬ (сбой чтения выдачи), в отличие от «по теме
+   * пусто».
+   *
+   * ⚠️⚠️ Различение обязательно, ловили на проде: сервис скрейпа моргнул, все
+   * темы вернули null, и панель показала «людям такое почти не ищут» про
+   * «Города-призраки России» — заведомо живую тему. Сбой, выдающий себя за
+   * инсайт о нише, хуже честной ошибки: по нему человек выкидывает рабочие темы.
+   */
+  failed: number;
+}
+
 /**
  * Проверить темы по выдаче.
  *
@@ -34,17 +48,25 @@ export const MAX_TOPICS = 8;
  * тарелки?») в поиске не ищет никто, и выдача по нему будет пустой — что не значит
  * «ниша свободна». Поэтому из названия достаём суть: первые значимые слова.
  */
-export async function checkTopics(topics: string[]): Promise<TopicEvidence[]> {
+export async function checkTopics(topics: string[]): Promise<TopicCheckResult> {
   const list = topics.slice(0, MAX_TOPICS).filter((t) => t.trim().length > 0);
-  if (list.length === 0) return [];
+  if (list.length === 0) return { evidence: [], failed: 0 };
 
+  let failed = 0;
   const checked = await Promise.all(
     list.map(async (topic): Promise<TopicEvidence | null> => {
       const query = searchableQuery(topic);
       if (!query) return null;
 
       const res = await fetchSearchStats(query).catch(() => null);
-      if (!res) return null;
+      if (!res) {
+        // ⚠️ null у fetchSearchStats — это «не смог прочитать выдачу» (сервис,
+        // таймаут, сменилась разметка), а НЕ «по теме пусто»: на живой запрос
+        // YouTube всегда отдаёт хоть что-то похожее.
+        failed += 1;
+        console.warn("[topics] не удалось прочитать выдачу по теме:", query);
+        return null;
+      }
 
       const views = res.top.map((v) => v.views).filter((v) => v > 0);
       const med = median(views);
@@ -65,7 +87,7 @@ export async function checkTopics(topics: string[]): Promise<TopicEvidence[]> {
     })
   );
 
-  return checked.filter((x): x is TopicEvidence => x !== null);
+  return { evidence: checked.filter((x): x is TopicEvidence => x !== null), failed };
 }
 
 /**

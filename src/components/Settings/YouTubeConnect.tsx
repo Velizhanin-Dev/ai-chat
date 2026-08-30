@@ -31,13 +31,17 @@ import {
   youtubeConnectHref,
 } from "@/lib/youtube-client";
 import type { YouTubeStatus } from "@/lib/youtube-types";
+import ChannelLinkCard from "./ChannelLinkCard";
 
 // Тексты тостов по коду возврата из OAuth (?yt=...).
 const RESULT: Record<string, { color: string; text: string }> = {
   connected: { color: "teal", text: "YouTube подключён — данные канала уже в разделе «Канал»." },
   denied: { color: "red", text: "Подключение отменено." },
   state: { color: "red", text: "Сессия подключения устарела, попробуйте ещё раз." },
-  nochannel: { color: "orange", text: "У этого Google-аккаунта нет YouTube-канала." },
+  nochannel: {
+    color: "orange",
+    text: "У этого Google-аккаунта нет своего канала. Канал на аккаунте бренда? Попробуйте ещё раз и на втором экране Google выберите бренд-аккаунт канала. Не выйдет — ниже есть привязка по ссылке.",
+  },
   failed: { color: "red", text: "Не удалось подключить YouTube. Попробуйте ещё раз." },
   unavailable: { color: "orange", text: "Интеграция YouTube пока не настроена на сервере." },
 };
@@ -246,6 +250,11 @@ export default function YouTubeConnect({ projectId }: { projectId: string }) {
           Интеграция появится, когда администратор настроит Google-приложение.
         </Text>
       )}
+
+      {/* Запасной путь: канал по ссылке. Показываем ТОЛЬКО когда Google-доступа
+          нет — полный доступ строго лучше публичного, и предлагать урезанный
+          рядом с работающим полным значит путать. */}
+      {!loading && !status?.connected && <ChannelLinkCard projectId={projectId} />}
     </Stack>
   );
 }

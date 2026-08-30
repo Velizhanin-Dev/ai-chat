@@ -40,7 +40,7 @@ import { useAppDispatch } from "@/store/hooks";
 import { bumpRequestsUsed } from "@/store/authSlice";
 import YouTubeCard from "./YouTubeCard";
 import { useProjectPlatform } from "@/hooks/useProjectPlatform";
-import { apiYouTubeStatus } from "@/lib/youtube-client";
+import { apiYouTubeStatus, apiChannelLinkStatus } from "@/lib/youtube-client";
 
 // Редактор одного превью: картинка + правки + перегенерация. Каждая перегенерация
 // — ВАРИАЦИЯ (parentId), поэтому старые версии не теряются и переключаются лентой
@@ -86,10 +86,21 @@ export default function ThumbnailEditor({
     let cancelled = false;
     void (async () => {
       const res = await apiYouTubeStatus(projectId);
-      if (cancelled || !res.ok || !res.data.channel) return;
+      if (cancelled) return;
+      if (res.ok && res.data.channel) {
+        setChannel({
+          title: res.data.channel.title,
+          thumbnail: res.data.channel.thumbnail ?? null,
+        });
+        return;
+      }
+      // Канал мог быть привязан ПО ССЫЛКЕ (без OAuth) — имя и аватар для
+      // предпросмотра ленты у него такие же настоящие.
+      const link = await apiChannelLinkStatus(projectId);
+      if (cancelled || !link.ok || !link.data.channel) return;
       setChannel({
-        title: res.data.channel.title,
-        thumbnail: res.data.channel.thumbnail ?? null,
+        title: link.data.channel.title,
+        thumbnail: link.data.channel.thumbnail,
       });
     })();
     return () => {

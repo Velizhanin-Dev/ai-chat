@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { getStrategy } from "./llm";
 import { buildSystem, buildChannelBlock } from "./llm/system";
 import { getChannelSnapshotCached } from "./youtube";
+import { getPublicSnapshot } from "./youtube-public";
 import { getSettings } from "./settings";
 import { routeQuery } from "./router";
 import type { RouteDecision } from "./router";
@@ -152,7 +153,12 @@ async function resolveChannelBlock(projectId: string): Promise<string | null> {
     const integ = await prisma.youTubeIntegration.findUnique({
       where: { conversationId: projectId },
     });
-    if (!integ) return null;
+    if (!integ) {
+      // Канал по ссылке (бренд-аккаунт): публичных цифр хватает, чтобы темы шли
+      // из того, что у человека реально смотрят, а не из общих слов по нише.
+      const pub = await getPublicSnapshot(projectId);
+      return pub ? buildChannelBlock(pub, null, true) : null;
+    }
     const snap = await getChannelSnapshotCached(projectId, integ);
     return snap ? buildChannelBlock(snap) : null;
   } catch {

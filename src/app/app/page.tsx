@@ -124,13 +124,16 @@ export default function AppHomePage() {
   // Канал подключён в ЭТОМ прохождении брифа → при создании проекта просим сервер
   // перевесить черновое подключение на него.
   const [channelConnected, setChannelConnected] = useState(false);
+  // Канал, привязанный ПО ССЫЛКЕ (бренд-аккаунт, OAuth недоступен): channelId
+  // передаётся в создание проекта, сервер сделает ChannelLink.
+  const [linkChannelId, setLinkChannelId] = useState<string | null>(null);
 
   // Разбор канала: тянем поля брифа и уходим в визард. Ошибка не блокирует —
   // просто заполняем руками (текст ошибки показываем над брифом).
-  const runAutofill = useCallback(() => {
+  const runAutofill = useCallback((channelUrl?: string) => {
     setPhase("autofill");
     setAutofillError(null);
-    void apiBriefAutofill().then((res) => {
+    void apiBriefAutofill(undefined, channelUrl).then((res) => {
       if (res.ok) {
         const keys = AUTOFILL_KEYS.filter((k) => String(res.data[k] ?? "").length > 0);
         // Свежий разбор канала важнее старого черновика: иначе BriefFlow при
@@ -143,11 +146,18 @@ export default function AppHomePage() {
         }
         setAutofilled({ ...EMPTY_BRIEF, ...res.data });
         setAutofillKeys(keys);
-        setChannelConnected(true);
+        // Путь по ссылке: OAuth-черновика нет, привязываем как ChannelLink.
+        if (res.data.linkChannel) {
+          setLinkChannelId(res.data.linkChannel.channelId);
+          setChannelConnected(false);
+        } else {
+          setChannelConnected(true);
+        }
       } else {
         // Канала нет — молча уходим в обычный бриф. Разбор не удался при живом
         // подключении — канал всё равно прицепим к проекту, бриф заполним руками.
-        setChannelConnected(res.code !== "YT_NOT_CONNECTED");
+        // ⚠️ Для пути «по ссылке» это не так: не разобрали — привязывать нечего.
+        setChannelConnected(!channelUrl && res.code !== "YT_NOT_CONNECTED");
         setAutofillError(
           res.code === "YT_NOT_CONNECTED"
             ? null
@@ -176,6 +186,7 @@ export default function AppHomePage() {
       setAutofillKeys([]);
       setAutofillError(null);
       setChannelConnected(false);
+      setLinkChannelId(null);
       ytHandledRef.current = false;
     }
   }, [drafting]);
@@ -185,7 +196,7 @@ export default function AppHomePage() {
   // канал прицепится к проекту на сервере (attachPendingConnection).
   const handleBriefSubmit = useCallback(
     async (brief: Brief): Promise<{ ok: boolean; error?: string }> => {
-      const res = await apiCreateProject(brief, channelConnected, platform);
+      const res = await apiCreateProject(brief, channelConnected, platform, linkChannelId);
       if (!res.ok) return { ok: false, error: res.error };
       dispatch(addProject(res.data));
       clearAnonBrief();
@@ -193,7 +204,7 @@ export default function AppHomePage() {
       setCreatedId(res.data.id);
       return { ok: true };
     },
-    [dispatch, channelConnected, platform]
+    [dispatch, channelConnected, platform, linkChannelId]
   );
 
   // Если бриф уже пройден на /brief (анонимный бриф в localStorage) — не показываем
@@ -278,7 +289,26 @@ export default function AppHomePage() {
               ytError={ytCode}
               returnTo="/app"
               onSkip={() => setPhase("brief")}
-              onContinue={runAutofill}
+              onContinue={() => runAutofill()}
+              // Путь «по ссылке»: резолвим и разбираем канал публично прямо
+              // здесь — ошибку (канал не найден) показываем на месте, не
+              // переключая фазу.
+              onLink={async (url) => {
+                const res = await apiBriefAutofill(undefined, url);
+                if (!res.ok) return res.error || "Не удалось разобрать канал";
+                const keys = AUTOFILL_KEYS.filter((k) => String(res.data[k] ?? "").length > 0);
+                try {
+                  localStorage.removeItem(PROJECT_BRIEF_DRAFT_KEY);
+                } catch {
+                  /* приватный режим */
+                }
+                setAutofilled({ ...EMPTY_BRIEF, ...res.data });
+                setAutofillKeys(keys);
+                setLinkChannelId(res.data.linkChannel?.channelId ?? null);
+                setChannelConnected(false);
+                setPhase("brief");
+                return null;
+              }}
             />
           )}
 

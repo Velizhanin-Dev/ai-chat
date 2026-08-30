@@ -8,6 +8,7 @@
 // человек задаёт не чаще раза в день.
 
 import { prisma } from "./prisma";
+import { getPublicStats } from "./youtube-public";
 import { getValidAccessToken, fetchChannelInfo, fetchRecentVideos } from "./youtube";
 import { fetchTopComments } from "./youtube-search";
 import { hasYoutubeKeys } from "./youtube-keys";
@@ -44,21 +45,33 @@ export async function collectAudienceQuestions(
   }
 
   const integ = await prisma.youTubeIntegration.findUnique({ where: { conversationId } });
-  if (!integ) return { status: "not_connected" };
 
   try {
-    // Список роликов берём под токеном канала: так видно и скрытые от поиска
-    // ролики, и порядок публикации ровно тот, что у автора.
-    const token = await getValidAccessToken(integ);
-    const info = await fetchChannelInfo(token);
-    if (!info?.uploadsPlaylistId) return { status: "error", message: "Канал не отдал список роликов" };
-
-    const page = await fetchRecentVideos(token, info.uploadsPlaylistId, VIDEOS_TO_SCAN);
+    // Ролики для обхода. Под OAuth берём их токеном канала (видно и скрытые от
+    // поиска, и порядок ровно авторский); без него — публичным списком у канала,
+    // привязанного по ссылке.
+    //
+    // ⚠️ Комментарии ПУБЛИЧНЫ, поэтому этот раздел работает и без OAuth: человеку
+    // с каналом на бренд-аккаунте он доступен полностью, в отличие от удержания.
+    let videos: { id: string; title: string }[];
+    if (integ) {
+      const token = await getValidAccessToken(integ);
+      const info = await fetchChannelInfo(token);
+      if (!info?.uploadsPlaylistId) {
+        return { status: "error", message: "Канал не отдал список роликов" };
+      }
+      const page = await fetchRecentVideos(token, info.uploadsPlaylistId, VIDEOS_TO_SCAN);
+      videos = page.videos.map((v) => ({ id: v.id, title: v.title }));
+    } else {
+      const pub = await getPublicStats(conversationId);
+      if (!pub) return { status: "not_connected" };
+      videos = pub.videos.slice(0, VIDEOS_TO_SCAN).map((v) => ({ id: v.id, title: v.title }));
+    }
 
     const questions: AudienceQuestion[] = [];
     let scanned = 0;
 
-    for (const video of page.videos) {
+    for (const video of videos) {
       // ⚠️ Комментарии могут быть отключены (403) — это не ошибка сбора, просто
       // под этим роликом вопросов нет.
       const comments = await fetchTopComments(video.id, COMMENTS_PER_VIDEO).catch(() => []);

@@ -40,7 +40,15 @@ export async function POST(req: Request) {
   const integ = await prisma.youTubeIntegration.findUnique({
     where: { conversationId: owned },
   });
-  if (!integ) return apiError("YouTube не подключён", 404);
+  // Годится и канал по ссылке: разбор упаковки работает на публичных данных
+  // (без кривой удержания — обработчик честно скажет об этом модели).
+  if (!integ) {
+    const link = await prisma.channelLink.findUnique({
+      where: { conversationId: owned },
+      select: { id: true },
+    });
+    if (!link) return apiError("YouTube не подключён", 404);
+  }
 
   // Квота: разбор тратит 1 запрос (как ответ в чате). Админам не лимитируем.
   if (!isAdmin(user)) {

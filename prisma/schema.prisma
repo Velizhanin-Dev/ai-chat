@@ -89,6 +89,7 @@ model Conversation {
   updatedAt DateTime  @updatedAt
 
   @@index([userId, updatedAt])
+  channelLink   ChannelLink?
 }
 
 // Генератор превью: и загруженные референсы, и результаты генерации лежат одной
@@ -606,6 +607,39 @@ model SupportMessage {
 
   @@index([userId, createdAt])
   @@index([role, readAt])
+}
+
+// Канал, привязанный ПО ССЫЛКЕ — без OAuth.
+//
+// ⚠️⚠️ Зачем отдельно от YouTubeIntegration. Часть клиентов держит канал на
+// бренд-аккаунте (аккаунте компании), к которому у них доступ только через
+// Творческую студию: пройти наш OAuth они физически не могут. Раньше такой
+// человек оставался вообще без цифр — ассистент не знал ни одного его ролика и
+// предлагал темы «из головы», хотя ВСЯ публичная статистика канала доступна
+// любому по ссылке.
+//
+// Что даёт эта привязка: список роликов с просмотрами, лайками, комментариями и
+// датами, подписчики, описание канала, теги роликов и комментарии зрителей.
+// Чего НЕ даёт (и не может — это только Analytics API под OAuth владельца):
+// удержание, CTR, источники трафика, подписчиков по роликам, демографию.
+// Поэтому это ВТОРОЙ, урезанный путь, а не замена интеграции.
+//
+// Токенов тут нет вовсе — только id канала и снимок для карточки.
+model ChannelLink {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channelId      String
+  title          String
+  thumbnail      String?
+  customUrl      String?
+  subscribers    Int          @default(0)
+  // Счётчик подписчиков скрыт владельцем: API отдаёт 0, и это «не знаем».
+  hiddenSubs     Boolean      @default(false)
+  videoCount     Int          @default(0)
+  views          Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 }
 
 // Интеграция с YouTube (Google OAuth + YouTube Data API v3 / Analytics API).

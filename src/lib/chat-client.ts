@@ -71,14 +71,16 @@ export type CreateProjectResult =
 export async function apiCreateProject(
   brief: Brief,
   attachChannel = false,
-  platform: Platform = "youtube"
+  platform: Platform = "youtube",
+  /** Канал, привязываемый ПО ССЫЛКЕ (channelId) — путь без OAuth. */
+  linkChannel: string | null = null
 ): Promise<CreateProjectResult> {
   try {
     const id = newProjectId();
     const res = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, brief, attachChannel, platform }),
+      body: JSON.stringify({ id, brief, attachChannel, platform, linkChannel }),
     });
     const data = (await res.json().catch(() => ({}))) as {
       conversation?: ConversationMeta;

@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { getValidAccessToken, fetchPeriodVideos } from "./youtube";
+import { getPublicStats } from "./youtube-public";
 import type { LinkVideo } from "./content-plan";
 
 // ── Видео канала для контент-плана (пикер привязки + ресинк просмотров) ─────
@@ -21,11 +22,28 @@ export async function getChannelVideos(
   force = false
 ): Promise<ChannelVideosResult> {
   const integ = await prisma.youTubeIntegration.findUnique({ where: { conversationId } });
-  if (!integ) return { status: "not_connected" };
 
   const cached = CACHE.get(conversationId);
   if (!force && cached && Date.now() - cached.at < TTL_MS) {
     return { status: "ok", videos: cached.videos };
+  }
+
+  // ── Канал по ссылке (без OAuth): публичного списка роликов хватает ─────────
+  // Пикеру и ресинку нужны только id, название, превью и просмотры — всё это
+  // публично. Значит «Импорт с канала», «Связать с роликом» и «Обновить цифры»
+  // работают и у бренд-аккаунтов, ради которых привязка по ссылке и появилась.
+  if (!integ) {
+    const pub = await getPublicStats(conversationId, force);
+    if (!pub) return { status: "not_connected" };
+    const videos: LinkVideo[] = pub.videos.map((v) => ({
+      id: v.id,
+      title: v.title,
+      thumbnail: v.thumbnail,
+      views: v.views,
+      publishedAt: v.publishedAt,
+    }));
+    CACHE.set(conversationId, { at: Date.now(), videos });
+    return { status: "ok", videos };
   }
 
   try {

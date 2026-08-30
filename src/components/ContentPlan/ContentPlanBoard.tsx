@@ -37,6 +37,7 @@ import {
   apiContentPlans,
   apiGenerateBlock,
   apiGeneratePlan,
+  findPendingPlanJobs,
   apiResyncPlan,
   apiReorderVideos,
   apiUpdateVideo,
@@ -54,6 +55,7 @@ import {
   type VideoStatus,
   type VideoView,
 } from "@/lib/content-plan";
+import { waitForJob } from "@/lib/jobs-client";
 import { videoIdFromUrl } from "@/lib/competitors";
 import LinkVideoModal from "./LinkVideoModal";
 import SupportBlocks from "./SupportBlocks";
@@ -130,6 +132,34 @@ export default function ContentPlanBoard() {
       setLoading(false);
       if (list.length) void openPlan(list[0].id);
     });
+
+    // ⚠️ Подхват ИДУЩЕЙ генерации. Сборка плана — фоновая задача: человек жмёт
+    // кнопку, уходит со страницы (или возвращается по крутилке задач), а при
+    // повторном заходе доска ничего про задачу не знала — пустое состояние
+    // показывало АКТИВНУЮ кнопку «Сгенерировать план» поверх работающей
+    // генерации. Повторный клик денег не тратил (findRunningJob на сервере
+    // отдаёт ту же задачу), но выглядело как «ничего не запустилось».
+    // findPendingPlanJobs был написан ровно под это — и не был подключён.
+    void (async () => {
+      const jobs = await findPendingPlanJobs(projectId);
+      if (!alive || jobs.length === 0) return;
+      if (jobs.some((j) => j.kind === "content_plan_generate")) setGenerating(true);
+
+      const results = await Promise.all(jobs.map((j) => waitForJob(j.id).catch(() => null)));
+      if (!alive) return;
+      setGenerating(false);
+      const gen = results.find((j, i) => jobs[i].kind === "content_plan_generate");
+      if (gen && gen.status === "error") {
+        setError(gen.error || "Не удалось собрать план");
+      }
+      // Результаты (план + опорные блоки, которые воркер ставит следом) уже в
+      // БД — просто перечитываем список и открываем свежий план.
+      const res = await apiContentPlans(projectId);
+      if (!alive || !res.ok) return;
+      setPlans(res.data.plans);
+      if (res.data.plans.length) void openPlan(res.data.plans[0].id);
+    })();
+
     return () => {
       alive = false;
     };

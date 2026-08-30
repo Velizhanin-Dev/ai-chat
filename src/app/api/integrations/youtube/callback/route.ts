@@ -8,6 +8,7 @@ import {
   YT_STATE_COOKIE,
 } from "@/lib/youtube";
 import { track } from "@/lib/achievements-server";
+import { clearPublicChannelCache } from "@/lib/youtube-public";
 
 // Колбэк подключения YouTube: сверяем state, меняем code на токены, тянем канал и
 // сохраняем интеграцию КОНКРЕТНОМУ проекту (projectId из state-cookie). Возвращаем
@@ -109,6 +110,14 @@ export async function GET(req: NextRequest) {
         scope: tokens.scope ?? null,
       },
     });
+    // ⚠️ Канал, привязанный ранее ПО ССЫЛКЕ, убираем: полный доступ строго лучше
+    // публичного, а два источника цифр рядом — источник путаницы (какой из них
+    // показывать в разделе «Канал»?). Инвариант: либо OAuth, либо ссылка.
+    await prisma.channelLink
+      .deleteMany({ where: { conversationId: owned! } })
+      .catch((err) => console.error("[youtube] снятие привязки по ссылке:", err));
+    clearPublicChannelCache(owned!);
+
     // Геймификация (docs/achievements.md), fire-and-forget. Только для реального
     // подключения к проекту — черновик на шаге брифа не считаем, он ещё может
     // не доехать до проекта.

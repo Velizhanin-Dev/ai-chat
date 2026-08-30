@@ -10,6 +10,7 @@ import { getChannelSnapshotCached } from "@/lib/youtube";
 import { resolveProjectContext } from "@/lib/chat-project-context";
 import { sanitizeProfile } from "@/lib/project-profile";
 import { ensureProfileJob } from "@/lib/project-profile-server";
+import { getPublicSnapshot } from "@/lib/youtube-public";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
@@ -77,6 +78,21 @@ async function resolveChannelContext(
       where: { conversationId },
     });
     if (!integ) {
+      // ⚠️ Второй путь: канал мог быть привязан ПО ССЫЛКЕ (бренд-аккаунт, к
+      // которому у человека нет доступа через Google). Тогда полной аналитики
+      // нет, но публичные цифры есть — и это несравнимо лучше, чем ничего:
+      // ассистент видит реальные ролики и охваты, а не выдумывает темы.
+      const pub = await withTimeout(
+        getPublicSnapshot(conversationId),
+        CHANNEL_SNAPSHOT_TIMEOUT_MS,
+        null
+      );
+      if (pub) {
+        // Звать подключать через Google всё равно стоит (там удержание и
+        // источники), но это делает сам блок — мягко и по делу, а не маркером
+        // с кнопкой: канал у человека формально уже привязан.
+        return { channelBlock: buildChannelBlock(pub, null, true), nudge: "off" };
+      }
       const alreadyNudged = messages.some(
         (m) => m.role === "assistant" && m.content.includes(CONNECT_YT_MARKER)
       );

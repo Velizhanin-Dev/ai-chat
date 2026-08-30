@@ -606,6 +606,25 @@ ${styleText}`
     );
   }
 
+  // Точный повтор референса (балл 5 из студийного ТЗ). Ставится ПОСЛЕ # STYLE и
+  // прямо объявляет, что перебивает его: у поздних блоков в этом промпте
+  // приоритет, и раньше раскладка стиля молча съедала «копируй 1 в 1».
+  if (hasStyleRef && spec.refScore === "5") {
+    parts.push(
+      `# STYLE MATCH — copy the style reference one-to-one (OVERRIDES the # STYLE and # COMPOSITION sections above)
+The style reference image is the exact template for this thumbnail. Reproduce it as a LAYOUT CLONE:
+- same composition grid: what sits where, at what size, occupying the same share of the frame;
+- same text placement, same plate/outline treatment behind the text, same typography weight and case;
+- same colour palette and background treatment (darkness, gradients, texture);
+- same overall mood and finishing (grain, contrast, saturation).
+Replace ONLY the content: the actual words come from the TEXT section, the person comes from the
+IDENTITY LOCK section, the subject/props come from this brief. Do not "improve" or modernise the
+template — the channel's existing look wins over your taste.
+If SEVERAL style references are supplied, clone the composition of the FIRST style reference and
+use the others only to confirm the shared palette and mood.`
+    );
+  }
+
   if (people > 0) {
     parts.push(
       `# EMOTION

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { fetchSuggestions, fetchVideoTags } from "./youtube-scrape";
+import { getPublicStats } from "./youtube-public";
 import { sanitizeBrief, type Brief } from "./brief";
 import {
   getValidAccessToken,
@@ -163,7 +164,32 @@ async function channelHint(conversationId: string): Promise<ChannelHint> {
 
   const empty: ChannelHint = { channelId: null, channelTitle: "", tags: [] };
   const integ = await prisma.youTubeIntegration.findUnique({ where: { conversationId } });
-  if (!integ) return empty;
+
+  // ── Канал по ссылке (без OAuth) ────────────────────────────────────────────
+  // Теги для подсказок берём скрейпом страниц верхних роликов (0 units), а
+  // channelId нужен НЕ только для подсказок: по нему из выдачи поиска
+  // исключается СВОЙ канал. Без этой ветки link-юзер видел бы собственные
+  // ролики в списке «конкурентов».
+  if (!integ) {
+    try {
+      const pub = await getPublicStats(conversationId);
+      if (!pub) return empty;
+      const top = [...pub.videos].sort((a, b) => b.views - a.views).slice(0, 8);
+      const tagLists = await Promise.all(
+        top.map((v) => fetchVideoTags(v.id).catch(() => null))
+      );
+      const data: ChannelHint = {
+        channelId: pub.channel.channelId,
+        channelTitle: pub.channel.title,
+        tags: tagLists.flatMap((t) => t?.tags ?? []),
+      };
+      contextCache.set(conversationId, { at: Date.now(), data });
+      return data;
+    } catch (err) {
+      console.warn("[competitors] публичные подсказки с канала:", err);
+      return empty;
+    }
+  }
 
   try {
     const token = await getValidAccessToken(integ);

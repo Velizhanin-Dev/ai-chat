@@ -5,6 +5,8 @@ import { routeQuery } from "@/lib/router";
 import { getStrategy } from "@/lib/llm";
 import { buildSystem } from "@/lib/llm/system";
 import { getValidAccessToken, fetchVideoFull, fetchVideoRetention } from "@/lib/youtube";
+import { fetchVideosByIds } from "@/lib/youtube-search";
+import { fetchVideoTags } from "@/lib/youtube-scrape";
 import { spendQuota } from "@/lib/thumbnails-row";
 import { track } from "@/lib/achievements-server";
 import type { VideoAnalysis, RetentionPoint } from "@/lib/youtube-types";
@@ -87,14 +89,57 @@ export async function runVideoAnalyze(args: AnalyzeArgs) {
   const integ = await prisma.youTubeIntegration.findUnique({
     where: { conversationId: owned },
   });
-  if (!integ) throw new Error("YouTube не подключён");
 
+  // Факты ролика: под OAuth — полные (включая кривую удержания из Analytics),
+  // для канала по ссылке — публичные (название/описание/метрики + теги скрейпом).
+  //
+  // ⚠️ Удержания в публичном режиме НЕТ и взять его неоткуда — в промпт вместо
+  // кривой уходит прямая оговорка. Молчать нельзя: без неё модель рассуждала бы
+  // про «провал на второй минуте», которого не видела (класс ошибок из
+  // Антипаттерна №9).
+  let facts: {
+    title: string;
+    description: string;
+    tags: string[];
+    views: number;
+    likes: number;
+    comments: number;
+  };
+  let retLine: string;
+  if (integ) {
     const accessToken = await getValidAccessToken(integ);
-  const video = await fetchVideoFull(accessToken, videoId);
-  if (!video) throw new Error("Видео не найдено");
-  const retention = await fetchVideoRetention(accessToken, videoId, video.publishedAt);
-
-  const retLine = retentionSummary(retention?.curve ?? [], retention?.avgRelative ?? null);
+    const video = await fetchVideoFull(accessToken, videoId);
+    if (!video) throw new Error("Видео не найдено");
+    const retention = await fetchVideoRetention(accessToken, videoId, video.publishedAt);
+    retLine = retentionSummary(retention?.curve ?? [], retention?.avgRelative ?? null);
+    facts = {
+      title: video.title,
+      description: video.description,
+      tags: video.tags,
+      views: video.viewCount,
+      likes: video.likeCount,
+      comments: video.commentCount,
+    };
+  } else {
+    const link = await prisma.channelLink.findUnique({
+      where: { conversationId: owned },
+      select: { id: true },
+    });
+    if (!link) throw new Error("YouTube не подключён");
+    const [video] = await fetchVideosByIds([videoId]);
+    if (!video) throw new Error("Видео не найдено");
+    const scraped = await fetchVideoTags(videoId).catch(() => null);
+    retLine =
+      "Удержание: НЕДОСТУПНО — канал привязан по ссылке, кривую досмотров YouTube отдаёт только владельцу. Не рассуждай про удержание и первые секунды так, будто видел цифры; разбирай то, что есть: название, описание, теги и просмотры.";
+    facts = {
+      title: video.title,
+      description: video.description,
+      tags: scraped?.tags ?? [],
+      views: video.views,
+      likes: video.likes,
+      comments: video.comments,
+    };
+  }
 
   // Роутинг знаний под задачу (ВИСП/книга) — по синтетическому хинту.
   const routeHint =
@@ -128,11 +173,11 @@ export async function runVideoAnalyze(args: AnalyzeArgs) {
   const genPrompt = `Разбери упаковку моего YouTube-видео и предложи улучшения по моей методике.
 
 ДАННЫЕ РОЛИКА:
-Название: «${video.title}»
+Название: «${facts.title}»
 Описание:
-«${video.description ? video.description.slice(0, 1500) : "(пустое)"}»
-Теги: ${video.tags.length ? video.tags.join(", ") : "(нет)"}
-Метрики: просмотров ${video.viewCount}, лайков ${video.likeCount}, комментов ${video.commentCount}.
+«${facts.description ? facts.description.slice(0, 1500) : "(пустое)"}»
+Теги: ${facts.tags.length ? facts.tags.join(", ") : "(нет)"}
+Метрики: просмотров ${facts.views}, лайков ${facts.likes}, комментов ${facts.comments}.
 ${
   manualCtr != null
   ? `CTR превью (из YouTube Studio, ввёл сам): ${String(manualCtr).replace(".", ",")} %. Норма ~5%, хорошо ~10%; в ЗОЖ/стиле бывает 10–15%. Разбери кликабельность по этой цифре: если ниже нормы — проблема в превью и названии, а не в содержании.`

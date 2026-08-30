@@ -17,6 +17,10 @@ import { formatCount } from "@/lib/youtube-client";
 // кнопка не пугает ценой и её можно жать сколько угодно.
 export default function TopicEvidencePanel({ topics }: { topics: string[] }) {
   const [items, setItems] = useState<Evidence[] | null>(null);
+  // Сколько тем проверить не удалось (сбой чтения выдачи) — НЕ то же, что
+  // «по теме пусто». Ловили на проде: сервис моргнул, и панель выдала «людям
+  // такое почти не ищут» про заведомо живые темы.
+  const [failed, setFailed] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,12 +34,17 @@ export default function TopicEvidencePanel({ topics }: { topics: string[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topics: topics.slice(0, MAX_TOPICS) }),
       });
-      const data = (await res.json()) as { evidence?: Evidence[]; error?: string };
+      const data = (await res.json()) as {
+        evidence?: Evidence[];
+        failed?: number;
+        error?: string;
+      };
       if (!res.ok) {
         setError(data.error ?? "Не удалось проверить темы");
         return;
       }
       setItems(data.evidence ?? []);
+      setFailed(data.failed ?? 0);
     } catch {
       setError("Нет связи с сервером");
     } finally {
@@ -68,10 +77,30 @@ export default function TopicEvidencePanel({ topics }: { topics: string[] }) {
         </Alert>
       )}
 
-      {items && items.length === 0 && !error && (
+      {/* ⚠️ Три разных пустых состояния, и путать их нельзя:
+          сбой по ВСЕМ темам — честная ошибка (иначе сбой выдаёт себя за инсайт
+          «тему не ищут», и человек выкидывает рабочие темы);
+          сбой по ЧАСТИ — результат + приписка;
+          настоящая пустота — прежний текст про узкие темы. */}
+      {items && items.length === 0 && failed > 0 && !error && (
+        <Alert color="orange" variant="light">
+          Не получилось прочитать выдачу YouTube ({failed} {failed === 1 ? "тема" : "тем"}) —
+          похоже, сервис сейчас недоступен. Это сбой, а не «темы никто не ищет»: попробуйте ещё
+          раз через минуту.
+        </Alert>
+      )}
+
+      {items && items.length === 0 && failed === 0 && !error && (
         <Text size="sm" c="dimmed">
           Выдача ничего не вернула. Так бывает по очень узким темам — это тоже сигнал: людям
           такое почти не ищут.
+        </Text>
+      )}
+
+      {items && items.length > 0 && failed > 0 && (
+        <Text size="xs" c="dimmed" mb={6}>
+          {failed} {failed === 1 ? "тему" : "тем"} проверить не удалось — по остальным цифры
+          ниже.
         </Text>
       )}
 

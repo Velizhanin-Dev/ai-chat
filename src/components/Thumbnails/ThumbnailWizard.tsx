@@ -22,8 +22,10 @@ import {
   TextInput,
   ThemeIcon,
   UnstyledButton,
+  Select,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
+import { apiContentPlan, apiContentPlans } from "@/lib/content-plan-client";
 import {
   IconAlertCircle,
   IconInfoCircle,
@@ -48,6 +50,7 @@ import {
   type ThumbnailIdeas,
   type ThumbnailRow,
   type ThumbnailSpec,
+  THUMBNAIL_SPEC_QUOTA_COST,
 } from "@/lib/thumbnails";
 import {
   apiGenerateThumbnail,
@@ -111,6 +114,14 @@ interface Props {
 }
 
 // Роль нужна только чтобы показать админу служебное ТЗ для image-модели.
+// Карточка контент-плана в пикере шага «Текст и название».
+interface PlanCard {
+  id: string;
+  title: string;
+  previewText: string;
+  kind: string;
+}
+
 export default function ThumbnailWizard({
   projectId,
   opened,
@@ -133,6 +144,11 @@ export default function ThumbnailWizard({
   const [styleIds, setStyleIds] = useState<string[]>([]);
   const [ideas, setIdeas] = useState<ThumbnailIdeas | null>(null);
   const [ideasLoading, setIdeasLoading] = useState(false);
+  // Карточки контент-плана: у каждой уже есть название И текст на превью по
+  // методике — готовая упаковка, за которую уже «заплачено» при сборке плана.
+  // null — ещё не загружали. Бесплатно: обычное чтение из БД.
+  const [planCards, setPlanCards] = useState<PlanCard[] | null>(null);
+  const [pickedCard, setPickedCard] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -193,6 +209,11 @@ export default function ThumbnailWizard({
     if (speakerNeed === "none" && spec.peopleCount !== 0) {
       set("peopleCount", 0);
       setSpeakerIds([]);
+      // ⚠️ Эмоцию тоже чистим: это поле про ПОЗУ И ЛИЦО спикера. В промпт при
+      // people=0 она и так не уходит (гейт в buildThumbnailPrompt), но в сводке
+      // строка «Эмоция: руки скрещены, взгляд исподлобья» рядом с «В кадре: без
+      // людей» читалась как противоречие — ловили на проде.
+      set("emotion", "");
     }
     if (speakerNeed !== "none" && spec.peopleCount === 0) set("peopleCount", 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,7 +261,8 @@ export default function ThumbnailWizard({
       setSpec((s) => ({
         ...s,
         supportObject: s.supportObject || res.supportObject,
-        emotion: s.emotion || res.emotion,
+        // Эмоция — про лицо и позу спикера: при «без людей» её некому носить.
+        emotion: s.peopleCount === 0 ? s.emotion : s.emotion || res.emotion,
         palette: s.palette || res.palette,
       }));
     } catch (e) {
@@ -250,11 +272,52 @@ export default function ThumbnailWizard({
     }
   }, [projectId, spec]);
 
+  // ⚠️ Выбрал стиль-референсы → по умолчанию «повторить 1 в 1» (балл 5).
+  // Раньше дефолт был «1» (референс — только контекст, НЕ копируй), причём ручки
+  // в UI не было вовсе: человек закреплял шесть обложек канала и получал
+  // «рандомный» дизайн, потому что модель ЧЕСТНО выполняла запрет копирования.
+  useEffect(() => {
+    if (styleIds.length > 0 && spec.refScore === "1") set("refScore", "5");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [styleIds.length]);
+
+  // Карточки свежего плана проекта (лонги и шортсы, без свалки и отменённых).
+  const loadPlanCards = useCallback(async () => {
+    try {
+      const metas = await apiContentPlans(projectId);
+      if (!metas.ok || metas.data.plans.length === 0) {
+        setPlanCards([]);
+        return;
+      }
+      const plan = await apiContentPlan(metas.data.plans[0].id);
+      if (!plan.ok) {
+        setPlanCards([]);
+        return;
+      }
+      const cards: PlanCard[] = plan.data.plan.videos
+        .filter((v) => v.status !== "dump" && v.status !== "cancelled" && v.titles[0])
+        .map((v) => ({
+          id: v.id,
+          title: v.titles[0],
+          previewText: v.previewTexts[0] ?? "",
+          kind: v.kind,
+        }));
+      setPlanCards(cards);
+    } catch {
+      setPlanCards([]);
+    }
+  }, [projectId]);
+
   const goNext = () => {
     const next = steps[stepIndex + 1];
     if (!next) return;
     setStepId(next);
-    if (next === "text" && !ideas && !ideasLoading) void askIdeas();
+    // ⚠️ Подсказку от ИИ на входе в шаг БОЛЬШЕ НЕ запускаем автоматически: она
+    // стоит 1 запрос квоты на каждый вход и десяток секунд ожидания, а у
+    // большинства уже есть контент-план с готовыми названиями и текстами на
+    // превью. Теперь сначала выбор из плана (бесплатно, мгновенно), а подсказка
+    // — по явной кнопке.
+    if (next === "text" && planCards === null) void loadPlanCards();
   };
   const goBack = () => {
     const prev = steps[stepIndex - 1];
@@ -439,7 +502,12 @@ export default function ThumbnailWizard({
               <SegmentedControl
                 color="brand"
                 value={String(spec.peopleCount)}
-                onChange={(v) => set("peopleCount", Number(v))}
+                onChange={(v) => {
+                  const n = Number(v);
+                  set("peopleCount", n);
+                  // «Без людей» → эмоцию носить некому (см. эффект выше).
+                  if (n === 0) set("emotion", "");
+                }}
                 data={[
                   { value: "0", label: "Без людей" },
                   { value: "1", label: "Один" },
@@ -543,13 +611,59 @@ export default function ThumbnailWizard({
         {/* ── Текст и название ── */}
         {stepId === "text" && (
           <Stack gap="md">
-            {ideasLoading && (
+            {/* ── Из контент-плана: готовая упаковка, бесплатно ── */}
+            {planCards === null && (
               <Group gap="xs">
                 <Loader size="xs" color="brand" />
                 <Text size="sm" c="dimmed">
-                  Подбираю названия и текст на превью по методике…
+                  Смотрю контент-план…
                 </Text>
               </Group>
+            )}
+            {planCards && planCards.length > 0 && (
+              <Box>
+                <Text size="sm" fw={500} mb={2}>
+                  Взять из контент-плана
+                </Text>
+                <Text size="xs" c="dimmed" mb={6}>
+                  У карточек плана название и текст на превью уже собраны по методике —
+                  выбери ролик, под который делаешь обложку.
+                </Text>
+                <Select
+                  searchable
+                  clearable
+                  placeholder="Выбери ролик из плана…"
+                  value={pickedCard}
+                  data={planCards.map((c) => ({
+                    value: c.id,
+                    label: (c.kind === "short" ? "[Shorts] " : "") + c.title,
+                  }))}
+                  onChange={(id) => {
+                    setPickedCard(id);
+                    const card = planCards.find((c) => c.id === id);
+                    if (!card) return;
+                    // Заполняем ОБА поля разом; главное слово оставляем пустым —
+                    // промпт сам поднимет капсом самое важное (фолбэк в
+                    // buildThumbnailPrompt), а руками поправить можно ниже.
+                    set("videoTitle", card.title);
+                    set("thumbText", card.previewText);
+                  }}
+                />
+              </Box>
+            )}
+
+            {/* Подсказка от ИИ — по явной кнопке, а не автоматом: 1 запрос квоты
+                и десяток секунд ожидания должны быть осознанным действием. */}
+            {!ideas && (
+              <Button
+                variant="light"
+                color="brand"
+                leftSection={<IconSparkles size={16} />}
+                loading={ideasLoading}
+                onClick={() => void askIdeas()}
+              >
+                Предложить названия и текст по методике · {THUMBNAIL_SPEC_QUOTA_COST}
+              </Button>
             )}
 
             {ideas && ideas.titles.length > 0 && (
@@ -642,6 +756,41 @@ export default function ThumbnailWizard({
                   }
                 />
               )}
+              {/* Насколько повторять референс — бальность 1/3/5 из студийного ТЗ.
+                  Раньше жила только в промпте с дефолтом «не копировать». */}
+              {styleIds.length > 0 && (
+                <Box mt="sm">
+                  <Text size="sm" fw={500} mb={4}>
+                    Насколько повторять референс
+                  </Text>
+                  <SegmentedControl
+                    color="brand"
+                    fullWidth
+                    value={spec.refScore}
+                    onChange={(v) => set("refScore", v)}
+                    data={[
+                      { value: "5", label: "Повторить 1 в 1" },
+                      { value: "3", label: "Взять приём" },
+                      { value: "1", label: "Только настроение" },
+                    ]}
+                  />
+                  {spec.refScore === "3" && (
+                    <TextInput
+                      mt={6}
+                      placeholder="что именно взять — например: жёлтые плашки под текстом"
+                      maxLength={SPEC_LIMITS.refElement}
+                      value={spec.refElement}
+                      onChange={(e) => set("refElement", e.currentTarget.value)}
+                    />
+                  )}
+                  {spec.refScore === "5" && styleIds.length > 1 && (
+                    <Text size="xs" c="dimmed" mt={4}>
+                      Для точного повтора лучше оставить ОДИН референс: при нескольких копирую
+                      композицию первого, остальные — только палитра и настроение.
+                    </Text>
+                  )}
+                </Box>
+              )}
             </Box>
           </Stack>
         )}
@@ -649,6 +798,25 @@ export default function ThumbnailWizard({
         {/* ── Сводка ── */}
         {stepId === "review" && (
           <Stack gap="sm">
+            {/* ⚠️ Громкое предупреждение, а не приписка мелким шрифтом: личность
+                спикера переносится ТОЛЬКО с фото роли «Спикер» (IDENTITY LOCK).
+                Стиль-референсы — включая обложки, взятые «С канала», — учат
+                раскладке, но лица не несут: оно там мелкое и заклеено плашками.
+                Ловили на проде: человек взял за основу обложки канала, получил
+                случайное лицо и законно спросил «а почему не мой спикер?». */}
+            {spec.peopleCount > 0 && speakerIds.length === 0 && (
+              <Alert color="orange" variant="light" icon={<IconAlertCircle size={16} />}>
+                <Text size="sm" fw={600}>
+                  В кадре будет человек, но фото спикера не приложено
+                </Text>
+                <Text size="xs" mt={4}>
+                  Лицо нарисуется СЛУЧАЙНОЕ — на реального спикера оно похоже не будет.
+                  Обложки-стили тут не помогают: они задают вид превью, а личность
+                  переносится только с чистого фото. Вернись на шаг «Кто в кадре» и
+                  добавь фото спикера — или выбери «без людей».
+                </Text>
+              </Alert>
+            )}
             <Paper radius="md" p="sm" className="an-surface">
               <Stack gap={6}>
                 <SummaryRow label="Аудитория" value={audienceLabel(spec.audiencePreset)} />
@@ -667,7 +835,7 @@ export default function ThumbnailWizard({
                   label="В кадре"
                   value={spec.peopleCount === 0 ? "без людей" : spec.peopleCount === 2 ? "двое" : "один"}
                 />
-                <SummaryRow label="Эмоция" value={spec.emotion} />
+                {spec.peopleCount > 0 && <SummaryRow label="Эмоция" value={spec.emotion} />}
                 <SummaryRow label="Что ещё в кадре" value={spec.supportObject} />
                 <SummaryRow label="Текст на превью" value={spec.thumbText || "без текста"} />
                 <SummaryRow label="Главное слово" value={spec.keyWord} />

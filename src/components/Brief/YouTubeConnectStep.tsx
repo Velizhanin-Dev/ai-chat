@@ -13,6 +13,7 @@ import {
   Paper,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
 } from "@mantine/core";
@@ -22,6 +23,7 @@ import {
   IconAlertCircle,
   IconSparkles,
   IconArrowRight,
+  IconLink,
 } from "@tabler/icons-react";
 import {
   apiYouTubePendingStatus,
@@ -40,7 +42,8 @@ import type { YouTubeStatus } from "@/lib/youtube-types";
 const FAIL_TEXT: Record<string, string> = {
   denied: "Подключение отменено — можно заполнить бриф руками.",
   state: "Сессия подключения устарела, попробуйте ещё раз.",
-  nochannel: "У этого Google-аккаунта нет YouTube-канала.",
+  nochannel:
+    "У этого Google-аккаунта нет своего канала. Если канал на аккаунте бренда — попробуйте ещё раз и на ВТОРОМ экране Google выберите бренд-аккаунт канала, а не личную почту.",
   failed: "Не удалось подключить YouTube. Попробуйте ещё раз или заполните бриф руками.",
   unavailable: "Интеграция YouTube пока не настроена — заполним бриф руками.",
   noproject: "Не удалось подключить канал. Заполните бриф руками.",
@@ -51,6 +54,9 @@ export interface YouTubeConnectStepProps {
   onSkip: () => void;
   // Канал уже подключён (черновик) и юзер жмёт «Продолжить» → автозаполнение.
   onContinue: () => void;
+  // Второй путь: канал ПО ССЫЛКЕ (бренд-аккаунт, OAuth недоступен) — родитель
+  // запускает автозаполнение по публичным данным. Возвращает ошибку текстом.
+  onLink: (url: string) => Promise<string | null>;
   // Код возврата из OAuth (?yt=...), если он был — показываем причину отказа.
   ytError?: string | null;
   // Куда Google вернёт после согласия.
@@ -60,12 +66,27 @@ export interface YouTubeConnectStepProps {
 export default function YouTubeConnectStep({
   onSkip,
   onContinue,
+  onLink,
   ytError,
   returnTo,
 }: YouTubeConnectStepProps) {
   const [status, setStatus] = useState<YouTubeStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  // Путь «по ссылке»: раскрытое поле + его состояние.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  const submitLink = async () => {
+    if (!linkUrl.trim() || linkBusy) return;
+    setLinkBusy(true);
+    setLinkError(null);
+    const err = await onLink(linkUrl.trim());
+    setLinkBusy(false);
+    if (err) setLinkError(err);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -208,6 +229,62 @@ export default function YouTubeConnectStep({
         >
           Подключить YouTube
         </Button>
+        {/* ⚠️ Второй путь — по ссылке, без OAuth. Повод из поддержки: канал на
+            бренд-аккаунте компании, доступ только через Творческую студию, и
+            пройти Google-подключение человек физически не может. Раньше он
+            уходил в пустой бриф — теперь получает автозаполнение и публичную
+            аналитику. */}
+        {!linkOpen ? (
+          <Button
+            variant="light"
+            color="brand"
+            size="md"
+            radius="md"
+            fullWidth
+            leftSection={<IconLink size={18} />}
+            onClick={() => setLinkOpen(true)}
+          >
+            Подключить по ссылке — без входа в Google
+          </Button>
+        ) : (
+          <Paper withBorder radius="md" p="md">
+            <Text size="sm" c="dimmed" mb="xs">
+              Подойдёт, если канал на аккаунте компании и войти через Google не
+              получается. Я разберу его по публичным данным: ролики, просмотры,
+              подписчики. Удержание и CTR доступны только при подключении через
+              Google.
+            </Text>
+            {linkError && (
+              <Alert color="orange" variant="light" mb="xs">
+                {linkError}
+              </Alert>
+            )}
+            <Group gap="xs" wrap="nowrap">
+              <TextInput
+                placeholder="https://www.youtube.com/@nazvanie-kanala"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void submitLink();
+                  }
+                }}
+                style={{ flex: 1 }}
+                disabled={linkBusy}
+                autoFocus
+              />
+              <Button
+                color="brand"
+                loading={linkBusy}
+                disabled={!linkUrl.trim()}
+                onClick={() => void submitLink()}
+              >
+                Дальше
+              </Button>
+            </Group>
+          </Paper>
+        )}
         <Button variant="subtle" color="gray" size="md" radius="md" fullWidth onClick={onSkip}>
           У меня нет канала — заполню сам
         </Button>
@@ -216,6 +293,13 @@ export default function YouTubeConnectStep({
       <Text size="xs" c="dimmed" ta="center">
         Доступ только на чтение — публиковать и менять ничего не смогу. Отключить можно в
         любой момент в настройках проекта.
+      </Text>
+      {/* ⚠️ Про второй экран Google говорим заранее: люди машинально тыкают в
+          личную почту, получают «нет канала» и решают, что подключение сломано, —
+          хотя их бренд-канал был следующим пунктом того же списка. */}
+      <Text size="xs" c="dimmed" ta="center">
+        Канал компании? На втором экране Google выберите БРЕНД-АККАУНТ канала —
+        он в том же списке, что и личная почта.
       </Text>
     </Stack>
   );

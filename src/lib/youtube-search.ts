@@ -262,12 +262,19 @@ export interface PublicChannel {
   videoCount: number;
   /** Суммарные просмотры канала. Приходят в том же part=statistics — бесплатно. */
   views: number;
+  /** Описание канала. Тот же part=snippet — бесплатно; нужно автозаполнению брифа. */
+  description: string;
 }
 
 interface ChannelsResponse {
   items?: Array<{
     id: string;
-    snippet?: { title?: string; customUrl?: string; thumbnails?: Thumbnails };
+    snippet?: {
+      title?: string;
+      description?: string;
+      customUrl?: string;
+      thumbnails?: Thumbnails;
+    };
     statistics?: {
       subscriberCount?: string;
       videoCount?: string;
@@ -292,6 +299,7 @@ export async function fetchChannelsByIds(ids: string[]): Promise<Map<string, Pub
       map.set(c.id, {
         id: c.id,
         title: s.title ?? "",
+        description: s.description ?? "",
         thumbnail: pickThumb(s.thumbnails),
         customUrl: s.customUrl ?? null,
         subscribers: Number(st.subscriberCount ?? 0),
@@ -433,6 +441,7 @@ function firstChannel(data: ChannelsResponse): PublicChannel | null {
   return {
     id: c.id,
     title: s.title ?? "",
+    description: s.description ?? "",
     thumbnail: pickThumb(s.thumbnails),
     customUrl: s.customUrl ?? null,
     subscribers: Number(st.subscriberCount ?? 0),

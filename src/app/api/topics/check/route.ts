@@ -23,6 +23,7 @@ export async function POST(req: Request) {
     .filter(Boolean)
     .slice(0, MAX_TOPICS);
 
-  if (topics.length === 0) return NextResponse.json({ evidence: [] });
-  return NextResponse.json({ evidence: await checkTopics(topics) });
+  if (topics.length === 0) return NextResponse.json({ evidence: [], failed: 0 });
+  const res = await checkTopics(topics);
+  return NextResponse.json(res);
 }
