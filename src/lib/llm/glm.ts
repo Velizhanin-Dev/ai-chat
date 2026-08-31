@@ -137,7 +137,18 @@ export const glmStrategy: LlmStrategy = {
 
     const oaMessages = [
       ...(systemText ? [{ role: "system" as const, content: systemText }] : []),
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      // Вложения GLM не умеет — куски схлопываем в текст, чтобы движок не падал
+      // на массиве. Сами картинки при этом теряются (сервер чата и не должен был
+      // пускать вложения на GLM, это страховка).
+      ...messages.map((m) => ({
+        role: m.role,
+        content:
+          typeof m.content === "string"
+            ? m.content
+            : m.content
+                .map((p) => (p.type === "text" ? p.text : `[приложен файл]`))
+                .join("\n"),
+      })),
     ];
 
     const requestBody = JSON.stringify({

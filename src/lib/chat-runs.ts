@@ -146,6 +146,8 @@ export function startRun(opts: {
   conversationId: string;
   /** Вопрос пользователя: сохраняем СРАЗУ, до генерации (см. persistQuestion). */
   question: string;
+  /** Вложения вопроса (уже загружены на диск, тут только ссылки). */
+  attachments?: { key: string; name: string; mime: string }[];
   generate: (ctx: {
     push: (token: string) => void;
     setSearching: () => void;
@@ -179,7 +181,11 @@ export function startRun(opts: {
   // ⚠️ Вопрос пользователя пишем В ИСТОРИЮ СРАЗУ, а не парой с ответом, как
   // раньше. Иначе после перезагрузки лента открывается без заданного вопроса —
   // человек видит ответ, который «повис в воздухе», или пустой экран.
-  const questionSaved = persistQuestion(opts.conversationId, opts.question).then((id) => {
+  const questionSaved = persistQuestion(
+    opts.conversationId,
+    opts.question,
+    opts.attachments ?? []
+  ).then((id) => {
     run.questionMessageId = id;
     return id;
   });
@@ -237,15 +243,24 @@ export function startRun(opts: {
 
 async function persistQuestion(
   conversationId: string,
-  content: string
+  content: string,
+  attachments: { key: string; name: string; mime: string }[] = []
 ): Promise<string | null> {
-  if (!content.trim()) return null;
+  // Пустой текст допустим, когда есть вложения («вот, глянь» одним скриншотом).
+  if (!content.trim() && attachments.length === 0) return null;
   try {
     // Создаём сообщение отдельно (а не вложенным create в диалог), чтобы знать
     // его id — по нему упавший прогон откатывает запись. Диалог всё равно
     // «поднимается» наверх: @updatedAt триггерится связью.
     const msg = await prisma.message.create({
-      data: { conversationId, role: "user", content },
+      data: {
+        conversationId,
+        role: "user",
+        content,
+        ...(attachments.length
+          ? { attachments: attachments as unknown as object }
+          : {}),
+      },
       select: { id: true },
     });
     await prisma.conversation

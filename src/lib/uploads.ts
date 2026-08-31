@@ -39,7 +39,11 @@ export async function saveUpload(
   data: Buffer,
   opts: { mime: string; dir: string; root?: string }
 ): Promise<string> {
-  const ext = IMAGE_MIME_EXT[opts.mime] ?? "bin";
+  // ⚠️ PDF — только для вложений чата (root "chat"). В isAllowedImageMime его
+  // НЕ добавляем: иначе PDF пролез бы в референсы превью и вложения поддержки,
+  // где ждут именно картинку.
+  const ext =
+    IMAGE_MIME_EXT[opts.mime] ?? (opts.mime === "application/pdf" ? "pdf" : "bin");
   // dir приходит из наших же id (conversationId, userId) — на всякий случай
   // санитайзим. root по умолчанию "thumbnails" — так было до появления вложений
   // поддержки, и старые пути в БД остаются валидными.

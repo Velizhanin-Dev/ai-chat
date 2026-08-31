@@ -7,11 +7,27 @@ import type { OpenRouterParams } from "./openrouter-params";
 // чате, и при генерации заголовка. Стратегии — в claude.ts / glm.ts.
 export type LlmProvider = "claude" | "glm" | "openrouter";
 
+// Кусок мультимодального сообщения (OpenAI-совместимый формат, его понимает
+// OpenRouter как есть). Картинки и PDF кладутся data-URL'ами БАЗОЙ64 — файлы
+// уже лежат у нас на диске, наружу ссылки не ходят.
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "file"; file: { filename: string; file_data: string } };
+
+// Ход диалога. content-строка — обычное текстовое сообщение (подавляющее
+// большинство); массив кусков — ход с вложениями (только ПОСЛЕДНЕЕ сообщение
+// пользователя: в историю вложения не тянем, см. chat-attachments.ts).
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string | ChatContentPart[];
+}
+
 export interface StreamArgs {
   // Системный промпт собран в route.ts как массив блоков Anthropic (с кэш-точками).
   // Claude использует его как есть; GLM/OpenRouter склеивают `.text` в один system-месседж.
   system: Anthropic.TextBlockParam[];
-  messages: { role: "user" | "assistant"; content: string }[];
+  messages: ChatTurn[];
   route: RouteDecision;
   routeMs: number;
   // Модель для провайдеров с выбором модели (OpenRouter). Claude/GLM берут свою из env.

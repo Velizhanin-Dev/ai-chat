@@ -11,6 +11,13 @@ import { resolveProjectContext } from "@/lib/chat-project-context";
 import { sanitizeProfile } from "@/lib/project-profile";
 import { ensureProfileJob } from "@/lib/project-profile-server";
 import { getPublicSnapshot } from "@/lib/youtube-public";
+import { readUpload } from "@/lib/uploads";
+import {
+  isChatAttachKeyForProject,
+  MAX_CHAT_FILES,
+  type ChatAttachmentRef,
+} from "@/lib/chat-attachments";
+import type { ChatContentPart, ChatTurn } from "@/lib/llm/types";
 import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
@@ -158,13 +165,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Вложения последнего сообщения (скриншоты/PDF). Сырой разбор — принадлежность
+    // проекту сверяем НИЖЕ, когда владение проектом уже проверено.
+    const rawAttachments: ChatAttachmentRef[] = Array.isArray(body?.attachments)
+      ? (body.attachments as unknown[])
+          .flatMap((x): ChatAttachmentRef[] => {
+            const o = (x ?? {}) as Record<string, unknown>;
+            return typeof o.key === "string" && typeof o.mime === "string"
+              ? [{ key: o.key, mime: o.mime, name: String(o.name ?? "файл").slice(0, 120) }]
+              : [];
+          })
+          .slice(0, MAX_CHAT_FILES)
+      : [];
+
     const messages: ClientMessage[] = rawMessages
       .filter(
-        (m): m is ClientMessage =>
+        (m, i): m is ClientMessage =>
           !!m &&
           (m.role === "user" || m.role === "assistant") &&
           typeof m.content === "string" &&
-          m.content.trim().length > 0
+          // ⚠️ Пустой текст допустим только у ПОСЛЕДНЕГО сообщения с вложениями:
+          // «вот, глянь» одним скриншотом — нормальная просьба.
+          (m.content.trim().length > 0 ||
+            (i === rawMessages.length - 1 && rawAttachments.length > 0))
       )
       .slice(-HISTORY_LIMIT)
       .map((m) => ({ role: m.role, content: m.content }));
@@ -214,6 +237,21 @@ export async function POST(request: NextRequest) {
     }
     // Разобранный профиль проекта: он подставляется в промпт ВМЕСТО сырых ответов
     // анкеты (см. project-profile.ts). Не собран — работаем по брифу, как раньше.
+    // Вложения: ключ обязан лежать в папке ИМЕННО этого проекта (граница
+    // безопасности — иначе можно сослаться на чужой файл). GLM vision не умеет —
+    // отбиваем честно, а не теряем картинку молча.
+    const attachments = rawAttachments.filter((a) =>
+      isChatAttachKeyForProject(a.key, conversationId)
+    );
+    if (attachments.length > 0 && settings.provider === "glm") {
+      return new Response(
+        JSON.stringify({
+          error: "Текущий движок не умеет читать картинки — отправьте сообщение текстом",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const profile = sanitizeProfile(conv.profile);
     // Догоняем тех, у кого проект создан ДО появления профиля: ставим фоновую
     // сборку прямо отсюда. Этот ответ уйдёт по брифу, следующий — уже по профилю.
@@ -328,6 +366,7 @@ export async function POST(request: NextRequest) {
       userId: sessionUser.id,
       conversationId,
       question: lastUserContent,
+      attachments,
       generate: async ({ push, setSearching, setAnalyzingVideo, setStudyingPage, stopped }) => {
         if (webSearch > 0) setSearching();
 
@@ -365,12 +404,38 @@ export async function POST(request: NextRequest) {
           systemForRun = [...systemForRun, { type: "text" as const, text: videoBlock }];
         }
 
+        // Вложения: файлы читаем с диска и кладём data-URL'ами в ПОСЛЕДНЕЕ
+        // сообщение (мультимодальный ход). В историю прошлых ходов вложения не
+        // тянем — иначе каждый скриншот ездил бы в модель до конца диалога.
+        // Файл не прочитался (удалили с диска) — пропускаем, а не роняем ответ.
+        let turns: ChatTurn[] = messages;
+        if (attachments.length > 0) {
+          const parts: ChatContentPart[] = [];
+          if (lastUserContent.trim()) parts.push({ type: "text", text: lastUserContent });
+          for (const a of attachments) {
+            try {
+              const data = await readUpload(a.key);
+              const dataUrl = `data:${a.mime};base64,${data.toString("base64")}`;
+              parts.push(
+                a.mime === "application/pdf"
+                  ? { type: "file", file: { filename: a.name, file_data: dataUrl } }
+                  : { type: "image_url", image_url: { url: dataUrl } }
+              );
+            } catch (err) {
+              console.warn("[chat] вложение не прочиталось:", a.key, err);
+            }
+          }
+          if (parts.length > 0) {
+            turns = [...messages.slice(0, -1), { role: "user", content: parts }];
+          }
+        }
+
         // Стратегия провайдера: claude (Anthropic SDK, кэш/effort), glm или
         // openrouter. Все отдают текстовые дельты.
         const strategy = getStrategy(provider);
         for await (const token of strategy.stream({
           system: systemForRun,
-          messages,
+          messages: turns,
           route,
           routeMs,
           model: settings.openrouterModel,

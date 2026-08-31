@@ -56,6 +56,9 @@ export const openrouterStrategy: LlmStrategy = {
     ].join("\n\n");
     const oaMessages = [
       ...(systemText ? [{ role: "system" as const, content: systemText }] : []),
+      // content может быть строкой ИЛИ массивом кусков (text/image_url/file) —
+      // это родной формат OpenAI-совместимого API, OpenRouter отдаёт его
+      // провайдеру как есть. Vision-модель (luna) читает картинки и PDF.
       ...messages.map((m) => ({ role: m.role, content: m.content })),
     ];
 

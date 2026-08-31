@@ -11,12 +11,14 @@ import {
   Loader,
   Center,
   ActionIcon,
+  Group,
 } from "@mantine/core";
-import { IconUser, IconRobot, IconArrowDown } from "@tabler/icons-react";
+import { IconUser, IconRobot, IconArrowDown, IconFileTypePdf } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import type { ChatMessage } from "@/store/chatSlice";
 import { splitConnectCta } from "@/lib/chat-markers";
 import { stripCitationLinks } from "@/lib/chat-sources";
+import { chatAttachmentUrl } from "@/lib/chat-attachments";
 import { apiYouTubeStatus } from "@/lib/youtube-client";
 import Markdown from "./Markdown";
 import MessageFooter from "./MessageFooter";
@@ -224,16 +226,60 @@ export default function ChatWindow() {
               >
                 {isUser ? (
                   <>
-                    <Text
-                      size="sm"
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        color: "inherit",
-                      }}
-                    >
-                      {msg.content}
-                    </Text>
+                    {msg.content && (
+                      <Text
+                        size="sm"
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          color: "inherit",
+                        }}
+                      >
+                        {msg.content}
+                      </Text>
+                    )}
+                    {/* Вложения (скриншоты/PDF). Клик открывает оригинал: в
+                        баббле картинка мелкая, а смотрят на ней детали. */}
+                    {msg.attachments && msg.attachments.length > 0 && activeId && (
+                      <Group gap={6} mt={msg.content ? 8 : 0} wrap="wrap">
+                        {msg.attachments.map((a) => {
+                          const url = chatAttachmentUrl(activeId, a.key);
+                          return a.mime === "application/pdf" ? (
+                            <a
+                              key={a.key}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="chat-att-pdf"
+                            >
+                              <IconFileTypePdf size={18} />
+                              <span>{a.name}</span>
+                            </a>
+                          ) : (
+                            <a
+                              key={a.key}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ display: "block", lineHeight: 0 }}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={url}
+                                alt={a.name}
+                                loading="lazy"
+                                style={{
+                                  maxWidth: 200,
+                                  maxHeight: 200,
+                                  borderRadius: 8,
+                                  display: "block",
+                                }}
+                              />
+                            </a>
+                          );
+                        })}
+                      </Group>
+                    )}
                     {/* Свой запрос тоже нужно уметь забрать: длинную вводную с
                         деталями проекта человек переиспользует в следующем чате,
                         а выделять её мышкой в скроллящейся ленте неудобно. */}

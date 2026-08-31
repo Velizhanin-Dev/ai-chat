@@ -30,13 +30,7 @@ export async function PATCH(req: Request) {
   if (typeof input.briefPageEnabled === "boolean") {
     patch.briefPageEnabled = input.briefPageEnabled;
   }
-  if (
-    input.provider === "claude" ||
-    input.provider === "glm" ||
-    input.provider === "openrouter"
-  ) {
-    patch.provider = input.provider;
-  }
+  // Движок зафиксирован на OpenRouter — смену провайдера больше не принимаем.
   if (typeof input.openrouterModel === "string") {
     patch.openrouterModel = input.openrouterModel.trim().slice(0, 120);
   }

@@ -133,8 +133,12 @@ export function normalizeWebSearch(v: unknown): AppSettings["webSearch"] {
   };
 }
 
-function normalizeProviderValue(v: unknown): LlmProvider {
-  return v === "glm" || v === "openrouter" ? v : "claude";
+function normalizeProviderValue(_v: unknown): LlmProvider {
+  // ⚠️ Движок ЗАФИКСИРОВАН на OpenRouter (решение владельца, 2026-08-31): Claude
+  // и GLM напрямую больше не используются — нужные модели берём через каталог
+  // OpenRouter. Стратегии claude/glm остаются в коде как запасной путь, но
+  // выбор из админки убран, и что бы ни лежало в БД — работаем через OpenRouter.
+  return "openrouter";
 }
 
 // Нормализация «сырых» JSON-значений из БД к типу AppSettings (с дефолтами).

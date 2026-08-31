@@ -179,9 +179,9 @@ export default function AdminFlagsPage() {
     })();
   }, []);
 
-  // Загружаем каталог моделей OpenRouter при выборе провайдера (один раз).
+  // Каталог моделей OpenRouter — грузим один раз (движок всегда OpenRouter).
   useEffect(() => {
-    if (settings?.provider !== "openrouter" || orModels.length || orModelsLoading) return;
+    if (!settings || orModels.length || orModelsLoading) return;
     setOrModelsLoading(true);
     setOrModelsError(null);
     void (async () => {
@@ -223,7 +223,7 @@ export default function AdminFlagsPage() {
   }, []);
 
   // Провайдеры конкретной модели — перезагружаем при смене модели.
-  const orModel = settings?.provider === "openrouter" ? settings.openrouterModel : "";
+  const orModel = settings?.openrouterModel ?? "";
   useEffect(() => {
     if (!orModel) {
       setOrProviders([]);
@@ -252,8 +252,7 @@ export default function AdminFlagsPage() {
 
   // Провайдеры структурной модели — тем же образом. Пустая структурная модель =
   // «как у чата», свой пин не нужен.
-  const orStructModel =
-    settings?.provider === "openrouter" ? settings.openrouterStructuredModel : "";
+  const orStructModel = settings?.openrouterStructuredModel ?? "";
   useEffect(() => {
     if (!orStructModel) {
       setOrStructProviders([]);
@@ -481,34 +480,23 @@ export default function AdminFlagsPage() {
 
           {/* Движок модели — глобально для всех пользователей */}
           <Paper withBorder radius="md" p="lg">
-            <Group justify="space-between" wrap="nowrap" align="flex-start" mb={settings.provider === "openrouter" ? "md" : 0}>
-              <Group gap="sm" wrap="nowrap" align="flex-start">
-                <ThemeIcon color="brand" variant="light" radius="md" size="lg">
-                  <IconCpu size={18} />
-                </ThemeIcon>
-                <div>
-                  <Text fw={600}>Движок модели</Text>
-                  <Text size="sm" c="dimmed">
-                    Какой моделью отвечать всем пользователям — и генерировать
-                    заголовки диалогов. Применяется глобально, без редеплоя.
-                  </Text>
-                </div>
-              </Group>
-              <SegmentedControl
-                color="brand"
-                radius="md"
-                value={settings.provider}
-                onChange={(v) => patch({ provider: v as AppSettings["provider"] })}
-                data={[
-                  { label: "Claude", value: "claude" },
-                  { label: "GLM", value: "glm" },
-                  { label: "OpenRouter", value: "openrouter" },
-                ]}
-              />
+            {/* ⚠️ Переключателя Claude/GLM/OpenRouter больше НЕТ (2026-08-31):
+                движок зафиксирован на OpenRouter, остальные напрямую не
+                используются — нужные модели берутся из его каталога. */}
+            <Group gap="sm" wrap="nowrap" align="flex-start" mb="md">
+              <ThemeIcon color="brand" variant="light" radius="md" size="lg">
+                <IconCpu size={18} />
+              </ThemeIcon>
+              <div>
+                <Text fw={600}>Модели (OpenRouter)</Text>
+                <Text size="sm" c="dimmed">
+                  Какой моделью отвечать всем пользователям. Применяется глобально,
+                  без редеплоя.
+                </Text>
+              </div>
             </Group>
 
-            {/* OpenRouter: выбор модели + режим промпта */}
-            {settings.provider === "openrouter" && (
+            {(
               <Stack gap="md" pl={{ base: 0, sm: 52 }}>
                 <Select
                   label="Модель OpenRouter"

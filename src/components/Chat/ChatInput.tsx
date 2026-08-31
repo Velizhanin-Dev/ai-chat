@@ -12,7 +12,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from "@mantine/core";
-import { IconSend, IconLock, IconPlayerStopFilled } from "@tabler/icons-react";
+import { IconSend, IconLock, IconPlayerStopFilled, IconPaperclip, IconX, IconFileTypePdf } from "@tabler/icons-react";
 import type { ChatAccessReason } from "@/hooks/useChatAccess";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -32,6 +32,12 @@ import { bumpRequestsUsed } from "@/store/authSlice";
 import { ymGoal } from "@/lib/metrika";
 import QuickActions from "./QuickActions";
 import { v4 as uuidv4 } from "uuid";
+import {
+  MAX_CHAT_FILES,
+  MAX_CHAT_FILE_BYTES,
+  isChatAttachMime,
+  type ChatAttachmentRef,
+} from "@/lib/chat-attachments";
 
 const EMPTY: ChatMessage[] = [];
 
@@ -425,9 +431,58 @@ export default function ChatInput({
     };
   }, [activeId, messagesLoaded, dispatch, consumeRun]);
 
+  // Вложения (скриншоты/PDF): выбранные, но ещё не отправленные файлы.
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const filePicker = useRef<HTMLInputElement>(null);
+  // Превью выбранных картинок. ⚠️ objectURL освобождаем — иначе каждый скриншот
+  // висит в памяти вкладки до перезагрузки (те же грабли, что в поддержке).
+  const [previews, setPreviews] = useState<{ url: string | null; name: string; pdf: boolean }[]>([]);
+  useEffect(() => {
+    const items = files.map((f) => ({
+      url: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+      name: f.name,
+      pdf: f.type === "application/pdf",
+    }));
+    setPreviews(items);
+    return () => items.forEach((i) => i.url && URL.revokeObjectURL(i.url));
+  }, [files]);
+
+  const addFiles = useCallback((incoming: File[]) => {
+    const ok = incoming.filter((f) => isChatAttachMime(f.type));
+    if (ok.length === 0) {
+      if (incoming.length) setFileError("Можно прикладывать картинки (JPG, PNG, WebP) и PDF");
+      return;
+    }
+    if (ok.some((f) => f.size > MAX_CHAT_FILE_BYTES)) {
+      setFileError("Файл тяжелее 8 МБ — уменьшите или обрежьте");
+      return;
+    }
+    setFileError(null);
+    setFiles((cur) => {
+      if (cur.length + ok.length > MAX_CHAT_FILES) {
+        setFileError(`Не больше ${MAX_CHAT_FILES} файлов за раз`);
+      }
+      return [...cur, ...ok].slice(0, MAX_CHAT_FILES);
+    });
+  }, []);
+
+  // Ctrl+V со скриншотом — главный способ: PrintScreen и сразу вставил. На
+  // телефоне то же самое делает вставка из галереи через меню поля ввода.
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const pasted = Array.from(e.clipboardData?.files ?? []);
+      if (pasted.length === 0) return;
+      e.preventDefault();
+      addFiles(pasted);
+    },
+    [addFiles]
+  );
+
   const handleSend = useCallback(async () => {
     const question = input.trim();
-    if (!question || isLoading) return;
+    // Сообщение из одного скриншота без текста — нормально («вот, глянь»).
+    if ((!question && files.length === 0) || isLoading) return;
     // Доступ исчерпан — не отправляем, зовём оформить тариф (на сервере тоже 403).
     if (locked) {
       onUpgrade?.();
@@ -439,7 +494,33 @@ export default function ChatInput({
     if (!activeId) return;
     const convId = activeId;
 
+    // Файлы грузим ДО очистки композера: сорвётся загрузка — человек не теряет
+    // ни текст, ни выбранные файлы, просто видит ошибку и жмёт ещё раз.
+    let attachRefs: ChatAttachmentRef[] = [];
+    if (files.length > 0) {
+      try {
+        const form = new FormData();
+        form.set("projectId", convId);
+        for (const f of files) form.append("files", f);
+        const up = await fetch("/api/chat/attachments", { method: "POST", body: form });
+        const upData = (await up.json().catch(() => ({}))) as {
+          files?: ChatAttachmentRef[];
+          error?: string;
+        };
+        if (!up.ok || !upData.files) {
+          setFileError(upData.error || "Не удалось загрузить файлы");
+          return;
+        }
+        attachRefs = upData.files;
+      } catch {
+        setFileError("Не удалось загрузить файлы — проверьте связь");
+        return;
+      }
+    }
+
     setInput("");
+    setFiles([]);
+    setFileError(null);
     // Черновик отправлен — гасим отложенную запись и чистим localStorage.
     clearDraftTimer();
     clearChatDraft();
@@ -451,6 +532,8 @@ export default function ChatInput({
       id: uuidv4(),
       role: "user" as const,
       content: question,
+      // Файлы уже на диске — лента может показывать их сразу по этим ключам.
+      ...(attachRefs.length ? { attachments: attachRefs } : {}),
       createdAt: new Date().toISOString(),
     };
     dispatch(addMessage(userMessage));
@@ -471,7 +554,12 @@ export default function ChatInput({
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, aboutYou, conversationId: convId }),
+        body: JSON.stringify({
+          messages: history,
+          aboutYou,
+          conversationId: convId,
+          ...(attachRefs.length ? { attachments: attachRefs } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -518,7 +606,7 @@ export default function ChatInput({
       streamPrefixRef.current = "";
       dispatch(setLoading(false));
     }
-  }, [input, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch, consumeRun]);
+  }, [input, files, isLoading, locked, onUpgrade, messages, activeId, aboutYou, dispatch, consumeRun]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -559,12 +647,94 @@ export default function ChatInput({
           </Group>
         </Paper>
       ) : (
+      <>
+      {(previews.length > 0 || fileError) && (
+        <Box mb={6}>
+          {fileError && (
+            <Text size="xs" c="red" mb={previews.length ? 6 : 0}>
+              {fileError}
+            </Text>
+          )}
+          <Group gap={6} wrap="wrap">
+            {previews.map((pv, i) => (
+              <Box key={`${pv.name}-${i}`} style={{ position: "relative" }}>
+                {pv.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={pv.url}
+                    alt=""
+                    style={{
+                      width: 56,
+                      height: 56,
+                      objectFit: "cover",
+                      borderRadius: 8,
+                      display: "block",
+                    }}
+                  />
+                ) : (
+                  <Group
+                    gap={6}
+                    px={10}
+                    style={{
+                      height: 56,
+                      borderRadius: 8,
+                      background: "var(--mantine-color-default-hover)",
+                      maxWidth: 180,
+                    }}
+                    wrap="nowrap"
+                  >
+                    <IconFileTypePdf size={20} style={{ flexShrink: 0 }} />
+                    <Text size="xs" truncate>
+                      {pv.name}
+                    </Text>
+                  </Group>
+                )}
+                <ActionIcon
+                  size="xs"
+                  radius="xl"
+                  variant="filled"
+                  color="dark"
+                  aria-label="Убрать файл"
+                  style={{ position: "absolute", top: -6, right: -6 }}
+                  onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
+                >
+                  <IconX size={12} />
+                </ActionIcon>
+              </Box>
+            ))}
+          </Group>
+        </Box>
+      )}
       <Group
         align="flex-end"
         gap="xs"
         wrap="nowrap"
         className="chat-composer"
       >
+        <input
+          ref={filePicker}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,application/pdf"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles(Array.from(e.currentTarget.files ?? []));
+            // ⚠️ Сброс: без него повторный выбор ТОГО ЖЕ файла не вызывает onChange.
+            e.currentTarget.value = "";
+          }}
+        />
+        <ActionIcon
+          size="xl"
+          radius="xl"
+          variant="subtle"
+          color="gray"
+          onClick={() => filePicker.current?.click()}
+          disabled={isLoading || files.length >= MAX_CHAT_FILES}
+          aria-label="Прикрепить файл"
+          title="Картинка или PDF (можно вставить скриншот через Ctrl+V)"
+        >
+          <IconPaperclip size={20} />
+        </ActionIcon>
         <Textarea
           ref={textareaRef}
           variant="unstyled"
@@ -576,6 +746,7 @@ export default function ChatInput({
             scheduleDraftSave(v);
           }}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           size="md"
           autosize
           minRows={2}
@@ -607,13 +778,14 @@ export default function ChatInput({
             variant="filled"
             color="brand"
             onClick={handleSend}
-            disabled={!input.trim()}
+            disabled={!input.trim() && files.length === 0}
             aria-label="Отправить"
           >
             <IconSend size={20} />
           </ActionIcon>
         )}
       </Group>
+      </>
       )}
     </Box>
   );

@@ -5,6 +5,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Вложения (картинки/PDF), см. chat-attachments.ts. */
+  attachments?: { key: string; name: string; mime: string }[];
   createdAt: string;
 }
 

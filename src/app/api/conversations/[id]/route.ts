@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 import { apiError, readJson } from "@/lib/http";
+import { parseChatAttachments } from "@/lib/chat-attachments";
 
 // Один диалог: сообщения по клику (GET), переименование (PATCH) и удаление
 // (DELETE). Всё с проверкой владения — чужой диалог не отдаём/не трогаем.
@@ -12,6 +13,8 @@ export type ApiMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Вложения (картинки/PDF): ключи файлов, URL строит клиент по projectId. */
+  attachments?: { key: string; name: string; mime: string }[];
   createdAt: string;
 };
 
@@ -36,15 +39,19 @@ export async function GET(
   const rows = await prisma.message.findMany({
     where: { conversationId: params.id },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: { id: true, role: true, content: true, attachments: true, createdAt: true },
   });
 
-  const messages: ApiMessage[] = rows.map((m) => ({
-    id: m.id,
-    role: m.role === "assistant" ? "assistant" : "user",
-    content: m.content,
-    createdAt: m.createdAt.toISOString(),
-  }));
+  const messages: ApiMessage[] = rows.map((m) => {
+    const att = parseChatAttachments(m.attachments);
+    return {
+      id: m.id,
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+      ...(att.length ? { attachments: att } : {}),
+      createdAt: m.createdAt.toISOString(),
+    };
+  });
 
   return NextResponse.json({ messages });
 }

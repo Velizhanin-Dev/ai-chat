@@ -33,15 +33,55 @@ export const claudeStrategy: LlmStrategy = {
 
     // Кэшируем историю диалога: брейкпоинт на последнем сообщении → на следующем
     // ходу вся переписка читается из кэша (×0.1). TTL по умолчанию (5 мин).
+    // Мультимодальный ход (вложения чата) — конвертируем куски OpenAI-формата в
+    // блоки Anthropic: image_url(data-URL) → image/base64, file → document.
+    const toBlocks = (
+      parts: Exclude<StreamArgs["messages"][number]["content"], string>
+    ): Anthropic.ContentBlockParam[] =>
+      parts.flatMap((p): Anthropic.ContentBlockParam[] => {
+        if (p.type === "text") return [{ type: "text", text: p.text }];
+        if (p.type === "image_url") {
+          const m2 = /^data:([\w/+.-]+);base64,(.+)$/.exec(p.image_url.url);
+          if (!m2) return [];
+          return [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: m2[1] as "image/jpeg" | "image/png" | "image/webp" | "image/gif",
+                data: m2[2],
+              },
+            },
+          ];
+        }
+        const doc = /^data:application\/pdf;base64,(.+)$/.exec(p.file.file_data);
+        if (!doc) return [];
+        return [
+          {
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: doc[1] },
+          },
+        ];
+      });
+
     const cachedMessages: Anthropic.MessageParam[] = messages.map((m, i) =>
       i === messages.length - 1
         ? {
             role: m.role,
-            content: [
-              { type: "text", text: m.content, cache_control: { type: "ephemeral" } },
-            ],
+            content:
+              typeof m.content === "string"
+                ? [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }]
+                : toBlocks(m.content),
           }
-        : { role: m.role, content: m.content }
+        : {
+            role: m.role,
+            content:
+              typeof m.content === "string"
+                ? m.content
+                : m.content
+                    .map((p) => (p.type === "text" ? p.text : "[приложен файл]"))
+                    .join("\n"),
+          }
     );
 
     const t0 = Date.now();
