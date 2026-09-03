@@ -15,9 +15,25 @@ import type { IgAccount, IgReel, IgSnapshot } from "./instagram-types";
 // токен не моложе суток). Refresh-токена, как у Google, тут нет: не продлили
 // вовремя — человек переподключает аккаунт заново.
 
+// Экран согласия открывает БРАУЗЕР пользователя — ему прокси не нужен.
 const AUTH_URL = "https://www.instagram.com/oauth/authorize";
-const TOKEN_URL = "https://api.instagram.com/oauth/access_token";
-const GRAPH = "https://graph.instagram.com";
+
+// ⚠️⚠️ Серверные вызовы Meta идут через переменные, а не константами: прод стоит
+// в РФ, и api.instagram.com / graph.instagram.com оттуда не открываются вовсе —
+// обмен кода падал `TypeError: fetch failed` (undici, сетевой отказ до ответа),
+// а человек видел нашу заглушку «нужен профессиональный аккаунт». Та же схема,
+// что у Telegram (`TELEGRAM_API_BASE`) и OpenRouter: на зарубежном Caddy-прокси
+// два пути `/igapi/*` → api.instagram.com и `/iggraph/*` → graph.instagram.com,
+// закрытые по IP прода. Локально переменные не задаём — ходим напрямую.
+const TOKEN_BASE = (process.env.INSTAGRAM_API_BASE || "https://api.instagram.com").replace(
+  /\/$/,
+  ""
+);
+const TOKEN_URL = `${TOKEN_BASE}/oauth/access_token`;
+const GRAPH = (process.env.INSTAGRAM_GRAPH_BASE || "https://graph.instagram.com").replace(
+  /\/$/,
+  ""
+);
 
 // Скоупы: профиль и медиа + инсайты + чтение комментариев. Больше не просим —
 // лишние разрешения удлиняют ревью приложения в Meta и пугают человека на экране
