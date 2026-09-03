@@ -15,7 +15,9 @@ import {
   STATUSES,
   STATUS_META,
   formatMeta,
+  isShortVideo,
   primaryTitle,
+  shortHeadline,
   type VideoStatus,
   type VideoView,
 } from "@/lib/content-plan";
@@ -48,8 +50,12 @@ export default function VideoCard({
   canMoveUp?: boolean;
   canMoveDown?: boolean;
 }) {
-  const fmt = formatMeta(v.format);
-  const preview = v.previewTexts[0];
+  // ⚠️ У шортса нет названия и превью: заголовок карточки — ПЕРВАЯ ФРАЗА (хук),
+  // под ней описание; формат и ВИСП к шортсу не относятся и не рисуются.
+  const short = isShortVideo(v);
+  const fmt = short ? null : formatMeta(v.format);
+  const preview = short ? null : v.previewTexts[0];
+  const shortDescription = short && v.opening?.trim() ? primaryTitle(v) : null;
   return (
     <Box
       className="cp-card"
@@ -79,7 +85,7 @@ export default function VideoCard({
               {fmt.label}
             </Badge>
           )}
-          {v.noSpeaker && (
+          {v.noSpeaker && !short && (
             <Badge size="xs" variant="light" color="gray" radius="sm">
               без спикера
             </Badge>
@@ -111,7 +117,7 @@ export default function VideoCard({
           )}
         </Group>
         <Group gap={4} wrap="nowrap">
-          {v.visp && (
+          {v.visp && !short && (
             <Box className="cp-visp" aria-label="ВИСП">
               <span className={v.visp.v ? "on" : ""}>В</span>
               <span className={v.visp.i ? "on" : ""}>И</span>
@@ -183,9 +189,24 @@ export default function VideoCard({
         </Group>
       </Group>
 
-      <Text fw={600} lh={1.25} lineClamp={3}>
-        {primaryTitle(v)}
-      </Text>
+      {short ? (
+        <Text fw={600} lh={1.25} lineClamp={3}>
+          <Text span size="xs" fw={500} c="dimmed">
+            Первая фраза:{" "}
+          </Text>
+          {shortHeadline(v)}
+        </Text>
+      ) : (
+        <Text fw={600} lh={1.25} lineClamp={3}>
+          {primaryTitle(v)}
+        </Text>
+      )}
+
+      {shortDescription && (
+        <Text size="xs" c="dimmed" mt={4} lineClamp={2}>
+          {shortDescription}
+        </Text>
+      )}
 
       {preview && (
         <Text size="xs" c="dimmed" mt={4} lineClamp={1}>

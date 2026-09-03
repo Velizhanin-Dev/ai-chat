@@ -1,9 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { getStrategy } from "./llm";
-import { buildSystem, buildChannelBlock } from "./llm/system";
-import { getChannelSnapshotCached } from "./youtube";
-import { getPublicSnapshot } from "./youtube-public";
+import { buildSystem } from "./llm/system";
+import { resolveChannelContext } from "./channel-context-server";
 import { getSettings, structuredModelOf } from "./settings";
 import { routeQuery } from "./router";
 import type { RouteDecision } from "./router";
@@ -146,24 +145,11 @@ const JSON_FORMAT_BLOCK = `# ФОРМАТ ЭТОЙ ЗАДАЧИ (строго)
 }
 Баланс за месяц: БОЛЬШИНСТВО роликов reach (растим канал), часть expert. Не выдумывай реальные новости/цифры/имена/ссылки. 10 вопросов — обязательно.`;
 
-// Снимок канала проекта для промпта генерации. Best-effort: нет интеграции, протух
-// токен, молчит YouTube — возвращаем null и генерируем без него (генерацию не роняем).
+// Снимок площадки проекта для промпта (YouTube: OAuth или по ссылке; Instagram:
+// рилсы) — общий помощник, best-effort. Темы должны идти из того, что у человека
+// РЕАЛЬНО смотрят, а не из общих слов по нише.
 async function resolveChannelBlock(projectId: string): Promise<string | null> {
-  try {
-    const integ = await prisma.youTubeIntegration.findUnique({
-      where: { conversationId: projectId },
-    });
-    if (!integ) {
-      // Канал по ссылке (бренд-аккаунт): публичных цифр хватает, чтобы темы шли
-      // из того, что у человека реально смотрят, а не из общих слов по нише.
-      const pub = await getPublicSnapshot(projectId);
-      return pub ? buildChannelBlock(pub, null, true) : null;
-    }
-    const snap = await getChannelSnapshotCached(projectId, integ);
-    return snap ? buildChannelBlock(snap) : null;
-  } catch {
-    return null;
-  }
+  return (await resolveChannelContext(projectId)).channelBlock;
 }
 
 // Сгенерировать сетку роликов. Возвращает нормализованные ролики (throws на сбое
@@ -282,7 +268,10 @@ const BLOCK_INSTRUCTION: Record<BlockKey, string> = {
 ⚠️ Ровно тут количество и есть ценность: из сотни причин десяток окажется золотым, и заранее не угадать какой. Не срезай список до «крепких семи» — дай все ${REASONS_COUNT}.`,
   funnel: `Разложи путь клиента от ролика до заявки. Верни JSON {"funnelSteps":[{"step":"где человек находится: «увидел шортс», «зашёл на канал», «написал в директ»","goal":"что должно произойти на этом шаге","content":"каким контентом ведём","action":"что говорим или предлагаем — CTA, лид-магнит"}]}. 5-7 шагов.
 ⚠️ Это НЕ про то, сколько снимать охватного и продающего (это и есть сам контент-план). Это путь ЧЕЛОВЕКА: что он видит, что делает дальше, чем мы его подхватываем.`,
-  shorts: `Собери лёгкую сетку из ${DEFAULT_SHORTS_COUNT} шортсов. Верни JSON {"shorts":[{"titles":["название//тема шортса"],"previewTexts":["текст на превью, 2–3 слова"],"opening":"первая фраза-крючок (заход)","reference":"какой ролик-донор искать","pain":"боль ЦА от первого лица"}]}. Шортсы — верх воронки и холодный охват: нарезки, реакции, тесты со своим заходом.`,
+  // ⚠️ У шортса НЕТ названия и текста на превью (правка редактора): в `titles`
+  // кладём ОПИСАНИЕ (подпись под роликом), в `opening` — ПЕРВУЮ ФРАЗУ, которую
+  // спикер произносит в первые 3 секунды. previewTexts/questions/format не просим.
+  shorts: `Собери лёгкую сетку из ${DEFAULT_SHORTS_COUNT} шортсов. У шортса нет названия и текста на превью — есть описание и первая фраза. Верни JSON {"shorts":[{"titles":["описание шортса — одно-два предложения, как подпись под роликом, без «//» и без кликбейт-заголовка"],"opening":"первая фраза дословно — то, что спикер говорит в первые 3 секунды, хук без приветствий","huntStage":"стадия лестницы Ханта","pain":"боль ЦА от первого лица","reference":"какой ролик-донор искать"}]}. Шортсы — верх воронки и холодный охват: нарезки, реакции, тесты со своим заходом.`,
 };
 
 // Сгенерировать опорный блок. Возвращает сырой распарсенный объект нужной формы
@@ -533,9 +522,17 @@ export async function regenerateVideoPart(opts: {
   projectId: string;
   brief: Brief | null;
   part: RegenPart;
-  video: { titles: string[]; pain: string | null; huntStage: string | null; format: string | null };
+  video: {
+    kind?: "video" | "short";
+    titles: string[];
+    pain: string | null;
+    huntStage: string | null;
+    format: string | null;
+    opening?: string | null;
+  };
 }): Promise<Partial<{ titles: string[]; previewTexts: string[]; questions: string[]; format: string | null; noSpeaker: boolean }>> {
   const { userId, projectId, brief, part, video } = opts;
+  const short = video.kind === "short";
   const settings = await getSettings();
   const provider = settings.provider;
 
@@ -561,8 +558,16 @@ export async function regenerateVideoPart(opts: {
     text: `# ФОРМАТ ЭТОЙ ЗАДАЧИ (строго)\nЭто не чат, а переделка части контент-плана. Верни ТОЛЬКО валидный JSON без markdown и текста вокруг.`,
   });
 
-  const ctx = `Ролик контент-плана. Текущее название: «${video.titles[0] ?? "—"}». Боль ЦА: ${video.pain ?? "—"}. Стадия Ханта: ${video.huntStage ?? "—"}. Текущий формат: ${video.format ?? "—"}. Ниша/аудитория — из брифа.`;
-  const genPrompt = `${ctx}\n\n${REGEN_INSTRUCTION[part]}`;
+  // ⚠️ У шортса `titles` — это ОПИСАНИЕ, а не название: просим переписать подпись
+  // под роликом, а не кликбейт-заголовок по ВИСП (у шортса его нет).
+  const ctx = short
+    ? `Шортс контент-плана (вертикальный ролик до 60 секунд). Текущее описание: «${video.titles[0] ?? "—"}». Первая фраза: «${video.opening ?? "—"}». Боль ЦА: ${video.pain ?? "—"}. Стадия Ханта: ${video.huntStage ?? "—"}. Ниша/аудитория — из брифа.`
+    : `Ролик контент-плана. Текущее название: «${video.titles[0] ?? "—"}». Боль ЦА: ${video.pain ?? "—"}. Стадия Ханта: ${video.huntStage ?? "—"}. Текущий формат: ${video.format ?? "—"}. Ниша/аудитория — из брифа.`;
+  const instruction =
+    short && part === "titles"
+      ? 'Дай 3 НОВЫХ варианта ОПИСАНИЯ шортса — одно-два предложения, как подпись под роликом: про что он и зачем досмотреть, без «//» и без кликбейт-заголовка. Верни JSON {"titles":["…","…","…"]}.'
+      : REGEN_INSTRUCTION[part];
+  const genPrompt = `${ctx}\n\n${instruction}`;
 
   const strategy = getStrategy(provider);
   let full = "";
@@ -745,8 +750,11 @@ export async function adaptCompetitorVideo(opts: {
   brief: Brief | null;
   insight: VideoInsight;
   transcriptBlock: string;
+  /** Шортс-донор → карточка шортса: описание + первая фраза вместо названия/превью. */
+  kind?: "video" | "short";
 }): Promise<GenVideo | null> {
   const { userId, projectId, brief, insight, transcriptBlock } = opts;
+  const short = opts.kind === "short";
   const settings = await getSettings();
   const provider = settings.provider;
 
@@ -788,9 +796,17 @@ export async function adaptCompetitorVideo(opts: {
     transcriptBlock,
     "",
     "Жёстко: название и тему НЕ копируй и не перефразируй — бери только механику (на какую боль бьёт, каким триггером цепляет, как держит внимание) и переноси её на нишу и экспертизу из брифа. Если тема донора к нише клиента не подходит — возьми тот же триггер и найди свою тему.",
+    // ⚠️ У шортса нет названия и превью: `titles` = описание, `opening` = первая
+    // фраза. Остальные поля лонга модели прямо велим оставить пустыми — иначе
+    // она заполнит их по схеме из system, и на карточке шортса окажется мусор.
+    short
+      ? 'Это ШОРТС (вертикальный ролик до 60 секунд), у него нет названия и текста на превью. В "titles" положи ОДНО описание — одно-два предложения, как подпись под роликом, без «//» и без кликбейт-заголовка. В "opening" — первую фразу дословно: то, что спикер произносит в первые 3 секунды, хук без приветствий. Заполни "huntStage" и "pain". Поля "previewTexts", "questions", "format", "nativeClose", "whyWorks", "visp", "cta" оставь пустыми.'
+      : "",
     'Верни строго JSON {"videos":[ОДИН объект]} по схеме из system. В поле reference впиши ровно: ' +
       `«${insight.title} — https://youtu.be/${insight.id}».`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const strategy = getStrategy(provider);
   let full = "";

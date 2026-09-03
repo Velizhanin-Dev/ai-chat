@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAppSelector } from "@/store/hooks";
 import CompetitorCard from "./CompetitorCard";
@@ -34,6 +34,8 @@ import {
 import AddReferenceModal from "./AddReferenceModal";
 import KeywordFinder from "./KeywordFinder";
 import NicheTagsPanel from "./NicheTagsPanel";
+import VideoTagsPanel from "./VideoTagsPanel";
+import { MAX_TAG_REF_VIDEOS } from "@/lib/video-tags";
 import {
   COMPETITOR_MAX_QUERIES,
   COMPETITOR_PERIODS,
@@ -301,6 +303,27 @@ export default function CompetitorsBoard() {
     ctx && result && ctx.configured && ctx.quota.remaining < result.nextCost
   );
 
+  // Автодогрузка по скроллу: сентинел под сеткой, доскроллил — тянем следующие
+  // страницы (тот же `run("more")`, что и у кнопки; кнопка остаётся запасным
+  // путём). ⚠️ Наблюдатель пересоздаётся на каждое изменение зависимостей, поэтому
+  // пока идёт догрузка, повторного вызова нет: `loadingMore` в зависимостях и в
+  // условии. Запас 300px — чтобы следующая порция начинала грузиться до того, как
+  // человек упрётся в пустой низ.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const canAutoLoad = Boolean(result?.hasMore) && !loadingMore && !searching && !noQuotaForMore;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !canAutoLoad) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void run("more");
+      },
+      { rootMargin: "300px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [canAutoLoad, run]);
+
   return (
     <Stack gap="lg" py="md">
       <Box>
@@ -358,6 +381,14 @@ export default function CompetitorsBoard() {
                     : [...cur, phrase]
                 )
               }
+            />
+
+            {/* Теги для СВОЕГО ролика по схеме студии (10 охватных / 8 свободных /
+                2 именных). Кандидатами идут теги верхних роликов выдачи — поэтому
+                панель живёт здесь, рядом с поиском, а не в контент-плане. */}
+            <VideoTagsPanel
+              projectId={projectId}
+              refIds={visible.slice(0, MAX_TAG_REF_VIDEOS).map((v) => v.id)}
             />
 
             <Box className="cmp-fields">
@@ -567,17 +598,20 @@ export default function CompetitorsBoard() {
           {/* Догрузка выдачи. Цену (units) человеку не показываем — это внутренняя
               кухня; кнопка просто гаснет, если на сегодня запросов не осталось. */}
           {result.hasMore && (
-            <Group justify="center" gap="xs" mt="xs">
-              <Button
-                variant="default"
-                onClick={() => run("more")}
-                loading={loadingMore}
-                disabled={noQuotaForMore}
-              >
-                Добрать ещё {COMPETITOR_TARGET_RESULTS}
-              </Button>
-
-            </Group>
+            <>
+              {/* Сентинел автодогрузки — см. эффект с IntersectionObserver выше. */}
+              <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
+              <Group justify="center" gap="xs" mt="xs">
+                <Button
+                  variant="default"
+                  onClick={() => run("more")}
+                  loading={loadingMore}
+                  disabled={noQuotaForMore}
+                >
+                  {loadingMore ? "Догружаю выдачу" : `Добрать ещё ${COMPETITOR_TARGET_RESULTS}`}
+                </Button>
+              </Group>
+            </>
           )}
           {!result.hasMore && result.pagesLoaded > 1 && (
             <Text size="xs" c="dimmed" ta="center">

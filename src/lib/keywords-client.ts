@@ -1,6 +1,7 @@
 "use client";
 
 import type { KeywordStats } from "./keywords";
+import type { VideoTagSet } from "./video-tags";
 
 // Клиентские обёртки подбора ключей. ⚠️ Ни квоты тарифа, ни units YouTube эти
 // вызовы не тратят (данные берутся мимо Data API), поэтому крутить подбор можно
@@ -65,5 +66,36 @@ export async function apiNicheTags(
     return { bank: data.bank ?? [], scanned: data.scanned ?? 0 };
   } catch {
     return { bank: [], scanned: 0 };
+  }
+}
+
+/**
+ * 20 тегов для своего ролика по схеме 10 охватных / 8 свободных / 2 именных.
+ * ⚠️ Стоит VIDEO_TAGS_QUOTA_COST запросов квоты (вызов модели); замер фраз через
+ * выдачу units не тратит. refIds — верхние ролики текущей выдачи, их теги идут
+ * кандидатами.
+ */
+export async function apiGenerateVideoTags(input: {
+  projectId: string;
+  topic: string;
+  refIds: string[];
+}): Promise<{ ok: true; set: VideoTagSet } | { ok: false; error: string; code?: string }> {
+  try {
+    const res = await fetch("/api/video-tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      set?: VideoTagSet;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || !data.set) {
+      return { ok: false, error: data.error ?? "Не удалось собрать теги", code: data.code };
+    }
+    return { ok: true, set: data.set };
+  } catch {
+    return { ok: false, error: "Нет связи с сервером" };
   }
 }

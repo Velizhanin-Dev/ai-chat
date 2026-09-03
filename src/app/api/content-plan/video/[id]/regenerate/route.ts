@@ -45,10 +45,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const video = await prisma.contentPlanVideo.findUnique({
     where: { id },
     select: {
+      kind: true,
       titles: true,
       pain: true,
       huntStage: true,
       format: true,
+      opening: true,
       plan: { select: { conversationId: true, conversation: { select: { brief: true } } } },
     },
   });
@@ -61,10 +63,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       brief: briefFromJson(video.plan.conversation.brief),
       part: part as RegenPart,
       video: {
+        // У шортса `titles` — описание, а не название: сервер по kind меняет
+        // инструкцию модели.
+        kind: video.kind === "short" ? "short" : "video",
         titles: video.titles,
         pain: video.pain,
         huntStage: video.huntStage,
         format: video.format,
+        opening: video.opening,
       },
     });
 

@@ -80,6 +80,12 @@ function isLeadIn(line: string): boolean {
  * Соседние строки цитаты — один блок; между блоками ставим пустую строку, чтобы
  * реплики не слипались.
  */
+/** Все непустые строки блока начинаются с метки времени вида 0:00 / 12:05 / 1:02:30. */
+export function isTimecodeBlock(text: string): boolean {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((l) => /^\d{1,2}(:\d{2}){1,2}\s/.test(l));
+}
+
 export function extractQuotes(md: string): string {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const blocks: string[] = [];
@@ -87,7 +93,10 @@ export function extractQuotes(md: string): string {
 
   const flush = () => {
     const text = cur.join("\n").trim();
-    if (text) blocks.push(text);
+    // ⚠️ Блок тайм-кодов для описания («0:00 Заход», «1:20 Ошибка №1»…) модель тоже
+    // оформляет цитатой — ради кнопки «копировать». Но в кадр его не произносят,
+    // поэтому в «Только сценарий» он не идёт.
+    if (text && !isTimecodeBlock(text)) blocks.push(text);
     cur = [];
   };
 

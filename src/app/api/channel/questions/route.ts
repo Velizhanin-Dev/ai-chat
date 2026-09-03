@@ -11,7 +11,8 @@ export const maxDuration = 120;
 //
 // ⚠️ Квоту тарифа НЕ тратит (тут нет вызова модели), но тратит ~11 units пула
 // ключей: по одному запросу комментариев на ролик. Поэтому кэш 6 часов, а свежий
-// сбор — только по кнопке «Обновить».
+// сбор — только по кнопке «Обновить». У Instagram-проекта — то же, но под токеном
+// аккаунта (ветка внутри collectAudienceQuestions), units пула не тратит.
 export async function GET(req: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Не авторизованы" }, { status: 401 });
@@ -29,6 +30,12 @@ export async function GET(req: NextRequest) {
   }
   if (outcome.status === "not_connected") {
     return NextResponse.json({ error: "Канал не подключён", code: "NOT_CONNECTED" }, { status: 409 });
+  }
+  if (outcome.status === "reauth") {
+    return NextResponse.json(
+      { error: "Доступ к Instagram истёк — подключите аккаунт заново в настройках проекта", code: "IG_REAUTH" },
+      { status: 409 }
+    );
   }
   if (outcome.status === "error") {
     return NextResponse.json({ error: outcome.message }, { status: 502 });

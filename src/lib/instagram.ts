@@ -19,9 +19,17 @@ const AUTH_URL = "https://www.instagram.com/oauth/authorize";
 const TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const GRAPH = "https://graph.instagram.com";
 
-// Скоупы: профиль и медиа + инсайты. Больше не просим — лишние разрешения
-// удлиняют ревью приложения в Meta и пугают человека на экране согласия.
-const SCOPES = ["instagram_business_basic", "instagram_business_manage_insights"].join(",");
+// Скоупы: профиль и медиа + инсайты + чтение комментариев. Больше не просим —
+// лишние разрешения удлиняют ревью приложения в Meta и пугают человека на экране
+// согласия. ⚠️ manage_comments нужен ТОЛЬКО ради чтения текста комментариев под
+// своими рилсами (блок «О чём спрашивают зрители»): отвечать/удалять/скрывать мы
+// не умеем и в ревью этого не заявляем. Число комментариев приходит и без него
+// (метрика `comments` в insights).
+const SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_manage_insights",
+  "instagram_business_manage_comments",
+].join(",");
 
 const LONG_LIVED_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 
@@ -240,6 +248,52 @@ export async function fetchReels(
     });
   }
   return out;
+}
+
+/**
+ * Последние рилсы БЕЗ метрик — один запрос на всё. Для обхода комментариев
+ * insights не нужны, а fetchReels делает по запросу на рилс.
+ */
+export async function fetchRecentReelsLite(
+  token: string,
+  limit = 10
+): Promise<Array<{ id: string; caption: string }>> {
+  const media = await igGet<{ data?: MediaItem[] }>(
+    `${GRAPH}/me/media?fields=id,caption,media_product_type,timestamp` +
+      `&limit=50&access_token=${encodeURIComponent(token)}`
+  );
+  return (media.data ?? [])
+    .filter((m) => m.media_product_type === "REELS")
+    .slice(0, limit)
+    .map((m) => ({ id: m.id, caption: (m.caption ?? "").slice(0, 300) }));
+}
+
+export interface IgComment {
+  text: string;
+  likes: number;
+}
+
+/**
+ * Комментарии под рилсом (скоуп instagram_business_manage_comments).
+ *
+ * ⚠️ Читаем только верхний уровень: ответы — это, как правило, автор отвечает,
+ * а нам нужны вопросы зрителей. Порядок — как отдаёт API (свежие первыми);
+ * «по релевантности», как у YouTube, тут нет.
+ */
+export async function fetchReelComments(
+  token: string,
+  mediaId: string,
+  limit = 50
+): Promise<IgComment[]> {
+  const data = await igGet<{
+    data?: Array<{ text?: string; like_count?: number; hidden?: boolean }>;
+  }>(
+    `${GRAPH}/${mediaId}/comments?fields=text,like_count,hidden` +
+      `&limit=${limit}&access_token=${encodeURIComponent(token)}`
+  );
+  return (data.data ?? [])
+    .filter((c) => c.text && !c.hidden)
+    .map((c) => ({ text: c.text ?? "", likes: Number(c.like_count ?? 0) }));
 }
 
 function num(v: unknown): number | null {

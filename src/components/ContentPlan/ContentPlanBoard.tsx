@@ -538,7 +538,6 @@ export default function ContentPlanBoard() {
       <VideoDrawer
         v={drawer}
         projectId={projectId}
-        planId={activeId ?? ""}
         opened={drawer !== null}
         onClose={() => setDrawer(null)}
         onChange={(video) => {
@@ -546,14 +545,6 @@ export default function ContentPlanBoard() {
           setDrawer(video);
         }}
         onDelete={onVideoDelete}
-        onAdapted={(video, replacedId) =>
-          // Сырая запись свалки уходит, на её место встаёт готовая карточка.
-          setPlan((prev) =>
-            prev
-              ? { ...prev, videos: [...prev.videos.filter((x) => x.id !== replacedId), video] }
-              : prev
-          )
-        }
       />
 
       {/* Импорт уже опубликованного ролика канала в план */}

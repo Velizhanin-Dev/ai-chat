@@ -46,6 +46,7 @@ import {
 } from "@/lib/instagram-types";
 import { apiInstagramData } from "@/lib/instagram-client";
 import { formatCount } from "@/lib/youtube-client";
+import AudienceQuestions from "./AudienceQuestions";
 
 // ── Раздел «Аналитика» для Instagram-проекта ────────────────────────────────
 //
@@ -203,6 +204,9 @@ export default function InstagramDashboard() {
         snapshot && (
           <>
             <AccountSummary snapshot={snapshot} />
+            {/* Вопросы зрителей — ДО ленты рилсов: она длинная, а этот блок — самая
+                ценная фактура раздела (боли словами аудитории, Антипаттерн №15). */}
+            <AudienceQuestions projectId={projectId} />
             <Stack gap="md">
               {snapshot.reels.map((r) => (
                 <ReelCard key={r.id} reel={r} norms={norms} />

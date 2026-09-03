@@ -11,10 +11,10 @@ import { getSettings, structuredModelOf } from "./settings";
 import { routeQuery, type RouteDecision } from "./router";
 import { sanitizeBrief, withBriefTerms, briefSearchTerms, type Brief } from "./brief";
 import { fetchPage, pagePromptBlock } from "./web-fetch";
-import { getChannelSnapshotCached, getValidAccessToken, fetchChannelInfo, fetchRecentVideos } from "./youtube";
-import { getPublicSnapshot, getPublicStats } from "./youtube-public";
+import { getValidAccessToken, fetchChannelInfo, fetchRecentVideos } from "./youtube";
+import { getPublicStats } from "./youtube-public";
+import { resolveChannelContext } from "./channel-context-server";
 import { getTranscript, condenseTranscript } from "./youtube-transcript";
-import { buildChannelBlock } from "./llm/system";
 import {
   sanitizeDigest,
   sanitizeProfile,
@@ -424,21 +424,7 @@ export async function ensureProfileJob(opts: {
   }
 }
 
-/** Снимок канала для промпта. Best-effort — как в content-plan-server. */
+/** Снимок площадки проекта для промпта (YouTube или Instagram) — общий помощник, best-effort. */
 async function resolveChannelBlock(projectId: string): Promise<string | null> {
-  try {
-    const integ = await prisma.youTubeIntegration.findUnique({
-      where: { conversationId: projectId },
-    });
-    if (!integ) {
-      // Канал по ссылке — публичные цифры тоже фактура: профиль соберётся по
-      // реальным роликам человека, а не по одной анкете.
-      const pub = await getPublicSnapshot(projectId);
-      return pub ? buildChannelBlock(pub, null, true) : null;
-    }
-    const snap = await getChannelSnapshotCached(projectId, integ);
-    return snap ? buildChannelBlock(snap) : null;
-  } catch {
-    return null;
-  }
+  return (await resolveChannelContext(projectId)).channelBlock;
 }

@@ -17,12 +17,17 @@ import {
 import { IconSparkles, IconEdit, IconAlertCircle } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
 import BriefFlow from "@/components/Brief/BriefFlow";
+import BriefEditForm from "@/components/Settings/BriefEditForm";
 import YouTubeConnect from "@/components/Settings/YouTubeConnect";
 import TelegramConnect from "@/components/Settings/TelegramConnect";
 import InstagramConnect from "@/components/Settings/InstagramConnect";
 import { useProjectPlatform } from "@/hooks/useProjectPlatform";
 import { apiGetProjectBrief, apiUpdateProjectBrief } from "@/lib/chat-client";
-import { DISC_PROFILES, type Brief, type DiscProfile } from "@/lib/brief";
+import { DISC_PROFILES, EMPTY_BRIEF, type Brief, type DiscProfile } from "@/lib/brief";
+
+// Режим экрана: просмотр → анкета правки → визард с тестом личности (только по
+// явной кнопке «пройти тест заново» из анкеты).
+type Mode = "view" | "form" | "test";
 
 // Настройки ПРОЕКТА (пер-проектные) — единый экран без вкладок: тип личности +
 // «Исправить информацию» (перезапуск брифа проекта) + интеграция YouTube. Аккаунтные
@@ -33,8 +38,8 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  // На экране результата брифа расширяем контейнер и прячем заголовок.
+  const [mode, setMode] = useState<Mode>("view");
+  // На экране результата теста расширяем контейнер и прячем заголовок.
   const [editResult, setEditResult] = useState(false);
   const ytRef = useRef<HTMLDivElement>(null);
 
@@ -42,7 +47,7 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
     let alive = true;
     setLoading(true);
     setError(null);
-    setEditing(false);
+    setMode("view");
     apiGetProjectBrief(projectId).then((r) => {
       if (!alive) return;
       if (r.ok) setBrief(r.data);
@@ -63,16 +68,44 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
     }
   }, [loading]);
 
-  // Режим правки — визард брифа на месте (Typeform-style, как при создании проекта),
-  // предзаполненный текущими данными. На сохранение — PATCH брифа проекта.
-  if (editing) {
+  // Режим правки — АНКЕТА: все поля брифа разом и одна кнопка «Сохранить»
+  // (правка владельца, 2026-09-03). Визард по одному вопросу остался для создания
+  // проекта. На сохранение — PATCH брифа проекта; сервер сам ставит пересборку
+  // профиля проекта (ensureProfileJob с force).
+  if (mode === "form") {
+    return (
+      <Box maw={560} mx="auto">
+        <Text fw={600} fz={{ base: "1.1rem", sm: "1.25rem" }} mb={4}>
+          Исправить информацию
+        </Text>
+        <Text c="dimmed" size="sm" mb="lg">
+          Поправь то, что изменилось, и сохрани — я пересоберу профиль проекта по новым
+          данным.
+        </Text>
+        <BriefEditForm
+          initial={brief ?? EMPTY_BRIEF}
+          onSave={async (b) => {
+            const res = await apiUpdateProjectBrief(projectId, b);
+            if (res.ok) setBrief(b);
+            return res;
+          }}
+          onCancel={() => setMode("view")}
+          onRetakeTest={() => setMode("test")}
+        />
+      </Box>
+    );
+  }
+
+  // Пройти тест типа личности заново — визард (как при создании проекта),
+  // предзаполненный текущими данными; сюда попадают только из анкеты по кнопке.
+  if (mode === "test") {
     return (
       <Box maw={editResult ? 900 : 560} mx="auto">
         {/* Заголовок прячем на экране результата — там полноэкранный reveal. */}
         {!editResult && (
           <>
             <Text fw={600} fz={{ base: "1.1rem", sm: "1.25rem" }} mb={4}>
-              Исправить информацию
+              Пройти тест заново
             </Text>
             <Text c="dimmed" size="sm" mb="lg">
               Пара вопросов о проекте и короткий тест типа личности — на их основе я собираю
@@ -92,11 +125,11 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
           }}
           resultNote={
             <Text size="sm" c="dimmed">
-              Готово — информация проекта обновлена.
+              Готово — информация проекта обновлена, профиль пересобирается в фоне.
             </Text>
           }
           resultActions={() => (
-            <Button color="brand" radius="md" onClick={() => setEditing(false)}>
+            <Button color="brand" radius="md" onClick={() => setMode("view")}>
               Готово
             </Button>
           )}
@@ -118,7 +151,7 @@ export default function ProjectSettings({ projectId }: { projectId: string }) {
             color="brand"
             size="xs"
             leftSection={<IconEdit size={14} />}
-            onClick={() => setEditing(true)}
+            onClick={() => setMode("form")}
             disabled={loading}
             style={{ flexShrink: 0 }}
           >

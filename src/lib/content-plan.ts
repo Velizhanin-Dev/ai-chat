@@ -293,6 +293,21 @@ export function primaryTitle(v: VideoView): string {
   return v.titles[0]?.trim() || "Без названия";
 }
 
+// ── Шортс: другой набор полей ───────────────────────────────────────────────
+// ⚠️ У шортса НЕТ названия и текста на превью — есть ОПИСАНИЕ (подпись под
+// роликом) и ПЕРВАЯ ФРАЗА (хук в первые 3 секунды). Поля БД те же, что у лонга,
+// меняется смысл: `titles[0]` = описание, `opening` = первая фраза. Формат, 10
+// вопросов, ВИСП, нативное закрытие и «почему залетит» к шортсу не относятся —
+// ни на карточке, ни в панели их не показываем (правка редактора, 2026-09-03).
+export function isShortVideo(v: Pick<VideoView, "kind">): boolean {
+  return v.kind === "short";
+}
+
+/** Первая фраза шортса для карточки; у старых шортсов без opening — описание. */
+export function shortHeadline(v: VideoView): string {
+  return v.opening?.trim() || primaryTitle(v);
+}
+
 // ── Связь с реальными видео канала (Фаза 2) ─────────────────────────────────
 // Ролик канала для пикера привязки/импорта.
 export interface LinkVideo {
@@ -312,6 +327,10 @@ export const REGEN_LABEL: Record<RegenPart, string> = {
   questions: "10 вопросов",
   format: "формат и подачу",
 };
+// У шортса переделывается только описание (`titles`): превью, вопросов и формата
+// у него нет (см. isShortVideo).
+export const SHORT_REGEN_PARTS: readonly RegenPart[] = ["titles"];
+export const SHORT_REGEN_LABEL: Partial<Record<RegenPart, string>> = { titles: "описание" };
 
 // Нормализация заголовка для сравнения (регистр, пунктуация, пробелы). Класс
 // символов задан явно (кириллица+латиница+цифры), без \p{…}/u — чтобы не зависеть

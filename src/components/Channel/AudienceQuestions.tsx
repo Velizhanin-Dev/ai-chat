@@ -15,6 +15,7 @@ import {
 } from "@mantine/core";
 import { IconMessageCircle, IconMessages, IconRefresh } from "@tabler/icons-react";
 import { useAppSelector } from "@/store/hooks";
+import { useProjectPlatform } from "@/hooks/useProjectPlatform";
 import { questionsPrompt, type AudienceQuestionsResult } from "@/lib/audience-questions";
 
 // «О чём спрашивают зрители» — темы, собранные из комментариев под своими роликами.
@@ -32,6 +33,10 @@ const CHAT_DRAFT_KEY = "creative-chat:chat-draft-v1";
 export default function AudienceQuestions({ projectId }: { projectId: string }) {
   const router = useRouter();
   const userId = useAppSelector((s) => s.auth.user?.id ?? "");
+  // Слова интерфейса по площадке: у Instagram — рилсы, а не ролики.
+  const ig = useProjectPlatform().platform === "instagram";
+  const units = ig ? "рилсами" : "роликами";
+  const unitsGen = ig ? "рилсов" : "роликов";
   const [result, setResult] = useState<AudienceQuestionsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +107,7 @@ export default function AudienceQuestions({ projectId }: { projectId: string }) 
 
       {!result && !loading && !error && (
         <Text size="sm" c="dimmed">
-          Разберу комментарии под последними роликами и покажу, что зрители спрашивают чаще
+          Разберу комментарии под последними {units} и покажу, что зрители спрашивают чаще
           всего. Это готовые темы их словами — не догадки про нишу.
         </Text>
       )}
@@ -126,7 +131,7 @@ export default function AudienceQuestions({ projectId }: { projectId: string }) 
         // ⚠️ Пустой результат — не поломка: под роликами может не быть вопросов
         // вовсе (мало комментариев, отключены, одни благодарности).
         <Text size="sm" c="dimmed">
-          Вопросов под роликами пока не нашлось: разобрано {result.videosScanned} роликов,
+          Вопросов под {units} пока не нашлось: разобрано {result.videosScanned} {unitsGen},
           подходящих комментариев {result.total}. Это бывает, когда комментариев мало или в
           них одни благодарности.
         </Text>
@@ -135,7 +140,7 @@ export default function AudienceQuestions({ projectId }: { projectId: string }) 
       {result && result.topics.length > 0 && (
         <Stack gap="sm">
           <Text size="xs" c="dimmed">
-            Разобрано роликов: {result.videosScanned}, вопросов найдено: {result.total}.
+            Разобрано {unitsGen}: {result.videosScanned}, вопросов найдено: {result.total}.
           </Text>
 
           <Stack gap="xs">
@@ -166,7 +171,7 @@ export default function AudienceQuestions({ projectId }: { projectId: string }) 
             leftSection={<IconMessageCircle size={16} />}
             onClick={askAssistant}
           >
-            Сделать из этого темы роликов
+            Сделать из этого темы {unitsGen}
           </Button>
         </Stack>
       )}

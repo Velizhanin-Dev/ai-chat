@@ -5,12 +5,11 @@ import { extractWebUrls } from "@/lib/chat-links";
 import { buildPagesBlock } from "@/lib/chat-pages";
 import { buildVideoTranscriptBlock, transcriptPendingBlock } from "@/lib/youtube-transcript";
 import { getStrategy } from "@/lib/llm";
-import { buildSystem, buildFullSystem, buildChannelBlock, type ConnectNudge } from "@/lib/llm/system";
-import { getChannelSnapshotCached } from "@/lib/youtube";
+import { buildSystem, buildFullSystem } from "@/lib/llm/system";
+import { resolveChannelContext } from "@/lib/channel-context-server";
 import { resolveProjectContext } from "@/lib/chat-project-context";
 import { sanitizeProfile } from "@/lib/project-profile";
 import { ensureProfileJob } from "@/lib/project-profile-server";
-import { getPublicSnapshot } from "@/lib/youtube-public";
 import { readUpload } from "@/lib/uploads";
 import {
   isChatAttachKeyForProject,
@@ -18,7 +17,6 @@ import {
   type ChatAttachmentRef,
 } from "@/lib/chat-attachments";
 import type { ChatContentPart, ChatTurn } from "@/lib/llm/types";
-import { CONNECT_YT_MARKER } from "@/lib/chat-markers";
 import { sanitizeBrief, isBriefComplete, withBriefTerms, type Brief } from "@/lib/brief";
 import { getSessionUser } from "@/lib/auth";
 import { getSettings, isLaunchLocked } from "@/lib/settings";
@@ -41,8 +39,10 @@ const HISTORY_LIMIT = 20;
 
 type ClientMessage = { role: "user" | "assistant"; content: string };
 
-// Ограничение ожидания снимка канала перед ответом: если YouTube тупит — отвечаем
-// без данных канала (следующее сообщение подхватит из кэша), а не ждём его.
+// Ограничение ожидания снимка канала/аккаунта перед ответом: если YouTube или
+// Instagram тупит — отвечаем без данных (следующее сообщение подхватит из кэша),
+// а не ждём. Сам поход — в channel-context-server (общий с контент-планом и
+// профилем; там же ветка по площадке проекта).
 const CHANNEL_SNAPSHOT_TIMEOUT_MS = 4_000;
 
 // Сколько ждём расшифровку ролика перед ответом. ⚠️ Меньше таймаута самого сервиса
@@ -50,82 +50,6 @@ const CHANNEL_SNAPSHOT_TIMEOUT_MS = 4_000;
 // индикатор. Не успели — отвечаем без текста ролика, а расшифровка осядет в кэше
 // и подхватится со следующего раза.
 const TRANSCRIPT_WAIT_MS = 25_000;
-
-// Promise с мягким таймаутом: по истечении отдаёт fallback (не бросает). Исходный
-// промис не отменяем — он спокойно дорешается в фоне (снимок ляжет в кэш).
-function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return new Promise<T>((resolve) => {
-    let done = false;
-    const t = setTimeout(() => {
-      if (!done) {
-        done = true;
-        resolve(fallback);
-      }
-    }, ms);
-    const settle = (v: T) => {
-      if (!done) {
-        done = true;
-        clearTimeout(t);
-        resolve(v);
-      }
-    };
-    p.then(settle, () => settle(fallback));
-  });
-}
-
-// Контекст канала для промпта: снимок (если подключён, с таймаутом) ИЛИ режим
-// приглашения подключить (active — пока не предлагали в этом диалоге, потом gentle).
-// Best-effort: любая ошибка → без данных и без CTA, чат не роняем.
-async function resolveChannelContext(
-  conversationId: string,
-  messages: ClientMessage[]
-): Promise<{ channelBlock: string | null; nudge: ConnectNudge }> {
-  try {
-    const integ = await prisma.youTubeIntegration.findUnique({
-      where: { conversationId },
-    });
-    if (!integ) {
-      // ⚠️ Второй путь: канал мог быть привязан ПО ССЫЛКЕ (бренд-аккаунт, к
-      // которому у человека нет доступа через Google). Тогда полной аналитики
-      // нет, но публичные цифры есть — и это несравнимо лучше, чем ничего:
-      // ассистент видит реальные ролики и охваты, а не выдумывает темы.
-      const pub = await withTimeout(
-        getPublicSnapshot(conversationId),
-        CHANNEL_SNAPSHOT_TIMEOUT_MS,
-        null
-      );
-      if (pub) {
-        // Звать подключать через Google всё равно стоит (там удержание и
-        // источники), но это делает сам блок — мягко и по делу, а не маркером
-        // с кнопкой: канал у человека формально уже привязан.
-        return { channelBlock: buildChannelBlock(pub, null, true), nudge: "off" };
-      }
-      const alreadyNudged = messages.some(
-        (m) => m.role === "assistant" && m.content.includes(CONNECT_YT_MARKER)
-      );
-      return { channelBlock: null, nudge: alreadyNudged ? "gentle" : "active" };
-    }
-    const [snap, lastCtr] = await Promise.all([
-      withTimeout(getChannelSnapshotCached(conversationId, integ), CHANNEL_SNAPSHOT_TIMEOUT_MS, null),
-      // CTR превью API не отдаёт; берём последнюю цифру, которую юзер сам ввёл в
-      // разборе канала — чтобы в чате можно было говорить о кликабельности предметно.
-      prisma.channelAnalysis
-        .findFirst({
-          where: { conversationId, manualCtr: { not: null } },
-          orderBy: { createdAt: "desc" },
-          select: { manualCtr: true, createdAt: true },
-        })
-        .catch(() => null),
-    ]);
-    return {
-      channelBlock: snap ? buildChannelBlock(snap, lastCtr?.manualCtr ?? null) : null,
-      nudge: "off",
-    };
-  } catch (err) {
-    console.error("[chat] channel context error:", err);
-    return { channelBlock: null, nudge: "off" };
-  }
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -297,16 +221,16 @@ export async function POST(request: NextRequest) {
     // Пользователь движок не выбирает.
     const provider = settings.provider;
 
-    // Контекст канала (снимок + режим CTA) и роутинг знаний — ПАРАЛЛЕЛЬНО: они
-    // независимы, и складывать их задержки перед первым токеном не нужно. У снимка
-    // канала — таймаут (resolveChannelContext), чтобы медленный YouTube не держал
+    // Контекст площадки (снимок канала/аккаунта + режим CTA) и роутинг знаний —
+    // ПАРАЛЛЕЛЬНО: они независимы, и складывать их задержки перед первым токеном
+    // не нужно. У снимка — таймаут, чтобы медленный YouTube/Instagram не держал
     // ответ; у роутера — свой таймаут (router.ts → откат на эвристику).
     //  • routing "full" — вся база целиком, без LLM-роутера (эвристика категории);
     //  • routing "smart" — BM25-роутинг: классифицируем и грузим только релевантное.
     const lastUser = messages[messages.length - 1].content;
     const tRoute0 = Date.now();
     const [channel, route, projectBlocks] = await Promise.all([
-      resolveChannelContext(conversationId, messages),
+      resolveChannelContext(conversationId, { messages, timeoutMs: CHANNEL_SNAPSHOT_TIMEOUT_MS }),
       settings.routing === "full"
         ? Promise.resolve(fullModeRoute(lastUser))
         : routeQuery(messages, provider, { userId: sessionUser.id, conversationId }),

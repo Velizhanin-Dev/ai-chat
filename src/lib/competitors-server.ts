@@ -157,8 +157,10 @@ async function projectBrief(conversationId: string): Promise<Brief | null> {
  *
  * Стоит 3 units на НАШЕМ проекте (канал + плейлист + видео), поэтому кэш на 30 мин.
  * Канал не подключён или сбой — работаем на одном брифе, раздел не падает.
+ * Экспортирована для сборки тегов своего ролика (video-tags-server.ts): там нужны
+ * название канала под именной тег и та же лексика ниши.
  */
-async function channelHint(conversationId: string): Promise<ChannelHint> {
+export async function channelHint(conversationId: string): Promise<ChannelHint> {
   const cached = contextCache.get(conversationId);
   if (cached && Date.now() - cached.at < CONTEXT_TTL_MS) return cached.data;
 
@@ -324,27 +326,34 @@ async function collectPage(
   const foundBy = new Map<string, string>();
   const nextTokens: Record<string, string | null> = { ...tokens };
 
-  for (const q of queries) {
-    const first = !(q in tokens);
-    const token = tokens[q];
-    // Продолжать нечего: у этого запроса выдача кончилась.
-    if (!first && !token) continue;
+  // Продолжать нечего у запросов, чья выдача уже кончилась (токен null).
+  const live = queries.filter((q) => !(q in tokens) || Boolean(tokens[q]));
 
-    // ⚠️ Сначала бесплатным путём (страница выдачи + continuation), и только если он
-    // не сработал — за 100 units через search.list. См. searchVideoPageCheap.
-    const page = await searchVideoPageCheap({
-      q,
-      order: opts.order,
-      publishedAfter: opts.publishedAfter,
-      pageToken: token,
-    });
+  // ⚠️ Запросы идут ПАРАЛЛЕЛЬНО: страница выдачи стоит ~1,5 с, и при трёх-пяти
+  // запросах последовательный обход давал 5-7 с на раунд, а до двадцати подходящих
+  // роликов раундов нужно несколько (после порога кратности проходит ~1 ролик из 20).
+  // Порядок запросов сохраняется — по нему выбирается, какой запрос «нашёл» ролик.
+  // ⚠️ Сначала бесплатным путём (страница выдачи + continuation), и только если он
+  // не сработал — за 100 units через search.list. См. searchVideoPageCheap.
+  const pages = await Promise.all(
+    live.map((q) =>
+      searchVideoPageCheap({
+        q,
+        order: opts.order,
+        publishedAfter: opts.publishedAfter,
+        pageToken: tokens[q] ?? null,
+      })
+    )
+  );
+  live.forEach((q, i) => {
+    const page = pages[i];
     nextTokens[q] = page.nextPageToken;
     for (const id of page.ids) {
       // Уже разбирали на прошлых страницах — второй раз не платим за метаданные.
       if (seen.has(id) || foundBy.has(id)) continue;
       foundBy.set(id, q);
     }
-  }
+  });
 
   const ids = Array.from(foundBy.keys());
   const videos = ids.length ? await fetchVideosByIds(ids) : [];

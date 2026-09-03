@@ -87,6 +87,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       brief: briefFromJson(conv?.brief ?? null),
       insight: insightRes.insight,
       transcriptBlock,
+      kind,
     });
     if (!gen) return apiError("Не удалось переработать ролик, попробуйте ещё раз", 502, "GEN_ERROR");
 

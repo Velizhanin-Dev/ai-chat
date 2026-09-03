@@ -245,6 +245,45 @@ export interface ScrapedSearch {
   /** Сколько всего роликов YouTube нашёл по запросу — прокси конкуренции. */
   totalResults: number;
   top: SearchTopVideo[];
+  /** Токен СЛЕДУЮЩЕЙ страницы (см. findContinuationToken); null — выдача кончилась. */
+  continuation: string | null;
+}
+
+/**
+ * Токен следующей страницы выдачи.
+ *
+ * ⚠️⚠️ Берём ТОЛЬКО из `continuationItemRenderer` (хвост списка результатов), а не
+ * первый попавшийся `"token"`. В ответе продолжения таких токенов семь: шесть —
+ * чипы фильтров в шапке выдачи («Все / Видео / Shorts / …»), и они идут ПЕРВЫМИ;
+ * реальная следующая страница — только последний. Регулярка «первый token» ловила
+ * чип, YouTube на него отвечал пусто, и бесплатный путь давал ровно ДВЕ страницы на
+ * запрос (первая — из HTML, где порядок другой). На проде это выглядело как
+ * «5 из 115»: три запроса × 40 роликов, и всё. Воспроизведено и проверено живьём
+ * 2026-09-03: с токеном из `continuationItemRenderer` третья и четвёртая страницы
+ * приходят по 20 роликов без пересечений.
+ */
+export function findContinuationToken(root: unknown): string | null {
+  let found: string | null = null;
+  const walk = (node: unknown, depth: number) => {
+    if (found || depth > 40 || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    const item = obj.continuationItemRenderer as Record<string, unknown> | undefined;
+    if (item && typeof item === "object") {
+      const endpoint = item.continuationEndpoint as Record<string, unknown> | undefined;
+      const cmd = endpoint?.continuationCommand as Record<string, unknown> | undefined;
+      if (cmd && typeof cmd.token === "string" && cmd.token.length >= 20) {
+        found = cmd.token;
+        return;
+      }
+    }
+    for (const value of Object.values(obj)) walk(value, depth + 1);
+  };
+  walk(root, 0);
+  return found;
 }
 
 /**
@@ -294,17 +333,25 @@ function firstText(node: unknown): string {
 
 /** Разбор страницы выдачи: общее число результатов + карточки роликов. */
 export function parseSearchHtml(html: string): ScrapedSearch {
-  const out: ScrapedSearch = { totalResults: 0, top: [] };
-
   const data = /ytInitialData\s*=\s*(\{[\s\S]*?\});/.exec(html);
-  if (!data) return out;
+  if (!data) return { totalResults: 0, top: [], continuation: null };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(data[1]);
   } catch {
-    return out;
+    return { totalResults: 0, top: [], continuation: null };
   }
+  return parseSearchData(parsed);
+}
+
+/** Разбор уже распарсенного JSON выдачи — общий для HTML-страницы и ответа продолжения. */
+export function parseSearchData(parsed: unknown): ScrapedSearch {
+  const out: ScrapedSearch = {
+    totalResults: 0,
+    top: [],
+    continuation: findContinuationToken(parsed),
+  };
 
   const root = parsed as { estimatedResults?: unknown };
   if (typeof root.estimatedResults === "string") {
@@ -413,7 +460,7 @@ export async function fetchSearchPage(
   return {
     ids,
     totalResults: parsed.totalResults,
-    continuation: matchOne(html, /"continuationCommand":\{"token":"([^"]{20,})"/),
+    continuation: parsed.continuation,
     apiKey: matchOne(html, /"INNERTUBE_API_KEY":"([^"]+)"/),
     clientVersion: matchOne(html, /"INNERTUBE_CLIENT_VERSION":"([^"]+)"/),
   };
@@ -523,11 +570,19 @@ export async function fetchSearchContinuation(page: {
     }
     if (!text) return null;
 
-    const parsed = parseSearchHtml(`ytInitialData = ${text};`);
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    const parsed = parseSearchData(json);
     const ids = parsed.top.map((v) => v.id).filter(Boolean);
     if (ids.length === 0) return null;
 
-    return { ids, continuation: matchOne(text, /"token":"([^"]{20,})"/) };
+    // ⚠️ Токен — из continuationItemRenderer, а не первый "token" в тексте: первыми
+    // в ответе идут токены чипов фильтров (см. findContinuationToken).
+    return { ids, continuation: parsed.continuation };
   } catch {
     return null;
   }

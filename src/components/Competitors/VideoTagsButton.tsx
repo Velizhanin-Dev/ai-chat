@@ -24,6 +24,7 @@ export default function VideoTagsButton({
 }) {
   const [tags, setTags] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [opened, setOpened] = useState(false);
 
   const load = async () => {
     if (tags || loading) return;
@@ -32,8 +33,23 @@ export default function VideoTagsButton({
     setLoading(false);
   };
 
+  // ⚠️⚠️ Поповер КОНТРОЛИРУЕМЫЙ (opened/onChange) не ради красоты. В неуправляемом
+  // режиме Popover.Target подсовывает ребёнку свой onClick (переключение), а ребёнок
+  // тут — Tooltip, который клонирует иконку как `{ onClick, …, ...childProps }`:
+  // собственный onClick иконки (загрузка тегов) ЗАТИРАЛ переключение поповера.
+  // Итог на проде: клик грузил теги, а окно не открывалось никогда — «кнопка не
+  // работает». В управляемом режиме Popover.Target onClick не подсовывает, и наш
+  // обработчик делает оба дела сам.
   return (
-    <Popover width={320} position="bottom-end" withArrow shadow="md" trapFocus>
+    <Popover
+      width={320}
+      position="bottom-end"
+      withArrow
+      shadow="md"
+      trapFocus
+      opened={opened}
+      onChange={setOpened}
+    >
       <Popover.Target>
         <Tooltip label="Теги ролика" withArrow>
           <ActionIcon
@@ -42,8 +58,12 @@ export default function VideoTagsButton({
             radius="md"
             size="lg"
             aria-label="Показать теги ролика"
+            aria-expanded={opened}
             loading={loading}
-            onClick={() => void load()}
+            onClick={() => {
+              setOpened((v) => !v);
+              void load();
+            }}
             style={{ position: "absolute", right: 8, top, zIndex: 2 }}
           >
             <IconTags size={18} />

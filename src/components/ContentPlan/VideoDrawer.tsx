@@ -35,15 +35,17 @@ import {
   IconX,
 } from "@tabler/icons-react";
 import {
-  CONTENT_PLAN_ADAPT_QUOTA_COST,
   CONTENT_PLAN_EDIT_QUOTA_COST,
   FORMAT_META,
   HUNT_LADDER_HINT,
   REGEN_LABEL,
   REGEN_PARTS,
+  SHORT_REGEN_LABEL,
+  SHORT_REGEN_PARTS,
   STATUS_META,
   STATUSES,
   formatMeta,
+  isShortVideo,
   type RegenPart,
   type VideoFormat,
   type VideoStatus,
@@ -52,7 +54,6 @@ import {
 import { apiVideoInsight } from "@/lib/competitors-client";
 import { insightPromptBlock, videoIdFromUrl } from "@/lib/competitors";
 import {
-  apiAdaptCompetitorVideo,
   apiDeleteVideo,
   apiLinkVideo,
   apiRegenerateVideo,
@@ -104,19 +105,14 @@ export default function VideoDrawer({
   onClose,
   onChange,
   onDelete,
-  onAdapted,
   projectId,
-  planId,
 }: {
   v: VideoView | null;
   opened: boolean;
   onClose: () => void;
   onChange: (video: VideoView) => void;
   onDelete: (id: string) => void;
-  /** Запись из свалки переработана: новая карточка + id заменённой записи. */
-  onAdapted: (video: VideoView, replacedId: string) => void;
   projectId: string;
-  planId: string;
 }) {
   const dispatch = useAppDispatch();
   const router = useRouter();
@@ -127,8 +123,8 @@ export default function VideoDrawer({
   const [saved, setSaved] = useState(false); // индикатор «сохранено»
   // Тянем данные ролика-референса перед переходом в чат (кнопка ждёт).
   const [loadingRef, setLoadingRef] = useState(false);
-  const [adapting, setAdapting] = useState(false);
-  const [adaptError, setAdaptError] = useState<string | null>(null);
+  // «Разобрать референс» — тот же поход за данными донора, но своя кнопка.
+  const [loadingAdapt, setLoadingAdapt] = useState(false);
   // Слепок последнего сохранённого состояния — чтобы автосейв не срабатывал на
   // подстановку данных с сервера (иначе получаем эхо-запросы).
   const savedSnapshot = useRef<string>("");
@@ -208,6 +204,8 @@ export default function VideoDrawer({
 
   if (!draft) return null;
   const d = draft;
+  // Шортс: другой набор полей (описание + первая фраза вместо названия/превью).
+  const short = isShortVideo(d);
   const set = <K extends keyof VideoView>(key: K, val: VideoView[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: val } : prev));
 
@@ -250,29 +248,43 @@ export default function VideoDrawer({
     }
   };
 
-  // Переработать донора из свалки в полноценную карточку (та же механика, что у
-  // кнопки в «Референсах»): сервер тянет разбор ролика и расшифровку, модель
-  // собирает карточку под нишу клиента.
-  const adapt = async () => {
+  // Разобрать референс из свалки — В ЧАТЕ (правка владельца, 2026-09-03).
+  //
+  // ⚠️ Раньше кнопка звала серверную переработку (`/adapt`): разбор донора +
+  // расшифровка + генерация карточки одним http-запросом на минуты. На проде это
+  // «баговало» — запрос отваливался по таймауту прокси, человек видел ошибку, а
+  // карточки не получал. Теперь тот же разбор идёт через чат: там генерация
+  // переживает обрыв (прогоны), ответ читается сразу и стоит 1 запрос вместо 2.
+  // Ассистента просим выдать ровно то, что нужно для карточки: название, текст
+  // на превью, формат и ссылку на ролик-донор. Сама переработка в карточку
+  // (`/adapt`) осталась в разделе «Референсы».
+  const adaptInChat = async () => {
+    const url = referenceUrl(d.reference);
     const videoId = refIdOf(d.reference);
-    if (!videoId || adapting) return;
-    setAdapting(true);
-    const res = await apiAdaptCompetitorVideo(planId, videoId, d.kind);
-    setAdapting(false);
-    if (!res.ok) {
-      setAdaptError(res.error);
-      return;
+    if (!url || loadingAdapt) return;
+    const lines = [
+      `Разбери этот ролик-референс и собери на его механике ОДИН ролик под мой канал.`,
+      `Ссылка на референс: ${url}`,
+    ];
+    if (videoId) {
+      setLoadingAdapt(true);
+      const res = await apiVideoInsight(projectId, videoId);
+      setLoadingAdapt(false);
+      // Не достали (квота, ролик удалён) — уходим со ссылкой: ассистент разберёт
+      // по расшифровке, которую сервер чата тянет по ссылке сам.
+      if (res.ok) lines.push("", insightPromptBlock(res.data.insight));
     }
-    dispatch(bumpRequestsUsed(CONTENT_PLAN_ADAPT_QUOTA_COST));
-    // Сырая запись из свалки заменяется готовой карточкой: держать обе — плодить
-    // дубли, ссылка на донора при этом переезжает в новую карточку.
-    //
-    // ⚠️ Удаляем на СЕРВЕРЕ, а не только в состоянии страницы: иначе запись
-    // вернётся на доску при первой же перезагрузке. Удаление после успешной
-    // переработки — если она не удалась, запись должна остаться на месте.
-    await apiDeleteVideo(d.id);
-    onAdapted(res.data.video, d.id);
-    onClose();
+    lines.push(
+      "",
+      `Выдай по итогу:`,
+      `1. Название видео — 3 варианта по ВИСП.`,
+      `2. Текст на превью — 3 варианта, не повтор названия.`,
+      `3. Формат — охватное / экспертное / продающее, и почему.`,
+      `4. Ссылку на ролик-донор: ${url}`,
+      `Чужое название не копируй и не перефразируй — бери механику.`
+    );
+    dispatch(prefillInput(lines.join("\n")));
+    router.push(`/${projectId}/chat`);
   };
 
   // «Сгенерировать сценарий» — уводим в чат проекта с полным брифом ролика.
@@ -282,16 +294,17 @@ export default function VideoDrawer({
     // шортс бессмысленно: он до минуты, решается в первые три секунды и живёт на
     // пересмотре. Раньше запрос был один на оба типа — по карточке шортса
     // ассистент писал сценарий длинного ролика.
-    const short = d.kind === "short";
+    const short = isShortVideo(d);
+    // ⚠️ У шортса `titles[0]` — ОПИСАНИЕ, `opening` — первая фраза; превью и
+    // «почему залетит» у него нет (см. isShortVideo).
     const parts = short
       ? [
           `Напиши сценарий ШОРТСА (вертикальное видео до 60 секунд) по этой карточке контент-плана.`,
           ``,
-          `Тема: ${d.titles[0] || "—"}`,
-          d.previewTexts[0] ? `Текст на обложке: ${d.previewTexts[0]}` : "",
-          d.opening ? `Заход (первая фраза): ${d.opening}` : "",
+          `Описание: ${d.titles[0] || "—"}`,
+          d.opening ? `Первая фраза (первые 3 секунды): ${d.opening}` : "",
+          d.huntStage ? `Стадия лестницы Ханта: ${d.huntStage}` : "",
           d.pain ? `Боль ЦА: ${d.pain}` : "",
-          d.whyWorks ? `Почему тема залетит: ${d.whyWorks}` : "",
           ``,
           `Хук в первые 3 секунды, без разгона и приветствий. Дальше плотный текст без ` +
             `воды — каждая фраза держит следующую. Финал закрывает мысль и работает на ` +
@@ -311,6 +324,12 @@ export default function VideoDrawer({
             ? `\nСкелет ролика (вопросы):\n${d.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`
             : "",
           d.nativeClose ? `\nНативное закрытие: ${d.nativeClose}` : "",
+          // Тайминги — требование владельца (2026-09-03): у лонга каждый блок с
+          // отметкой времени и общий хронометраж. У шортса их нет намеренно
+          // (Антипаттерн №1), поэтому строка только в этой ветке.
+          `\nПроставь тайминги: у каждого блока сценария отметка мм:сс–мм:сс, CTA на конкретных ` +
+            `отметках. После сценария дай отдельным блоком тайм-коды для описания ролика ` +
+            `(строка на главу «0:00 Название»), чтобы вставить в описание как есть.`,
         ];
     const filled = parts.filter(Boolean);
 
@@ -369,7 +388,8 @@ export default function VideoDrawer({
       title={
         <Group gap={8} wrap="nowrap">
           <Text fw={700} lineClamp={1}>
-            {d.titles[0] || "Ролик"}
+            {(isShortVideo(d) ? d.opening || d.titles[0] : d.titles[0]) ||
+              (isShortVideo(d) ? "Шортс" : "Ролик")}
           </Text>
           {saved && (
             <Group gap={3} wrap="nowrap" c="teal">
@@ -385,28 +405,22 @@ export default function VideoDrawer({
             сервер разберёт донора, вытащит расшифровку и заполнит ВСЕ поля
             карточки. ⚠️ Показываем только в свалке: у карточки, над которой уже
             работают, поля заполнены руками, и затирать их кнопкой нельзя. */}
-        {d.status === "dump" && refIdOf(d.reference) && (
+        {d.status === "dump" && referenceUrl(d.reference) && (
           <Box>
             <Button
               fullWidth
               color="brand"
               variant="light"
               leftSection={<IconSparkles size={16} />}
-              loading={adapting}
-              onClick={() => void adapt()}
+              loading={loadingAdapt}
+              onClick={() => void adaptInChat()}
             >
-              Разобрать по методике · {CONTENT_PLAN_ADAPT_QUOTA_COST}
+              Разобрать референс в чате
             </Button>
             <Text size="xs" c="dimmed" mt={4}>
-              Соберу из этого ролика свою карточку: названия по ВИСП, боль, скелет,
-              опенинг. Разберу его цифры и расшифровку — чужой заголовок копировать
-              не буду. Запись из свалки при этом заменится готовой карточкой.
+              Уйдём в чат с разбором этого ролика: ассистент выдаст название, текст на
+              превью, формат и ссылку на донора. Чужой заголовок копировать не будет.
             </Text>
-            {adaptError && (
-              <Text size="xs" c="red" mt={4}>
-                {adaptError}
-              </Text>
-            )}
           </Box>
         )}
 
@@ -555,7 +569,7 @@ export default function VideoDrawer({
             </Text>
           </Group>
           <Group gap={6} wrap="wrap">
-            {REGEN_PARTS.map((p) => (
+            {(short ? SHORT_REGEN_PARTS : REGEN_PARTS).map((p) => (
               <Button
                 key={p}
                 size="compact-xs"
@@ -565,7 +579,7 @@ export default function VideoDrawer({
                 disabled={regen !== null && regen !== p}
                 onClick={() => regenerate(p)}
               >
-                {REGEN_LABEL[p]}
+                {(short && SHORT_REGEN_LABEL[p]) || REGEN_LABEL[p]}
               </Button>
             ))}
           </Group>
@@ -573,9 +587,9 @@ export default function VideoDrawer({
 
         <Divider />
 
-        {/* Название: селектор вариантов + правка выбранного */}
+        {/* Название (у шортса — ОПИСАНИЕ): селектор вариантов + правка выбранного */}
         <Box>
-          <Text className="cp-label">Название видео</Text>
+          <Text className="cp-label">{short ? "Описание видео" : "Название видео"}</Text>
           {d.titles.length > 1 && (
             <Select
               data={d.titles.map((t) => ({ value: t, label: t }))}
@@ -592,40 +606,49 @@ export default function VideoDrawer({
             minRows={2}
             value={d.titles[0] ?? ""}
             onChange={(e) => editTitle(e.currentTarget.value)}
-            placeholder="Название ролика"
+            placeholder={short ? "Описание шортса — подпись под роликом" : "Название ролика"}
           />
           <Text size="xs" c="dimmed" mt={4}>
             {d.titles.length > 1
               ? "Выбранный вариант показывается на карточке — правь его прямо тут"
-              : "Нажми «названия» в блоке «Переделать с ИИ», чтобы получить варианты"}
+              : short
+                ? "Нажми «описание» в блоке «Переделать с ИИ», чтобы получить варианты"
+                : "Нажми «названия» в блоке «Переделать с ИИ», чтобы получить варианты"}
           </Text>
         </Box>
 
-        <Textarea
-          label="Текст на превью (варианты по строкам)"
-          autosize
-          minRows={1}
-          value={lines(d.previewTexts)}
-          onChange={(e) => set("previewTexts", toLines(e.currentTarget.value).slice(0, 3))}
-        />
-
-        <Group align="center" gap="md" grow>
-          <Select
-            label="Формат"
-            data={Object.entries(FORMAT_META).map(([k, m]) => ({ value: k, label: m.label }))}
-            value={d.format}
-            onChange={(val) => set("format", (val as VideoFormat) || null)}
-            clearable
+        {/* ⚠️ Поля лонга, которых у шортса нет: превью, формат, 10 вопросов, ВИСП,
+            нативное закрытие, «почему залетит». У шортса остаются описание, Хант,
+            боль и первая фраза (правка редактора, 2026-09-03). */}
+        {!short && (
+          <Textarea
+            label="Текст на превью (варианты по строкам)"
+            autosize
+            minRows={1}
+            value={lines(d.previewTexts)}
+            onChange={(e) => set("previewTexts", toLines(e.currentTarget.value).slice(0, 3))}
           />
-          {/* Свитч центрируем по высоте относительно селекта (раньше прижимался вниз) */}
-          <Box style={{ display: "flex", alignItems: "center", height: "100%", paddingTop: 22 }}>
-            <Switch
-              label="Без спикера"
-              checked={d.noSpeaker}
-              onChange={(e) => set("noSpeaker", e.currentTarget.checked)}
+        )}
+
+        {!short && (
+          <Group align="center" gap="md" grow>
+            <Select
+              label="Формат"
+              data={Object.entries(FORMAT_META).map(([k, m]) => ({ value: k, label: m.label }))}
+              value={d.format}
+              onChange={(val) => set("format", (val as VideoFormat) || null)}
+              clearable
             />
-          </Box>
-        </Group>
+            {/* Свитч центрируем по высоте относительно селекта (раньше прижимался вниз) */}
+            <Box style={{ display: "flex", alignItems: "center", height: "100%", paddingTop: 22 }}>
+              <Switch
+                label="Без спикера"
+                checked={d.noSpeaker}
+                onChange={(e) => set("noSpeaker", e.currentTarget.checked)}
+              />
+            </Box>
+          </Group>
+        )}
 
         {/* Лестница Ханта + подсказка (?) */}
         <Box>
@@ -675,6 +698,18 @@ export default function VideoDrawer({
           onChange={(e) => set("pain", e.currentTarget.value)}
         />
 
+        {short && (
+          <Textarea
+            label="Первая фраза (первые 3 секунды)"
+            autosize
+            minRows={1}
+            value={d.opening ?? ""}
+            onChange={(e) => set("opening", e.currentTarget.value)}
+            placeholder="Хук дословно, без приветствий"
+          />
+        )}
+
+        {!short && (
         <Textarea
           label="10 вопросов (скелет ролика, по одному в строке)"
           autosize
@@ -682,7 +717,9 @@ export default function VideoDrawer({
           value={lines(d.questions)}
           onChange={(e) => set("questions", toLines(e.currentTarget.value).slice(0, 10))}
         />
+        )}
 
+        {!short && (
         <Box>
           <Text className="cp-label">ВИСП (какие рычаги зажёг заголовок)</Text>
           <Group gap="md">
@@ -704,26 +741,31 @@ export default function VideoDrawer({
             ))}
           </Group>
         </Box>
+        )}
 
-        <Textarea
-          label="Нативное закрытие"
-          autosize
-          minRows={1}
-          value={d.nativeClose ?? ""}
-          onChange={(e) => set("nativeClose", e.currentTarget.value)}
-        />
-        <TextInput
-          label="Почему тема залетит"
-          value={d.whyWorks ?? ""}
-          onChange={(e) => set("whyWorks", e.currentTarget.value)}
-        />
-        <Textarea
-          label="Опенинг (первый крючок)"
-          autosize
-          minRows={1}
-          value={d.opening ?? ""}
-          onChange={(e) => set("opening", e.currentTarget.value)}
-        />
+        {!short && (
+          <>
+            <Textarea
+              label="Нативное закрытие"
+              autosize
+              minRows={1}
+              value={d.nativeClose ?? ""}
+              onChange={(e) => set("nativeClose", e.currentTarget.value)}
+            />
+            <TextInput
+              label="Почему тема залетит"
+              value={d.whyWorks ?? ""}
+              onChange={(e) => set("whyWorks", e.currentTarget.value)}
+            />
+            <Textarea
+              label="Опенинг (первый крючок)"
+              autosize
+              minRows={1}
+              value={d.opening ?? ""}
+              onChange={(e) => set("opening", e.currentTarget.value)}
+            />
+          </>
+        )}
 
         <Divider />
 
